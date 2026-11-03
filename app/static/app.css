@@ -588,3 +588,29 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
 .lb-teaser { display: flex; align-items: center; gap: 12px; margin-top: 16px; color: inherit; text-decoration: none; }
 .lb-teaser > div { flex: 1; }
 .lb-teaser > svg { width: 18px; height: 18px; color: var(--text-3); }
+
+/* ---- river rules / OURCs flag ---- */
+.flag-banner { display: flex; align-items: center; gap: 12px; padding: 10px 14px; margin: 0 0 14px; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--border); border-left: 6px solid var(--flag); }
+.flag-swatch { width: 26px; height: 18px; border-radius: 3px; background: var(--flag); flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+.flag-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.flag-actions { display: flex; gap: 6px; flex: none; }
+@media (max-width: 640px) { .flag-banner { flex-wrap: wrap; } .flag-actions { width: 100%; } }
+.flag-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; flex: none; vertical-align: -1px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); }
+.day-sun { font-size: 11.5px; color: var(--text-3); padding: 0 4px 8px; margin-top: -4px; }
+.river-list { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+.river-list div { font-size: 12px; display: flex; gap: 5px; align-items: flex-start; }
+.river-list div.stop { color: var(--bad); }
+.river-list div.warn { color: var(--warn); }
+.river-list svg { width: 13px; height: 13px; flex: none; margin-top: 2px; }
+.callout.river { margin-top: 10px; }
+.callout.river.bad { background: var(--bad-soft); }
+.callout.river.warn { background: var(--warn-soft); }
+.rules-h { margin: 8px 0 0; font-size: 15px; }
+.modal .rules-h + p, .modal .flag-table + p { margin-top: 0; }
+.rules-ul { margin: 4px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.45; }
+.rules-ul li + li { margin-top: 3px; }
+.flag-table { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.flag-row { display: flex; gap: 10px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); }
+.flag-row .flag-dot { margin-top: 3px; }
+.flag-row.on { border-color: var(--accent); background: var(--accent-soft); }

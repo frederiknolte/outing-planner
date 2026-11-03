@@ -277,6 +277,50 @@ async function leaveLand(o) {
   try { await api(`/api/outings/${o.id}/leave`, { method: "POST", body: { member_id: S.me } }); toast("You've left the session"); route(); } catch (e) { fail(e); }
 }
 
+// ------------------------------------------------------------ river rules --
+const riverList = (items) => items.length ? `<div class="river-list">${items.map((r) =>
+  `<div class="${r.level === "stop" ? "stop" : "warn"}">${r.level === "stop" ? I.alert : I.info}<span>${esc(r.text)}</span></div>`).join("")}</div>` : "";
+const fmtStamp = (isoStr) => { if (!isoStr) return ""; const d = new Date(isoStr); return isNaN(d) ? "" : d.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); };
+
+function flagBanner(f, actions = true) {
+  if (!f) return "";
+  const notices = (f.notices || []).filter(Boolean);
+  return `<div class="flag-banner" style="--flag:${esc(f.colour)}">
+    <span class="flag-swatch" aria-hidden="true"></span>
+    <div class="flag-body">
+      <div><b>Isis flag: ${esc(f.name)}</b>${f.set_date ? ` <span class="faint small">· set ${esc(fmtStamp(f.set_date))}</span>` : ""}${f.stale ? ` <span class="chip warn">may be out of date</span>` : ""}</div>
+      <div class="small muted">${esc(notices.length ? notices.join(" ") : f.summary)}</div>
+    </div>
+    ${actions ? `<div class="flag-actions"><button class="btn sm" id="flag-rules">River rules</button><a class="btn sm ghost" href="${esc(f.page)}" target="_blank" rel="noopener">OURCs</a></div>` : ""}
+  </div>`;
+}
+
+async function riverModal() {
+  let d;
+  try { d = await api("/api/river"); } catch (e) { return fail(e); }
+  const R = d.rules, f = d.flag, order = ["green", "light_blue", "dark_blue", "amber", "red", "black", "grey"];
+  const ul = (xs) => `<ul class="rules-ul">${xs.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
+  const t = d.term;
+  modal({
+    title: "River rules · Isis", wide: true,
+    body: `
+      ${flagBanner(f, false)}
+      <p class="small muted">Today: sunrise ${esc(d.today.sunrise)}, sunset ${esc(d.today.sunset)}, so boats may be on the water from <b>${esc(d.today.first)}</b> to <b>${esc(d.today.last)}</b>.
+        ${t.week != null ? `${esc(d.current_term)} week ${t.week}${t.peak ? " · <b>peak term</b>" : ""}.` : ""}
+        Flag checked ${esc(fmtStamp(f.checked_at) || "never")}, every hour.</p>
+      <h3 class="rules-h">Flags</h3>
+      <p class="small muted">${esc(R.stream)} The flag sets the minimum experience of crews allowed out, but it doesn't mean it's safe to go out.</p>
+      <div class="flag-table">${order.map((k) => `<div class="flag-row ${k === f.key ? "on" : ""}"><span class="flag-dot" style="background:${esc(d.flags[k].colour)}"></span>
+        <div><b>${esc(d.flags[k].name)}</b>${k === f.key ? ` <span class="chip ok">Now</span>` : ""}${ul(R.flags[k])}</div></div>`).join("")}</div>
+      <p class="small muted">${esc(R.senior_crew)}</p>
+      <h3 class="rules-h">Times</h3>${ul([...R.general, ...R.isis])}
+      <h3 class="rules-h">Peak term</h3>${ul(R.peak)}
+      <h3 class="rules-h">Also</h3>${ul(R.other)}
+      <p class="small"><a href="${esc(d.rules_page)}" target="_blank" rel="noopener">Full river restrictions on the OURCs website</a> · <a href="${esc(f.page)}" target="_blank" rel="noopener">Flag history</a></p>`,
+    foot: `<div class="r"><button class="btn primary" data-close>Close</button></div>`,
+  });
+}
+
 function outingCard(o) {
   const admin = isAdmin();
   const kindChip = o.kind === "water" ? `<span class="chip water">${I.water}Water</span>` : `<span class="chip land">${I.land}Land</span>`;
@@ -294,6 +338,7 @@ function outingCard(o) {
     <div class="o-foot"><span class="chip ${full ? "ok" : "warn"}">${full ? I.check : ""}${esc(o.spots_text)}</span>${coxChip}</div>`}
     ${o.notes ? `<div class="small muted" style="margin-top:6px">${esc(o.notes)}</div>` : ""}
     ${admin && o.warnings.length ? `<div class="warnings">${o.warnings.map((w) => `<div>${I.alert}<span>${esc(w)}</span></div>`).join("")}</div>` : ""}
+    ${riverList((o.river || []).filter((r) => !o.past && (admin || r.level === "stop")))}
   </article>`;
 }
 
@@ -329,6 +374,7 @@ async function pageSchedule() {
         ` : ""}
       </div>
     </div>
+    ${flagBanner(data.river && data.river.flag)}
     <div class="filters">
       <div class="seg" id="flt">
         ${[["all", "All"], ["water", "Water"], ["land", "Land"], ["open", "Open spots"], ["mine", `Mine${S.me ? ` (${myCount})` : ""}`], ["subs", "Needs sub"]].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? "on" : ""}">${l}</button>`).join("")}
@@ -339,6 +385,7 @@ async function pageSchedule() {
     <div class="days">${data.days.map((d) => {
       const list = outs.filter((o) => o.date === d);
       return `<section class="day ${d === data.today ? "today" : ""}"><div class="day-head"><b>${DAY[dow(d)]}</b><span>${d === data.today ? "Today · " : ""}${fmtShort(d)}</span></div>
+        ${data.river && data.river.days[d] ? (() => { const x = data.river.days[d]; return `<div class="day-sun" title="Sunrise ${x.sunrise} · sunset ${x.sunset}. Rowing allowed from 1 hour before sunrise to 1 hour after sunset.">On the water ${x.first}–${x.last}</div>`; })() : ""}
         <div class="day-body">${list.map(outingCard).join("") || (admin ? `<div class="day-empty">No sessions<br><button class="btn sm" data-new="water" data-date="${d}">${I.plus}Add</button></div>` : `<div class="day-empty">Rest day</div>`)}</div></section>`;
     }).join("")}</div>`}
     <div class="legend">
@@ -352,6 +399,7 @@ async function pageSchedule() {
   $("#wk-next").onclick = () => { S.week = addDays(data.start, 7); pageSchedule(); };
   $("#wk-today").onclick = () => { S.week = S.boot.this_week; pageSchedule(); };
   $("#wk-cal").onclick = () => calendarModal();
+  const fr = $("#flag-rules"); if (fr) fr.onclick = () => riverModal();
   $$("#flt button").forEach((b) => b.onclick = () => {
     if (b.dataset.f === "mine" && !S.me) return pickIdentity(() => { S.filter = "mine"; route(); });
     S.filter = b.dataset.f; pageSchedule();
@@ -446,7 +494,8 @@ async function editOuting(o, defaults = {}) {
       <aside class="oe-pool" id="oe-pool"><div class="faint small">Loading sign-ups…</div></aside>
     </div>
     <label class="field"><span>Notes</span><textarea class="input" id="oe-notes" rows="2" placeholder="Optional — visible to rowers">${esc(st.notes)}</textarea></label>
-    <div id="oe-warn"></div>`;
+    <div id="oe-warn"></div>
+    <div id="oe-river"></div>`;
   const foot = `${o ? `<button class="btn danger" id="oe-del">Delete</button>` : ""}<div class="r">
       <button class="btn" data-close>Cancel</button>
       ${o && o.published ? "" : `<button class="btn" id="oe-save-draft">${o ? "Save draft" : "Save as draft"}</button>`}
@@ -457,6 +506,27 @@ async function editOuting(o, defaults = {}) {
     onMount: (m, close) => {
       const boatSel = $("#oe-boat", m), capSel = $("#oe-cap", m);
       let target = null, loaded = false;
+      let rcTimer = null, rcSeq = 0;
+      const riverCheck = () => {
+        clearTimeout(rcTimer);
+        rcTimer = setTimeout(async () => {
+          const el = $("#oe-river", m); if (!el) return;
+          if (st.kind !== "water") { el.innerHTML = ""; return; }
+          const seq = ++rcSeq;
+          try {
+            const r = await api("/api/admin/river-check", { method: "POST", body: {
+              date: st.date, time: $("#oe-time", m).value.trim(), end_time: $("#oe-end", m).value.trim(), coach: $("#oe-coach", m).value,
+              boat_id: st.boat_id, capacity: st.capacity, coxed: !!st.coxed, outing_id: o?.id || null,
+              seats: Object.fromEntries(Object.entries(st.seats).map(([k, v]) => [String(k), v])) } });
+            if (seq !== rcSeq) return;
+            const f = r.flag, stops = r.issues.filter((x) => x.level === "stop");
+            el.innerHTML = `<div class="callout river ${stops.length ? "bad" : r.issues.length ? "warn" : ""}">
+              <span class="flag-dot" style="background:${esc(f.colour)}"></span>
+              <div><b>River rules · Isis ${esc(f.name)} flag</b> <span class="faint small">· on the water ${esc(r.day.first)}–${esc(r.day.last)} (sunrise ${esc(r.day.sunrise)}, sunset ${esc(r.day.sunset)})</span>
+              ${r.issues.length ? riverList(r.issues) : `<div class="small" style="color:var(--ok);margin-top:4px">No river-rule problems found.</div>`}</div></div>`;
+          } catch { /* the check is only advice */ }
+        }, 250);
+      };
       const loadCand = async () => {
         try {
           const r = await api("/api/admin/candidates", { method: "POST", body: { kind: st.kind, date: st.date, time: st.time, outing_id: o?.id || null } });
@@ -540,6 +610,7 @@ async function editOuting(o, defaults = {}) {
         if (st.kind === "water" && b && b.status !== "available") extra.push(`${b.name} is marked “${b.status}”.`);
         $("#oe-warn", m).innerHTML = (extra.length || warns.length) ? `<div class="callout warn">${I.alert}<div>${[...extra, ...warns].map(esc).join("<br>")}</div></div>` : "";
         drawPool();
+        riverCheck();
       };
 
       // ---- sign-up pool: click a name to seat them ----
@@ -706,6 +777,7 @@ async function editOuting(o, defaults = {}) {
       $("#oe-date", m).onchange = (e) => { st.date = e.target.value; loadCand(); };
       $("#oe-time", m).onchange = (e) => { st.time = e.target.value.trim(); loadCand(); };
       $("#oe-coach", m).oninput = status;
+      $("#oe-end", m).onchange = riverCheck;
       coachPicker();
       const save = async (published) => {
         const body = {
@@ -1383,6 +1455,17 @@ async function pageSettings() {
           ${s.member_password_custom ? `<div><button class="btn sm ghost" id="s-mpw-reset">Revert to server password</button></div>` : ""}
         </div>
         <div class="card card-pad" style="display:flex;flex-direction:column;gap:12px">
+          <h3 style="margin:0">River rules</h3>
+          <p class="muted small" style="margin:0">Sessions are checked against the OURCs rules for the Isis and the current flag, which is fetched every hour. Peak term runs from the Thursday of 0th week to the last day of the term's major regatta.</p>
+          <div id="s-river-flag" class="small muted">Loading flag…</div>
+          <div class="grid-2">
+            <label class="field"><span>Full Term starts</span><input class="input" type="date" id="s-term-start"><span class="hint">Sunday of 1st week.</span></label>
+            <label class="field"><span>Major regatta ends</span><input class="input" type="date" id="s-peak-end"><span class="hint">Tamesis / Torpids / Summer VIIIs. Blank = end of 8th week.</span></label>
+          </div>
+          <label class="field"><span>Crews on the water at once before 08:00 (peak term)</span><input class="input" type="number" min="1" max="5" id="s-peak8"><span class="hint">1 normally; 2 with an Extra Slot or the OURCs Secretary's permission. (Trinity uses its own limit of two 4s/8s.)</span></label>
+          <div class="toolbar"><button class="btn" id="s-river-save">Save river settings</button><button class="btn ghost" id="s-river-refresh">Check flag now</button><button class="btn ghost" id="s-river-rules">View rules</button></div>
+        </div>
+        <div class="card card-pad" style="display:flex;flex-direction:column;gap:12px">
           <h3 style="margin:0">Import from spreadsheet</h3>
           <p class="muted small" style="margin:0">Upload the club's <b>Rowing_Outings.xlsx</b> to import members (swim tests, subs, category, cox status, past outing counts), coaches and term settings. Existing members are matched by name and updated.</p>
           <input type="file" id="s-file" accept=".xlsx" class="input">
@@ -1416,6 +1499,17 @@ async function pageSettings() {
     </div>`;
   const phoneFields = () => ({ phone_mode: $("#s-phone-mode").value, phone_retention_days: Math.max(0, Math.min(3650, +$("#s-phone-days").value || 0)) });
   $("#s-csv").onclick = () => exportModal("/api/admin/members.csv", "all members");
+  const drawFlag = (f) => { $("#s-river-flag").innerHTML = `<span class="flag-dot" style="background:${esc(f.colour)}"></span> Isis: <b>${esc(f.name)}</b> · checked ${esc(fmtStamp(f.checked_at) || "never")}${f.error ? ` · <span style="color:var(--bad)">last check failed: ${esc(f.error)}</span>` : ""}`; };
+  api("/api/river").then((rv) => {
+    drawFlag(rv.flag);
+    $("#s-term-start").value = rv.settings.term_start || ""; $("#s-peak-end").value = rv.settings.peak_end || ""; $("#s-peak8").value = rv.settings.peak_crews_before_8 || 1;
+  }).catch(() => {});
+  $("#s-river-save").onclick = async () => {
+    const body = { term_start: $("#s-term-start").value, peak_end: $("#s-peak-end").value, peak_crews_before_8: Math.max(1, Math.min(5, +$("#s-peak8").value || 1)) };
+    try { await api("/api/admin/river-settings", { method: "PUT", body }); toast("River settings saved"); } catch (e) { fail(e); }
+  };
+  $("#s-river-refresh").onclick = async () => { try { drawFlag(await api("/api/admin/river/refresh", { method: "POST" })); toast("Flag checked"); } catch (e) { fail(e); } };
+  $("#s-river-rules").onclick = () => riverModal();
   const drawPlaces = async () => {
     const ps = await loadPlaces(true);
     $("#s-places").innerHTML = ps.length ? ps.map((p) => `<button type="button" class="place-row" data-place="${p.id}">

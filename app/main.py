@@ -21,12 +21,13 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import db
 from .auth import require_admin, require_member, role_of
 from . import privacy
+from . import river
 from .importer import import_workbook
 from .timeutil import normalize as norm_time, to_minutes
 from .calendar import router as calendar_router
 from .signup import availability_for_outing, router as signup_router
 from .stats import router as stats_router
-from .logic import (BOAT_TYPES, SUBS_PLANS, TERMS, Rules, monday_of, outing_payload,
+from .logic import (BOAT_TYPES, SUBS_PLANS, TERMS, TZ, Rules, monday_of, outing_payload,
                     seat_label, seat_list)
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
@@ -55,6 +56,8 @@ if _r["encrypted"]:
     if _r["plaintext_left"]:
         print(f"[privacy] WARNING: {_r['plaintext_left']} phone number(s) stored unencrypted; set PHONE_KEY to encrypt them", flush=True)
 privacy.start_retention_thread(db)
+if os.environ.get("RIVER_FLAG_FETCH", "on").lower() not in ("off", "0", "false"):
+    river.start_flag_thread(db)
 
 
 def _secret_key() -> str:
@@ -183,6 +186,10 @@ def _outings_payload(conn, rules: Rules, where: str, params: tuple, admin: bool)
             WHERE o.date IN ({dq}) AND o.time != ''""", dates):
         slot[(r["date"], r["time"])][r["member_id"]].append(r["id"])
     boats = _boats(conn)
+    flag = river.current_flag(rules.settings)
+    day_water = defaultdict(list)  # date -> water outings that day (for the before-8am crew limits)
+    for r in conn.execute(f"SELECT id, kind, date, time, end_time, capacity FROM outings WHERE kind='water' AND date IN ({dq})", dates):
+        day_water[r["date"]].append(dict(r))
     boat_slot = defaultdict(list)
     for o in conn.execute(f"SELECT id, date, time, boat_id FROM outings WHERE date IN ({dq}) AND boat_id IS NOT NULL", dates):
         boat_slot[(o["date"], o["time"], o["boat_id"])].append(o["id"])
@@ -190,6 +197,9 @@ def _outings_payload(conn, rules: Rules, where: str, params: tuple, admin: bool)
     for o in outings:
         p = outing_payload(rules, o, assigns[o["id"]], subs[o["id"]], boats,
                            slot.get((o["date"], o["time"]), {}) if o["time"] else {}, admin)
+        crew = {a["seat"]: a["member_id"] for a in assigns[o["id"]]}
+        p["river"] = river.check_outing(o, crew, rules.members, boats.get(o["boat_id"]), rules.settings, flag,
+                                        rules.today, TZ, [x for x in day_water[o["date"]] if x["id"] != o["id"]])
         if admin and o["boat_id"] and o["time"] and len(boat_slot[(o["date"], o["time"], o["boat_id"])]) > 1:
             p["warnings"].append(f"{boats[o['boat_id']]['name']} is booked twice at this time")
         out.append(p)
@@ -239,6 +249,8 @@ def week(start: Optional[str] = None, role: str = Depends(require_member)):
             "total": counts["n"] or 0,
             "published": counts["p"] or 0,
             "today": rules.today.isoformat(),
+            "river": {"flag": river.current_flag(rules.settings),
+                      "days": {(ws + timedelta(days=i)).isoformat(): river.day_info(ws + timedelta(days=i), TZ) for i in range(7)}},
         }
 
 
@@ -1118,6 +1130,84 @@ def week_copy(b: CopyWeekIn, _: str = Depends(require_admin)):
                                 SELECT ?, seat, member_id FROM assignments WHERE outing_id=?""", (cur.lastrowid, o["id"]))
             n += 1
         return {"copied": n}
+
+
+# --------------------------------------------------------------- river ----
+@app.get("/api/river")
+def river_info(role: str = Depends(require_member)):
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        s = rules.settings
+        return {
+            "flag": river.current_flag(s), "rules": river.RULES_TEXT, "flags": river.FLAGS,
+            "rules_page": river.RULES_PAGE, "today": river.day_info(rules.today, TZ),
+            "term": river.term_info(s, rules.today), "current_term": s.get("current_term"),
+            "settings": {k: s.get(k, "") for k in ("term_start", "peak_end", "peak_crews_before_8")},
+        }
+
+
+class RiverCheckIn(BaseModel):
+    date: str
+    time: str = ""
+    end_time: str = ""
+    coach: str = ""
+    boat_id: Optional[int] = None
+    capacity: int = Field(8, ge=1, le=8)
+    coxed: bool = True
+    seats: dict[str, Optional[int]] = {}
+    outing_id: Optional[int] = None
+
+
+@app.post("/api/admin/river-check")
+def river_check(b: RiverCheckIn, _: str = Depends(require_admin)):
+    """River-rule warnings for an outing being edited (not saved yet)."""
+    try:
+        date.fromisoformat(b.date)
+    except ValueError:
+        raise HTTPException(400, "Bad date")
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        boat = dict(r) if b.boat_id and (r := conn.execute("SELECT * FROM boats WHERE id=?", (b.boat_id,)).fetchone()) else None
+        start, end = norm_time(b.time)[0], norm_time(b.end_time)[0] if b.end_time.strip() else ""
+        o = {"kind": "water", "date": b.date, "time": start, "end_time": end, "coach": b.coach,
+             "capacity": boat["seats"] if boat else b.capacity, "coxed": bool(boat["coxed"]) if boat else b.coxed}
+        crew = {int(k): v for k, v in b.seats.items() if v is not None and k.lstrip("-").isdigit()}
+        others = [dict(r) for r in conn.execute(
+            "SELECT id, kind, date, time, end_time, capacity FROM outings WHERE kind='water' AND date=? AND id != ?",
+            (b.date, b.outing_id or -1))]
+        flag = river.current_flag(rules.settings)
+        return {"flag": flag, "day": river.day_info(date.fromisoformat(b.date), TZ),
+                "issues": river.check_outing(o, crew, rules.members, boat, rules.settings, flag, rules.today, TZ, others)}
+
+
+class RiverSettingsIn(BaseModel):
+    term_start: str = ""
+    peak_end: str = ""
+    peak_crews_before_8: int = Field(1, ge=1, le=5)
+
+
+@app.put("/api/admin/river-settings")
+def river_settings(b: RiverSettingsIn, _: str = Depends(require_admin)):
+    for v in (b.term_start, b.peak_end):
+        if v:
+            try:
+                date.fromisoformat(v)
+            except ValueError:
+                raise HTTPException(400, f"Bad date: {v}")
+    if b.term_start and date.fromisoformat(b.term_start).weekday() != 6:
+        raise HTTPException(400, "Full Term starts on a Sunday (Sunday of 1st week)")
+    with db.get_conn() as conn:
+        db.set_setting(conn, "term_start", b.term_start)
+        db.set_setting(conn, "peak_end", b.peak_end)
+        db.set_setting(conn, "peak_crews_before_8", str(b.peak_crews_before_8))
+    return {"ok": True}
+
+
+@app.post("/api/admin/river/refresh")
+def river_refresh(_: str = Depends(require_admin)):
+    river.refresh_now(db)
+    with db.get_conn() as conn:
+        return river.current_flag(db.get_settings(conn))
 
 
 # ------------------------------------------------------------- settings ----

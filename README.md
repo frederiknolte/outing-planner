@@ -120,6 +120,20 @@ Every private, LAN and Tailscale target should show `BLOCKED`, the internet chec
 - **Rowers database**: Novice/Senior category, swim test, subs plan, cox status (N/X/S), and water/land outing totals. Totals are worked out from the schedule plus a baseline of earlier outings, so there's no weekly roll-over to do. Admins can export members as CSV.
 - **Coaches**: sessions per coach per month, matched on the Coach/bankrider field (with an optional short "text to find", like the spreadsheet).
 
+### River rules and the OURCs flag (Isis)
+
+The club boats from its own boathouse on the Isis, so water outings are checked against the [OURCs river restrictions](https://ourcs.co.uk/information/river-restrictions/) and the current [Isis flag](https://ourcs.co.uk/information/flags/isis/). The code is in `app/river.py`.
+
+- **Flag**: fetched every hour from `https://ourcs.co.uk/api/flags/status/isis/` and stored in the database. If a fetch fails, the last known flag is kept and marked *may be out of date* after 3 hours. The schedule shows the flag and its notices to everyone, and **River rules** opens the full rules plus what each flag means. Admins can also use **Settings → River rules → Check flag now**. Set `RIVER_FLAG_FETCH=off` to turn fetching off.
+- **Checks** (shown on each outing card and live in the session editor; they never block saving):
+  - Daylight: not earlier than 1 hour before sunrise or later than 1 hour after sunset (calculated for Oxford). Each day on the schedule shows the allowed window.
+  - Sundays 08:00–13:00 and Wednesdays after 19:00: no crews.
+  - Peak term (Thursday of 0th week to the end of the major regatta): crews per club before 08:00 on weekdays (Trinity: two 4s/8s), and the Trinity 17:00–19:00 restriction.
+  - Flag, for today and future outings: Red/Black means no crews. Amber requires a senior cox (status S), a senior crew (at least 4 Senior rowers and no novices) and a bankrider (the Coach/bankrider field). Dark Blue rules out novice or unregistered coxes. Light Blue rules out unregistered coxes, and novice coxes are only allowed under its conditions (sunrise to sunset, senior crew, bankrider, registered 2 hours ahead). Grey means the club must do its own risk assessment.
+  - Rowers see only the problems that break a rule. Admins also see the things to check.
+- **Not checked**: the weekday 08:30–13:00 rule (Reuben is exempt), Godstow and St Edward's rafts, regatta-day restrictions, and term-based experience (the app only knows Novice/Senior).
+- **Settings → River rules**: the start of Full Term (Sunday of 1st week), when the major regatta ends (blank = end of 8th week), and how many crews may be out at once before 08:00 (2 with an Extra Slot).
+
 ### Rules (taken from the spreadsheet)
 
 - Subs are valid for a *Full year* plan that matches the current academic year, or a *Single term* plan that matches the current term and year. Anyone can row up to and including the **subs cutoff date**.

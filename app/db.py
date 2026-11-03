@@ -160,6 +160,10 @@ DEFAULT_SETTINGS = {
     "subs_reminder_template": 'Hi {first_name}, I’m Frederik, the treasurer of Reuben Boat Club! {reason} and for continuing to row with RBC, you’ll need to become a member and pay subs. With the subs we fund new equipment, socials, and insurance, so it’s really important that all members pay them🙏 You can pay either for a termly or a yearly membership here: https://www.oxforduniversitystores.co.uk/product-catalogue/reuben-college/boat-club',            # water outings allowed before a swim test is required
     "phone_mode": "required",          # sign-up form: required | optional | off
     "phone_retention_days": "180",     # delete numbers after this long without a sign-up (0 = keep)
+    # River rules (see river.py)
+    "term_start": "2026-10-11",        # Sunday of 1st week of Full Term
+    "peak_end": "",                    # last day of the term's major regatta; blank = end of 8th week
+    "peak_crews_before_8": "1",        # crews allowed on the water at once before 08:00 in peak term (Extra Slot = 2)
 }
 
 
