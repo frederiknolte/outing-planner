@@ -1083,14 +1083,37 @@ const REM_TIERS = {
 const daysAgo = (ts) => { const d = Math.floor((Date.now() - Date.parse(ts.replace(" ", "T") + "Z")) / 86400000); return d <= 0 ? "today" : d === 1 ? "yesterday" : `${d} days ago`; };
 const sessLabel = (o) => `${o.title || (o.kind === "water" ? "water outing" : "land training")} on ${DAY[dow(o.date)]} ${fmtShort(o.date)}${o.time ? " at " + o.time : ""}`;
 
-function remMessage(x, d) {
-  const first = x.name.split(" ")[0], club = d.club || "the boat club", term = `${d.term} ${d.year}`;
-  const cutoff = d.cutoff ? fmtLong(d.cutoff) : null;
-  if (x.tier === "blocked") return `Hi ${first}, a quick reminder from ${club}: you're down for ${sessLabel(x.blocked[0])}, but your subs for ${term} aren't paid yet, so you can't take part until they are. Could you pay them as soon as possible? Thanks!`;
-  if (x.tier === "soon") return `Hi ${first}, just a heads-up from ${club}: you have 1 free novice outing left. After that you'll need to pay your subs for ${term} to keep rowing. Thanks!`;
-  const why = x.category === "Novice" ? `you've now used your ${x.free_n} free novice outings` : `your subs for ${term} aren't paid yet`;
-  if (x.tier === "cutoff") return `Hi ${first}, a reminder from ${club}: ${why}. Please pay your subs for ${term} by ${cutoff} to keep rowing after that. Thanks!`;
-  return `Hi ${first}, a reminder from ${club}: ${why}. Please pay your subs for ${term} before your next outing so you can keep rowing. Thanks!`;
+/* The "{reason}" sentence for a person's situation (no full stop: the template continues). */
+function remReason(x, d) {
+  const n = x.free_n;
+  if (x.category !== "Novice") return `Your subs for ${d.term} ${d.year} haven’t been paid yet`;
+  if (x.tier === "soon") return `After your next water outing you will have reached ${n} water outings`;
+  if (!x.reach_date || x.reach_date <= d.today) return `You have now reached ${n} water outings`;
+  const sunday = addDays(d.today, 6 - dow(d.today));
+  return x.reach_date <= sunday ? `By the end of this week you will have reached ${n} water outings` : `With your upcoming outings you will reach ${n} water outings`;
+}
+function remMessage(x, d, template) {
+  const vals = { first_name: x.name.split(" ")[0], reason: remReason(x, d), term: d.term, year: d.year, cutoff: d.cutoff ? fmtLong(d.cutoff) : "" };
+  return (template || d.template).replace(/\{(first_name|reason|term|year|cutoff)\}/g, (_, k) => vals[k]);
+}
+
+function editReminderTemplate(d) {
+  const sample = d.members.find((x) => x.category === "Novice") || d.members[0] || { name: "Htar Example", category: "Novice", tier: "now", free_n: d.free_n, reach_date: null };
+  modal({
+    title: "Reminder message", wide: true,
+    body: `<label class="field"><span>Message</span><textarea class="input" id="tpl" rows="7">${esc(d.template)}</textarea>
+        <span class="hint">Placeholders: <code>{first_name}</code>, <code>{reason}</code> (a sentence for their situation, e.g. “By the end of this week you will have reached ${d.free_n} water outings”), <code>{term}</code>, <code>{year}</code>, <code>{cutoff}</code>.</span></label>
+      <div class="field"><span>Preview for ${esc(sample.name)}</span><div class="callout" id="tpl-prev" style="white-space:pre-wrap"></div></div>`,
+    foot: `<button class="btn ghost" id="tpl-reset">Reset to default</button><div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="tpl-save">Save</button></div>`,
+    onMount: (m, close) => {
+      const ta = $("#tpl", m), prev = () => { $("#tpl-prev", m).textContent = remMessage(sample, d, ta.value); };
+      ta.oninput = prev; prev();
+      $("#tpl-reset", m).onclick = () => { ta.value = d.default_template; prev(); };
+      $("#tpl-save", m).onclick = async () => {
+        try { await api("/api/admin/subs-reminders/template", { method: "PUT", body: { template: ta.value } }); close(); toast("Reminder message saved"); pageSubsReminders(); } catch (e) { fail(e); }
+      };
+    },
+  });
 }
 
 async function pageSubsReminders() {
@@ -1099,7 +1122,14 @@ async function pageSubsReminders() {
   const hideReminded = !!S.remHide;
   const list = d.members.filter((x) => !hideReminded || !x.reminded_at);
   const row = (x) => {
-    const why = x.tier === "blocked" ? `Down for ${x.blocked.map((o) => `<b>${esc(sessLabel(o))}</b>`).join(", ")}`
+    const blockedWhy = () => {
+      if (x.category !== "Novice") return "Subs aren't paid and the cutoff has passed.";
+      const landOnly = x.blocked.every((o) => o.kind === "land");
+      return landOnly
+        ? `These come after their ${x.free_n}th water outing (${x.water} incl. scheduled). Land training is only free while free water outings remain.`
+        : `They've used their ${x.free_n} free water outings (${x.water} incl. scheduled), so anything after that needs subs.`;
+    };
+    const why = x.tier === "blocked" ? `Down for ${x.blocked.map((o) => `<b>${esc(sessLabel(o))}</b>`).join(", ")}<div class="faint small">${esc(blockedWhy())}</div>`
       : x.category === "Novice" ? (x.free_left === 0 ? `Used all ${x.free_n} free novice outings (${x.water} water outing${x.water === 1 ? "" : "s"} incl. scheduled)` : `${x.free_n - x.free_left} of ${x.free_n} free novice outings used, incl. scheduled`)
       : "Senior, subs not paid";
     const plan = x.subs_plan !== "Unpaid" ? `<span class="chip bad" title="Not valid for ${esc(d.term)} ${esc(d.year)}">Expired: ${esc(x.subs_plan === "Single term" ? `${x.subs_term} ${x.subs_year}` : `Full year ${x.subs_year}`)}</span>` : "";
@@ -1124,15 +1154,16 @@ async function pageSubsReminders() {
       <div class="toolbar">${rowersTabs("subs", d.members.length)}</div></div>
     <div class="filters">
       <label class="check small"><input type="checkbox" id="rem-hide" ${hideReminded ? "checked" : ""}> Hide people already reminded</label>
-      ${list.length ? `<button class="btn sm" id="rem-names" style="margin-left:auto">${I.copy}Copy all names</button>` : ""}
+      <div class="toolbar" style="margin-left:auto"><button class="btn sm" id="rem-tpl">Edit message</button>${list.length ? `<button class="btn sm" id="rem-names">${I.copy}Copy all names</button>` : ""}</div>
     </div>
-    ${groups.length ? groups.map(([t, l]) => `<div class="section-title rem-h ${REM_TIERS[t].cls}">${REM_TIERS[t].title} <span class="faint">${l.length}</span></div>
+    ${groups.length ? groups.map(([t, l]) => `<div class="section-title rem-h ${REM_TIERS[t].cls}">${REM_TIERS[t].title} <span class="faint">· ${l.length} ${l.length === 1 ? "person" : "people"}</span></div>
       <p class="muted small" style="margin:-6px 0 10px">${REM_TIERS[t].hint}</p><div class="rem-list">${l.map(row).join("")}</div>`).join("")
       : `<div class="card empty">${I.check}<h3>No one to remind</h3><p>${hideReminded && d.members.length ? "Everyone on the list has already been reminded." : "Every active member who needs subs has paid, or still has free novice outings left."}</p></div>`}`;
   wireRowersTabs(); wireReveal($("#main"));
   const byId = (id) => d.members.find((x) => x.id === +id);
   const markReminded = async (id, on = true) => { try { await api(`/api/admin/members/${id}/reminded`, { method: "POST", body: { reminded: on } }); } catch (e) { fail(e); } };
   const copy = async (text) => { try { await navigator.clipboard.writeText(text); return true; } catch { const t = document.createElement("textarea"); t.value = text; document.body.appendChild(t); t.select(); const ok = document.execCommand("copy"); t.remove(); return ok; } };
+  $("#rem-tpl").onclick = () => editReminderTemplate(d);
   $("#rem-hide").onchange = (e) => { S.remHide = e.target.checked; pageSubsReminders(); };
   const nm = $("#rem-names"); if (nm) nm.onclick = async () => { await copy(list.map((x) => x.name).join("\n")); toast(`Copied ${list.length} name${list.length === 1 ? "" : "s"}`); };
   $$("[data-copy]").forEach((b) => b.onclick = async () => { const x = byId(b.dataset.copy); await copy(remMessage(x, d)); await markReminded(x.id); toast(`Message for ${x.name.split(" ")[0]} copied · marked as reminded`); pageSubsReminders(); });

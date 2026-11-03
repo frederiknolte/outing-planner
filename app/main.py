@@ -671,6 +671,13 @@ def subs_reminders(_: str = Depends(require_admin)):
             t = rules.totals(mid)
             novice = m["category"] == "Novice"
             free_left = max(0, rules.free_n - t["water"]) if novice else None
+            # date of the water outing that reaches the free limit (None if reached before this system)
+            reach_date = None
+            if novice and rules.free_n:
+                idx = rules.free_n - m["past_water"] - 1
+                keys = rules.water_keys.get(mid, [])
+                if 0 <= idx < len(keys):
+                    reach_date = keys[idx][0]
             if blocked[mid]:
                 tier = "blocked"
             elif novice and free_left > 1:
@@ -682,6 +689,7 @@ def subs_reminders(_: str = Depends(require_admin)):
             out.append({
                 "id": mid, "name": m["name"], "category": m["category"], "tier": tier,
                 "free_left": free_left, "free_n": rules.free_n, "water": t["water"], "land": t["land"],
+                "water_done": t["water_done"], "reach_date": reach_date,
                 "blocked": blocked[mid][:5], "next": (upcoming[mid] or [None])[0],
                 "last_activity": max(filter(None, [last_out.get(mid), last_signup.get(mid)]), default=None),
                 "subs_plan": m["subs_plan"], "subs_term": m["subs_term"], "subs_year": m["subs_year"],
@@ -693,7 +701,20 @@ def subs_reminders(_: str = Depends(require_admin)):
         s = rules.settings
         return {"members": out, "term": s.get("current_term"), "year": s.get("academic_year"),
                 "cutoff": s.get("subs_cutoff") or None, "before_cutoff": before_cutoff, "today": today,
-                "club": s.get("club_name"), "free_n": rules.free_n}
+                "club": s.get("club_name"), "free_n": rules.free_n,
+                "template": s.get("subs_reminder_template") or db.DEFAULT_SETTINGS["subs_reminder_template"],
+                "default_template": db.DEFAULT_SETTINGS["subs_reminder_template"]}
+
+
+class TemplateIn(BaseModel):
+    template: str = Field(..., max_length=2000)
+
+
+@app.put("/api/admin/subs-reminders/template")
+def subs_template(b: TemplateIn, _: str = Depends(require_admin)):
+    with db.get_conn() as conn:
+        db.set_setting(conn, "subs_reminder_template", b.template.strip() or db.DEFAULT_SETTINGS["subs_reminder_template"])
+        return {"ok": True}
 
 
 class RemindedIn(BaseModel):

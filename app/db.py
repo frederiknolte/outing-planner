@@ -144,7 +144,9 @@ DEFAULT_SETTINGS = {
     "novice_land_free": "1",
     "season_start": "2026-10-01",
     "member_password_hash": "",
-    "swim_test_after": "4",            # water outings allowed before a swim test is required
+    "swim_test_after": "4",
+    # Subs reminder text. Placeholders: {first_name} {reason} {term} {year} {cutoff}
+    "subs_reminder_template": 'Hi {first_name}, I’m Frederik, the treasurer of Reuben Boat Club! {reason} and for continuing to row with RBC, you’ll need to become a member and pay subs. With the subs we fund new equipment, socials, and insurance, so it’s really important that all members pay them🙏 You can pay either for a termly or a yearly membership here: https://www.oxforduniversitystores.co.uk/product-catalogue/reuben-college/boat-club',            # water outings allowed before a swim test is required
     "phone_mode": "required",          # sign-up form: required | optional | off
     "phone_retention_days": "180",     # delete numbers after this long without a sign-up (0 = keep)
 }
