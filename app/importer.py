@@ -115,6 +115,15 @@ def import_workbook(conn, data: bytes, include_schedule: bool = False) -> dict:
     return report
 
 
+def _t(v) -> tuple[str, str]:
+    """Spreadsheet time cell -> ("HH:MM", end "HH:MM" or "")."""
+    from datetime import time as _time
+    from .timeutil import normalize
+    if isinstance(v, (datetime, _time)):
+        return (v.strftime("%H:%M"), "")
+    return normalize(_s(v))
+
+
 def _member_id(conn, name: str):
     r = conn.execute("SELECT id FROM members WHERE name = ?", (name,)).fetchone()
     return r["id"] if r else None
@@ -130,8 +139,8 @@ def _import_schedule(conn, sh, week: date) -> int:
             cap = _i(sh.cell(17, col).value) or 8
             d = week + timedelta(days=DAYS.index(day))
             cur = conn.execute(
-                "INSERT INTO outings(kind, date, time, location, title, coach, capacity, coxed, published) VALUES ('water', ?, ?, ?, ?, ?, ?, 1, 1)",
-                (d.isoformat(), _s(sh.cell(5, col).value), _s(sh.cell(4, col).value),
+                "INSERT INTO outings(kind, date, time, end_time, location, title, coach, capacity, coxed, published) VALUES ('water', ?, ?, ?, ?, ?, ?, ?, 1, 1)",
+                (d.isoformat(), *_t(sh.cell(5, col).value), _s(sh.cell(4, col).value),
                  _s(sh.cell(6, col).value), _s(sh.cell(7, col).value), cap),
             )
             oid, used = cur.lastrowid, set()
@@ -149,8 +158,8 @@ def _import_schedule(conn, sh, week: date) -> int:
         if day in DAYS:
             d = week + timedelta(days=DAYS.index(day))
             cur = conn.execute(
-                "INSERT INTO outings(kind, date, time, location, title, coach, capacity, coxed, published) VALUES ('land', ?, ?, ?, 'Land training', ?, 8, 0, 1)",
-                (d.isoformat(), _s(sh.cell(24, col).value), _s(sh.cell(23, col).value), _s(sh.cell(25, col).value)),
+                "INSERT INTO outings(kind, date, time, end_time, location, title, coach, capacity, coxed, published) VALUES ('land', ?, ?, ?, ?, 'Land training', ?, 8, 0, 1)",
+                (d.isoformat(), *_t(sh.cell(24, col).value), _s(sh.cell(23, col).value), _s(sh.cell(25, col).value)),
             )
             oid, used, seat = cur.lastrowid, set(), 1
             for row in range(26, 34):

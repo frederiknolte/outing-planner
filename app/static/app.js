@@ -5,6 +5,9 @@
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const tRange = (o) => (o && o.time ? (o.end_time ? `${o.time}–${o.end_time}` : o.time) : "");
+async function loadPlaces(force = false) { if (!S.places || force) { try { S.places = await api("/api/places"); } catch { S.places = []; } } return S.places; }
+const placesDatalist = (id) => `<datalist id="${id}">${(S.places || []).map((p) => `<option value="${esc(p.name)}">${esc(p.address)}</option>`).join("")}</datalist>`;
 const SIDE_SHORT = { "Bow side only": "Bow only", "Bow side preferred": "Bow pref", "Equally happy": "Either side", "Stroke side preferred": "Stroke pref", "Stroke side only": "Stroke only" };
 const DAY = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAYL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -262,7 +265,7 @@ function joinLand(o) {
   requireMe(async () => {
     try {
       await api(`/api/outings/${o.id}/join`, { method: "POST", body: { member_id: S.me } });
-      toast(`You're in: ${o.title || "Land training"}, ${DAY[dow(o.date)]} ${fmtShort(o.date)}${o.time ? " " + o.time : ""}`);
+      toast(`You're in: ${o.title || "Land training"}, ${DAY[dow(o.date)]} ${fmtShort(o.date)}${o.time ? " " + tRange(o) : ""}`);
       route();
     } catch (e) { fail(e); }
   });
@@ -278,11 +281,11 @@ function outingCard(o) {
   const full = o.spots === 0;
   const coxChip = o.cox_check && o.cox_check !== o.spots_text ? `<span class="chip ${o.cox_check === "Bankrider needed" ? "bad" : o.cox_check.startsWith("Cox needed") || o.cox_check === "Cox status not set" ? "warn" : "ok"}">${esc(o.cox_check)}</span>` : "";
   return `<article class="card outing ${o.kind} ${o.published ? "" : "draft"} ${o.past ? "past" : ""} ${admin ? "clickable" : ""}" data-oid="${o.id}">
-    <div class="o-top"><div>${o.time ? `<div class="o-time tnum">${esc(o.time)}</div><div class="o-title">${esc(o.title || (o.kind === "water" ? "Water outing" : "Land training"))}</div>` : `<div class="o-time">${esc(o.title || (o.kind === "water" ? "Water outing" : "Land training"))}</div><div class="o-title faint small">Time TBC</div>`}</div>
+    <div class="o-top"><div>${o.time ? `<div class="o-time tnum">${esc(tRange(o))}</div><div class="o-title">${esc(o.title || (o.kind === "water" ? "Water outing" : "Land training"))}</div>` : `<div class="o-time">${esc(o.title || (o.kind === "water" ? "Water outing" : "Land training"))}</div><div class="o-title faint small">Time TBC</div>`}</div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${kindChip}${admin && !o.published ? `<span class="chip">Draft</span>` : ""}</div></div>
     <div class="o-sub">
       ${o.boat ? `<span>${I.boat}${esc(o.boat.name)} <span class="faint">${esc(o.boat.type)}</span></span>` : o.kind === "water" ? `<span class="faint">${I.boat}${o.capacity}${o.coxed ? "+" : ""} · no boat set</span>` : ""}
-      ${o.location ? `<span>${I.pin}${esc(o.location)}</span>` : ""}
+      ${o.location ? (o.maps_url ? `<a href="${esc(o.maps_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open in maps">${I.pin}${esc(o.location)}</a>` : `<span>${I.pin}${esc(o.location)}</span>`) : ""}
       ${o.coach ? `<span>${I.whistle}${esc(o.coach)}</span>` : ""}
     </div>
     ${o.kind === "land" ? landSpots(o) : `<div class="seats">${o.seats.map((s) => seatRow(o, s)).join("")}</div>
@@ -393,12 +396,12 @@ function copyWeek(target) {
 
 // ------------------------------------------------------- outing editor ----
 async function editOuting(o, defaults = {}) {
-  const [boatsRes, coaches] = await Promise.all([api("/api/admin/boats"), api("/api/admin/coaches")]).catch((e) => { fail(e); return [null, null]; });
+  const [boatsRes, coaches] = await Promise.all([api("/api/admin/boats"), api("/api/admin/coaches"), loadPlaces(true)]).catch((e) => { fail(e); return [null, null]; });
   if (!boatsRes) return;
   const boats = boatsRes.boats.filter((b) => b.status !== "retired" || (o && o.boat && o.boat.id === b.id));
   const st = {
     kind: o?.kind || defaults.kind || "water",
-    date: o?.date || defaults.date, time: o?.time || defaults.time || "", location: o?.location || defaults.location || "",
+    date: o?.date || defaults.date, time: o?.time || defaults.time || "", end_time: o?.end_time || defaults.end_time || "", location: o?.location || defaults.location || "",
     title: o?.title || defaults.title || "", coach: o?.coach || "", boat_id: o?.boat?.id || null,
     capacity: o?.capacity || 8, coxed: o ? o.coxed : true, notes: o?.notes || "",
     seats: Object.fromEntries((o?.seats || []).filter((s) => s.member).map((s) => [s.seat, s.member.id])),
@@ -419,8 +422,8 @@ async function editOuting(o, defaults = {}) {
     <div class="seg" id="oe-kind"><button data-k="water" class="${st.kind === "water" ? "on" : ""}">${I.water}Water</button><button data-k="land" class="${st.kind === "land" ? "on" : ""}">${I.land}Land</button></div>
     <div class="grid-3">
       <label class="field"><span>Day</span><select class="input" id="oe-date">${(week?.days || [st.date]).map((d) => `<option value="${d}" ${d === st.date ? "selected" : ""}>${fmtLong(d)}</option>`).join("")}${week && !week.days.includes(st.date) ? `<option value="${st.date}" selected>${fmtLong(st.date)}</option>` : ""}</select></label>
-      <label class="field"><span>Time</span><input class="input" id="oe-time" placeholder="e.g. 07:00" value="${esc(st.time)}"></label>
-      <label class="field"><span>Where</span><input class="input" id="oe-loc" placeholder="e.g. Boathouse" value="${esc(st.location)}"></label>
+      <div class="field"><span>Time <span class="faint">(start – end)</span></span><div class="time-range"><input class="input tnum" type="time" id="oe-time" value="${esc(st.time)}" aria-label="Start time"><span class="faint">–</span><input class="input tnum" type="time" id="oe-end" value="${esc(st.end_time)}" aria-label="End time (optional)"></div></div>
+      <label class="field"><span>Where</span><input class="input" id="oe-loc" list="oe-places" placeholder="e.g. Boathouse" value="${esc(st.location)}">${placesDatalist("oe-places")}</label>
     </div>
     <div class="grid-2">
       <label class="field"><span>Crew / session name</span><input class="input" id="oe-title" placeholder="e.g. M1, Novice W" value="${esc(st.title)}"></label>
@@ -704,7 +707,7 @@ async function editOuting(o, defaults = {}) {
       coachPicker();
       const save = async (published) => {
         const body = {
-          kind: st.kind, date: st.date, time: $("#oe-time", m).value.trim(), location: $("#oe-loc", m).value,
+          kind: st.kind, date: st.date, time: $("#oe-time", m).value.trim(), end_time: $("#oe-end", m).value.trim(), location: $("#oe-loc", m).value,
           title: $("#oe-title", m).value, coach: $("#oe-coach", m).value, boat_id: st.kind === "water" ? st.boat_id : null,
           capacity: st.kind === "land" ? (+$("#oe-cap-l", m).value || 8) : st.capacity, coxed: st.kind === "water" && st.coxed,
           notes: $("#oe-notes", m).value, published, seats: Object.fromEntries(Object.entries(st.seats).map(([k, v]) => [String(k), v])),
@@ -887,7 +890,7 @@ async function pageSubs() {
     return `<article class="card sub">
       <div class="sub-when"><div class="datebox"><span>${DAY[dow(s.outing.date)]}</span><b>${d.getUTCDate()}</b><span>${MON[d.getUTCMonth()]}</span></div>
         <div style="flex:1;min-width:0"><div style="font-weight:700">${esc(s.outing.title || (s.outing.kind === "water" ? "Water outing" : "Land training"))}</div>
-          <div class="o-sub">${s.outing.time ? `<span>${esc(s.outing.time)}</span>` : ""}${s.outing.location ? `<span>${I.pin}${esc(s.outing.location)}</span>` : ""}${s.outing.boat ? `<span>${I.boat}${esc(s.outing.boat)}</span>` : ""}</div></div>
+          <div class="o-sub">${s.outing.time ? `<span>${esc(tRange(s.outing))}</span>` : ""}${s.outing.location ? `<span>${I.pin}${esc(s.outing.location)}</span>` : ""}${s.outing.boat ? `<span>${I.boat}${esc(s.outing.boat)}</span>` : ""}</div></div>
         <span class="chip ${s.outing.kind}">${s.outing.kind === "water" ? I.water : I.land}${esc(s.seat_label)}</span></div>
       <div class="small">${filled ? `<b>${esc(s.sub?.name)}</b> is subbing for ${esc(s.requester.name)}` : `<b>${esc(s.requester.name)}</b> needs a sub${s.requester.id === S.me ? ` <span class="chip accent">you</span>` : ""}`}</div>
       ${s.reason && !filled ? `<div class="reason">“${esc(s.reason)}”</div>` : ""}
@@ -1081,7 +1084,7 @@ const REM_TIERS = {
   soon: { title: "1 free novice outing left", cls: "accent", hint: "A heads-up: after their next water outing they'll need subs." },
 };
 const daysAgo = (ts) => { const d = Math.floor((Date.now() - Date.parse(ts.replace(" ", "T") + "Z")) / 86400000); return d <= 0 ? "today" : d === 1 ? "yesterday" : `${d} days ago`; };
-const sessLabel = (o) => `${o.title || (o.kind === "water" ? "water outing" : "land training")} on ${DAY[dow(o.date)]} ${fmtShort(o.date)}${o.time ? " at " + o.time : ""}`;
+const sessLabel = (o) => `${o.title || (o.kind === "water" ? "water outing" : "land training")} on ${DAY[dow(o.date)]} ${fmtShort(o.date)}${o.time ? " at " + tRange(o) : ""}`;
 
 /* The "{reason}" sentence for a person's situation (no full stop: the template continues). */
 function remReason(x, d) {
@@ -1327,6 +1330,12 @@ async function pageSettings() {
           <div id="s-import-res"></div>
         </div>
         <div class="card card-pad" style="display:flex;flex-direction:column;gap:12px">
+          <h3 style="margin:0">Places</h3>
+          <p class="muted small" style="margin:0">Give the places you use (e.g. “Boathouse”) a full address. Sessions at that place then get a maps link, and calendar events carry the address so phones can navigate there. Add coordinates for an exact pin.</p>
+          <div id="s-places" class="places-list"></div>
+          <div><button class="btn" id="s-place-add">${I.plus}Add place</button></div>
+        </div>
+        <div class="card card-pad" style="display:flex;flex-direction:column;gap:12px">
           <h3 style="margin:0">Phone numbers</h3>
           ${s.phone_encryption
             ? `<div class="callout">${I.check}<div>Stored <b>encrypted</b> with the server's <code>PHONE_KEY</code>. ${s.phone_count} number${s.phone_count === 1 ? "" : "s"} on file.</div></div>`
@@ -1346,6 +1355,16 @@ async function pageSettings() {
     </div>`;
   const phoneFields = () => ({ phone_mode: $("#s-phone-mode").value, phone_retention_days: Math.max(0, Math.min(3650, +$("#s-phone-days").value || 0)) });
   $("#s-csv").onclick = () => exportModal("/api/admin/members.csv", "all members");
+  const drawPlaces = async () => {
+    const ps = await loadPlaces(true);
+    $("#s-places").innerHTML = ps.length ? ps.map((p) => `<button type="button" class="place-row" data-place="${p.id}">
+        <span><b>${esc(p.name)}</b><span class="faint small">${esc(p.address || "No address yet")}</span></span>
+        <span class="chip ${p.lat != null ? "ok" : ""}">${p.lat != null ? "Pin set" : "Address only"}</span></button>`).join("")
+      : `<div class="faint small">No places yet.</div>`;
+    $$("[data-place]").forEach((b) => b.onclick = () => editPlace(ps.find((p) => p.id === +b.dataset.place), drawPlaces));
+  };
+  $("#s-place-add").onclick = () => editPlace(null, drawPlaces);
+  drawPlaces();
   $("#s-phone-save").onclick = async () => {
     const body = { club_name: s.club_name, academic_year: s.academic_year, current_term: s.current_term, subs_cutoff: s.subs_cutoff, novice_free_outings: s.novice_free_outings,
       novice_land_free: s.novice_land_free, season_start: s.season_start, today_override: s.today_override, ...phoneFields() };
@@ -1454,7 +1473,7 @@ async function pageSignup() {
         <p class="muted small" style="margin:-4px 0 4px">Tick every session you could make. You won't be put in all of them.</p>
         ${wk.slots.length ? Object.entries(byDay).map(([d, list]) => `<div class="su-day"><div class="su-day-h"><b>${DAYL[dow(d)]}</b> <span class="faint">${fmtShort(d)}</span></div>
           <div class="slot-grid">${list.map((sl) => `<button type="button" class="slot ${sl.kind} ${st.slot_ids.has(sl.id) ? "on" : ""}" data-slot="${sl.id}">
-            <span class="slot-check">${I.check}</span><span class="slot-time tnum">${esc(sl.time || "Time TBC")}</span>${slotChip(sl.kind)}
+            <span class="slot-check">${I.check}</span><span class="slot-time tnum">${esc(tRange(sl) || "Time TBC")}</span>${slotChip(sl.kind)}
             ${sl.location || sl.note ? `<span class="slot-meta">${esc([sl.location, sl.note].filter(Boolean).join(" · "))}</span>` : ""}</button>`).join("")}</div></div>`).join("")
           : `<div class="faint">No sessions have been listed for this week yet.</div>`}
         <label class="field" style="margin-top:6px"><span>Anything else? (optional)</span><textarea class="input" id="su-comments" rows="2" maxlength="500" placeholder="e.g. Need to leave by 8:15 on Tuesday">${esc(st.comments)}</textarea></label>
@@ -1508,7 +1527,7 @@ async function pageSignup() {
       main.innerHTML = `<div class="card su-done"><div class="su-done-icon">${I.check}</div>
         <h2>${r.updated ? "Sign-up updated" : "You're signed up"}${isAdmin() ? "" : `, ${esc(r.member_name.split(" ")[0])}`}!</h2>
         <p class="muted">${isAdmin() ? `Saved for ${esc(r.member_name)}.` : "The crews will appear on the schedule once they're published."}${r.created ? " Your name has been added to the club list." : ""}</p>
-        ${slots.length ? `<div class="su-done-list">${slots.map((x) => `<div><b>${DAY[dow(x.date)]} ${fmtShort(x.date)}</b> <span class="tnum">${esc(x.time)}</span> ${slotChip(x.kind)}</div>`).join("")}</div>` : ""}
+        ${slots.length ? `<div class="su-done-list">${slots.map((x) => `<div><b>${DAY[dow(x.date)]} ${fmtShort(x.date)}</b> <span class="tnum">${esc(tRange(x))}</span> ${slotChip(x.kind)}</div>`).join("")}</div>` : ""}
         <div class="toolbar" style="justify-content:center"><button class="btn" id="su-edit">Edit my answers</button><a class="btn primary" href="#/schedule">Go to schedule</a></div></div>`;
       $("#su-edit").onclick = () => { st.member_id = r.member_id; st.new_name = ""; pageSignup(); };
       window.scrollTo(0, 0);
@@ -1597,7 +1616,7 @@ async function pageSignupAdmin() {
     <div id="sw-body"></div>`;
 
   const body = $("#sw-body");
-  const slotLabel = (sl) => `${DAY[dow(sl.date)]} ${esc(sl.time || "TBC")}`;
+  const slotLabel = (sl) => `${DAY[dow(sl.date)]} ${esc(tRange(sl) || "TBC")}`;
   if (S.suTab === "sessions") {
     const byDay = {}; d.slots.forEach((sl) => (byDay[sl.date] = byDay[sl.date] || []).push(sl));
     body.innerHTML = `
@@ -1605,7 +1624,7 @@ async function pageSignupAdmin() {
         <div style="display:flex;gap:8px"><input class="input" id="sw-note" value="${esc(d.week.note)}" placeholder="e.g. Please sign up by Friday 6pm. Ergs are in the college gym."><button class="btn" id="sw-note-save">Save</button></div></label></div>
       ${d.slots.length ? Object.entries(byDay).map(([day, list]) => `<div class="section-title" style="margin-top:14px">${DAYL[dow(day)]} · ${fmtShort(day)}</div>
         <div class="slot-admin">${list.map((sl) => `<div class="card slot-row" data-id="${sl.id}">
-          <div class="slot-time tnum">${esc(sl.time || "TBC")}</div>${slotChip(sl.kind)}
+          <div class="slot-time tnum">${esc(tRange(sl) || "TBC")}</div>${slotChip(sl.kind)}
           <div class="slot-meta" style="flex:1">${esc([sl.location, sl.note].filter(Boolean).join(" · "))}</div>
           <div class="slot-counts"><span title="Free in total"><b>${sl.count}</b> free</span><span title="Rowers">${sl.rowers} row</span><span title="Coxes">${sl.coxes} cox</span><span title="Can bankride">${sl.bankriders} BR</span></div>
           <button class="btn sm" data-mk="${sl.id}">${I.plus}Create session</button>
@@ -1615,7 +1634,7 @@ async function pageSignupAdmin() {
     $$("[data-ed]").forEach((b) => b.onclick = () => editSlot(d.slots.find((x) => x.id === +b.dataset.ed), ws));
     $$("[data-mk]").forEach((b) => b.onclick = () => {
       const sl = d.slots.find((x) => x.id === +b.dataset.mk);
-      S.week = ws; S.pendingNew = { kind: sl.kind === "water" ? "water" : "land", date: sl.date, time: sl.time, location: sl.location, title: sl.kind === "water" ? "" : (sl.kind === "erg" ? "Erg" : "Tank") };
+      S.week = ws; S.pendingNew = { kind: sl.kind === "water" ? "water" : "land", date: sl.date, time: sl.time, end_time: sl.end_time, location: sl.location, title: sl.kind === "water" ? "" : (sl.kind === "erg" ? "Erg" : "Tank") };
       location.hash = "#/schedule";
     });
     $("#sw-add").onclick = () => editSlot(null, ws);
@@ -1683,7 +1702,7 @@ function responseDetail(r, d, roleShort) {
       <dt>Can bankride</dt><dd>${r.can_bankride ? "Yes" : "No"}</dd><dt>Submitted</dt><dd>${esc(r.updated_at)} UTC</dd></dl>
       ${r.comments ? `<div class="callout">${I.info}<div>${esc(r.comments)}</div></div>` : ""}
       <div class="section-title" style="margin:6px 0 0">Free for (${slots.length})</div>
-      <div class="su-done-list" style="text-align:left">${slots.map((x) => `<div><b>${DAY[dow(x.date)]} ${fmtShort(x.date)}</b> <span class="tnum">${esc(x.time)}</span> ${slotChip(x.kind)} <span class="faint small">${esc(x.location)}</span></div>`).join("") || `<span class="faint">No sessions ticked.</span>`}</div>
+      <div class="su-done-list" style="text-align:left">${slots.map((x) => `<div><b>${DAY[dow(x.date)]} ${fmtShort(x.date)}</b> <span class="tnum">${esc(tRange(x))}</span> ${slotChip(x.kind)} <span class="faint small">${esc(x.location)}</span></div>`).join("") || `<span class="faint">No sessions ticked.</span>`}</div>
       ${r.needs_review ? `<div class="callout warn">${I.alert}<div>${esc(r.name)} was added through the form. Check their category, swim test and subs on the <a href="#/rowers">Rowers</a> page.</div></div>` : ""}`,
     foot: `<button class="btn danger" id="rd-del">Delete response</button><div class="r"><button class="btn" data-close>Close</button></div>`,
     onMount: (m, close) => {
@@ -1701,15 +1720,16 @@ function responseDetail(r, d, roleShort) {
   });
 }
 
-function editSlot(sl, ws, tpl) {
+async function editSlot(sl, ws, tpl) {
+  await loadPlaces(true);
   const days = Array.from({ length: 7 }, (_, i) => addDays(ws, i));
   const v = sl || tpl || { date: days[0], time: "", kind: "water", location: "", note: "" };
   modal({
     title: sl ? "Edit session" : "Add session",
     body: `<div class="seg" id="sl-kind">${[["water", "Water"], ["erg", "Erg"], ["tank", "Tank"]].map(([k, l]) => `<button data-k="${k}" class="${v.kind === k ? "on" : ""}">${l}</button>`).join("")}</div>
       <div class="grid-2"><label class="field"><span>Day</span><select class="input" id="sl-date">${days.map((d) => `<option value="${d}" ${d === v.date ? "selected" : ""}>${fmtLong(d)}</option>`).join("")}</select></label>
-        <label class="field"><span>Time</span><input class="input" id="sl-time" value="${esc(v.time)}" placeholder="e.g. 07:00"><span class="hint">Use the same time when you create the outing, so availability matches.</span></label></div>
-      <div class="grid-2"><label class="field"><span>Where (optional)</span><input class="input" id="sl-loc" value="${esc(v.location)}" placeholder="e.g. Boathouse, College gym"></label>
+        <div class="field"><span>Time <span class="faint">(start – end)</span></span><div class="time-range"><input class="input tnum" type="time" id="sl-time" value="${esc(v.time)}" aria-label="Start time"><span class="faint">–</span><input class="input tnum" type="time" id="sl-end" value="${esc(v.end_time || "")}" aria-label="End time (optional)"></div><span class="hint">Use the same time when you create the outing, so availability matches.</span></div></div>
+      <div class="grid-2"><label class="field"><span>Where (optional)</span><input class="input" id="sl-loc" list="sl-places" value="${esc(v.location)}" placeholder="e.g. Boathouse, College gym">${placesDatalist("sl-places")}</label>
         <label class="field"><span>Note (optional)</span><input class="input" id="sl-note" value="${esc(v.note)}" placeholder="e.g. Novices only"></label></div>
       ${sl ? "" : `<label class="check small"><input type="checkbox" id="sl-more"> Add another after this one</label>`}`,
     foot: `${sl ? `<button class="btn danger" id="sl-del">Delete</button>` : ""}<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="sl-save">Save</button></div>`,
@@ -1717,11 +1737,11 @@ function editSlot(sl, ws, tpl) {
       let kind = v.kind;
       $$("#sl-kind button", m).forEach((b) => b.onclick = () => { kind = b.dataset.k; $$("#sl-kind button", m).forEach((x) => x.classList.toggle("on", x === b)); });
       $("#sl-save", m).onclick = async () => {
-        const body = { date: $("#sl-date", m).value, time: $("#sl-time", m).value.trim(), kind, location: $("#sl-loc", m).value, note: $("#sl-note", m).value };
+        const body = { date: $("#sl-date", m).value, time: $("#sl-time", m).value.trim(), end_time: $("#sl-end", m).value.trim(), kind, location: $("#sl-loc", m).value, note: $("#sl-note", m).value };
         try {
           await api(sl ? `/api/admin/signup/slots/${sl.id}` : "/api/admin/signup/slots", { method: sl ? "PUT" : "POST", body });
           const more = $("#sl-more", m)?.checked; close(); toast("Session saved"); await pageSignupAdmin();
-          if (more) editSlot(null, ws, { ...body, time: "" });
+          if (more) editSlot(null, ws, { ...body, time: "", end_time: "" });
         } catch (e) { fail(e); }
       };
       const del = $("#sl-del", m);
@@ -1729,6 +1749,26 @@ function editSlot(sl, ws, tpl) {
         if (!await confirmBox("Delete this session?", "Anyone who ticked it loses that availability.", "Delete", true)) return;
         try { await api(`/api/admin/signup/slots/${sl.id}`, { method: "DELETE" }); toast("Session deleted"); pageSignupAdmin(); } catch (e) { fail(e); }
       };
+    },
+  });
+}
+
+function editPlace(p, after) {
+  modal({
+    title: p ? "Edit place" : "Add place",
+    body: `<label class="field"><span>Name</span><input class="input" id="pl-name" value="${esc(p?.name || "")}" placeholder="e.g. Boathouse"><span class="hint">Use exactly this name in a session's “Where” field.</span></label>
+      <label class="field"><span>Address</span><input class="input" id="pl-addr" value="${esc(p?.address || "")}" placeholder="e.g. Meadow Lane, Oxford OX1 4BH"></label>
+      <label class="field"><span>Coordinates (optional)</span><input class="input" id="pl-coords" value="${p?.lat != null ? `${p.lat}, ${p.lon}` : ""}" placeholder="e.g. 51.7436, -1.2521, or paste a Google Maps link">
+        <span class="hint">For an exact pin. In Google Maps, long-press the spot and copy the numbers shown.</span></label>`,
+    foot: `${p ? `<button class="btn danger" id="pl-del">Delete</button>` : ""}<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="pl-save">Save</button></div>`,
+    onMount: (m, close) => {
+      $("#pl-save", m).onclick = async () => {
+        const body = { name: $("#pl-name", m).value.trim(), address: $("#pl-addr", m).value.trim(), coords: $("#pl-coords", m).value.trim() };
+        if (!body.name) return toast("Give the place a name", true);
+        try { await api(p ? `/api/admin/places/${p.id}` : "/api/admin/places", { method: p ? "PUT" : "POST", body }); close(); toast("Place saved"); after && after(); } catch (e) { fail(e); }
+      };
+      const d = $("#pl-del", m);
+      if (d) d.onclick = async () => { try { await api(`/api/admin/places/${p.id}`, { method: "DELETE" }); close(); toast("Place deleted"); after && after(); } catch (e) { fail(e); } };
     },
   });
 }

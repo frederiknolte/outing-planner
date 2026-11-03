@@ -22,7 +22,8 @@ from pydantic import BaseModel, Field
 
 from . import db, privacy
 from .auth import require_admin, require_member
-from .logic import effective_today, monday_of
+from .logic import effective_today, maps_url, monday_of
+from .timeutil import normalize as norm_time, to_minutes
 
 router = APIRouter()
 
@@ -69,8 +70,9 @@ def availability_for_outing(conn, kind: str, d: str, time: str) -> dict:
     ws = _monday(d)
     kinds = ("water",) if kind == "water" else ("erg", "tank")
     slots = [s for s in _slots(conn, ws) if s["date"] == d and s["kind"] in kinds]
+    time = norm_time(time)[0]
     if time:
-        timed = [s for s in slots if not s["time"] or s["time"].strip() == time.strip()]
+        timed = [s for s in slots if not s["time"] or s["time"] == time]
         slots = timed
     avail = slot_availability(conn, ws)
     free = set().union(*(avail.get(s["id"], set()) for s in slots)) if slots else set()
@@ -94,7 +96,9 @@ def signup_forms(role: str = Depends(require_member)):
         weeks = []
         for w in conn.execute("SELECT * FROM signup_weeks WHERE open = 1 AND week_start >= ? ORDER BY week_start",
                               (this_week,)):
-            slots = [s for s in _slots(conn, w["week_start"]) if s["date"] >= today.isoformat()]
+            places = {r["name"].lower(): dict(r) for r in conn.execute("SELECT * FROM places")}
+            slots = [{**s, "maps_url": maps_url(places.get((s["location"] or "").strip().lower()))}
+                     for s in _slots(conn, w["week_start"]) if s["date"] >= today.isoformat()]
             weeks.append({"week_start": w["week_start"], "note": w["note"], "slots": slots})
         s = db.get_settings(conn)
         days = int(s.get("phone_retention_days") or 0)
@@ -290,6 +294,7 @@ def signup_week_update(week_start: str, b: WeekSettingsIn, _: str = Depends(requ
 class SlotIn(BaseModel):
     date: str
     time: str = Field("", max_length=20)
+    end_time: str = Field("", max_length=20)
     kind: str = "water"
     location: str = Field("", max_length=80)
     note: str = Field("", max_length=200)
@@ -298,6 +303,12 @@ class SlotIn(BaseModel):
 def _slot_validate(b: SlotIn) -> str:
     if b.kind not in SLOT_KINDS:
         raise HTTPException(400, "Type must be water, erg or tank")
+    start, end = norm_time(b.time)
+    if b.end_time.strip():
+        end = norm_time(b.end_time)[0]
+    if end and (to_minutes(start) is None or to_minutes(end) is None or to_minutes(end) <= to_minutes(start)):
+        raise HTTPException(400, "The end time must be after the start time")
+    b.time, b.end_time = start, end
     return _monday(b.date)
 
 
@@ -305,8 +316,8 @@ def _slot_validate(b: SlotIn) -> str:
 def slot_create(b: SlotIn, _: str = Depends(require_admin)):
     ws = _slot_validate(b)
     with db.get_conn() as conn:
-        cur = conn.execute("INSERT INTO signup_slots(week_start, date, time, kind, location, note) VALUES (?,?,?,?,?,?)",
-                           (ws, b.date, b.time.strip(), b.kind, b.location.strip(), b.note.strip()))
+        cur = conn.execute("INSERT INTO signup_slots(week_start, date, time, end_time, kind, location, note) VALUES (?,?,?,?,?,?,?)",
+                           (ws, b.date, b.time, b.end_time, b.kind, b.location.strip(), b.note.strip()))
         return {"id": cur.lastrowid}
 
 
@@ -314,8 +325,8 @@ def slot_create(b: SlotIn, _: str = Depends(require_admin)):
 def slot_update(slot_id: int, b: SlotIn, _: str = Depends(require_admin)):
     ws = _slot_validate(b)
     with db.get_conn() as conn:
-        conn.execute("UPDATE signup_slots SET week_start=?, date=?, time=?, kind=?, location=?, note=? WHERE id=?",
-                     (ws, b.date, b.time.strip(), b.kind, b.location.strip(), b.note.strip(), slot_id))
+        conn.execute("UPDATE signup_slots SET week_start=?, date=?, time=?, end_time=?, kind=?, location=?, note=? WHERE id=?",
+                     (ws, b.date, b.time, b.end_time, b.kind, b.location.strip(), b.note.strip(), slot_id))
         return {"ok": True}
 
 
@@ -339,8 +350,8 @@ def slots_copy(week_start: str, b: CopySlotsIn, _: str = Depends(require_admin))
     with db.get_conn() as conn:
         n = 0
         for s in _slots(conn, src):
-            conn.execute("INSERT INTO signup_slots(week_start, date, time, kind, location, note) VALUES (?,?,?,?,?,?)",
-                         (ws, (date.fromisoformat(s["date"]) + delta).isoformat(), s["time"], s["kind"],
+            conn.execute("INSERT INTO signup_slots(week_start, date, time, end_time, kind, location, note) VALUES (?,?,?,?,?,?,?)",
+                         (ws, (date.fromisoformat(s["date"]) + delta).isoformat(), s["time"], s["end_time"], s["kind"],
                           s["location"], s["note"]))
             n += 1
         return {"copied": n}

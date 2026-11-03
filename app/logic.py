@@ -94,6 +94,7 @@ class Rules:
             except ValueError:
                 pass
         self.members = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM members")}
+        self.places = {r["name"].lower(): dict(r) for r in conn.execute("SELECT * FROM places")}
         rows = conn.execute(
             """SELECT a.id, a.outing_id, a.seat, a.member_id, o.kind, o.date, o.time
                FROM assignments a JOIN outings o ON o.id = a.outing_id
@@ -190,6 +191,18 @@ class Rules:
         return {"subs_valid": self.subs_valid(m), "water": water, "land": land}
 
 
+def maps_url(place) -> str:
+    """Link that opens the place in the phone's maps app (Google Maps URL works everywhere)."""
+    if not place:
+        return ""
+    from urllib.parse import quote
+    if place.get("lat") is not None and place.get("lon") is not None:
+        return f"https://www.google.com/maps/search/?api=1&query={place['lat']:.6f},{place['lon']:.6f}"
+    if place.get("address"):
+        return "https://www.google.com/maps/search/?api=1&query=" + quote(f"{place['name']}, {place['address']}")
+    return ""
+
+
 def outing_payload(rules: Rules, o: dict, assignments: list[dict], subs: list[dict],
                    boats: dict, same_slot: dict, admin: bool) -> dict:
     """Serialise one outing with seats, eligibility flags and warnings."""
@@ -259,8 +272,8 @@ def outing_payload(rules: Rules, o: dict, assignments: list[dict], subs: list[di
         spots_text = f"{empty_rowers} {'rower' if empty_rowers == 1 else 'rowers'}" + (
             " + cox" if cox_seat and not cox_seat["member"] else "") + " needed"
     return {
-        "id": o["id"], "kind": kind, "date": o["date"], "time": o["time"],
-        "location": o["location"], "title": o["title"], "coach": o["coach"],
+        "id": o["id"], "kind": kind, "date": o["date"], "time": o["time"], "end_time": o["end_time"],
+        "location": o["location"], "maps_url": maps_url(rules.places.get((o["location"] or "").strip().lower())), "title": o["title"], "coach": o["coach"],
         "boat": ({"id": boat["id"], "name": boat["name"], "type": boat["boat_type"],
                   "status": boat["status"]} if boat else None),
         "capacity": cap, "coxed": coxed, "published": bool(o["published"]),

@@ -550,3 +550,13 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
 .rem-meta { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-3); align-items: center; }
 .rem-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .rem-reminded { border: 0; cursor: pointer; }
+
+/* ---------- times & places ---------- */
+.time-range { display: flex; align-items: center; gap: 6px; }
+.time-range .input { min-width: 0; }
+.o-sub a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 2px; }
+.o-sub a:hover { color: var(--accent); }
+.places-list { display: flex; flex-direction: column; gap: 6px; }
+.place-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; text-align: left; border: 1px solid var(--border); background: var(--surface); border-radius: 10px; padding: 9px 12px; cursor: pointer; font: inherit; color: inherit; }
+.place-row:hover { border-color: var(--accent); }
+.place-row > span:first-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

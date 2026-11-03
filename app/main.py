@@ -22,6 +22,7 @@ from . import db
 from .auth import require_admin, require_member, role_of
 from . import privacy
 from .importer import import_workbook
+from .timeutil import normalize as norm_time, to_minutes
 from .calendar import router as calendar_router
 from .signup import availability_for_outing, router as signup_router
 from .logic import (BOAT_TYPES, SUBS_PLANS, TERMS, Rules, monday_of, outing_payload,
@@ -298,7 +299,7 @@ class SubCancelIn(BaseModel):
 
 def _sub_rows(conn, rules: Rules, where: str, params: tuple, admin: bool) -> list[dict]:
     rows = [dict(r) for r in conn.execute(
-        f"""SELECT s.*, o.kind, o.date, o.time, o.title, o.location, o.capacity, o.coxed, o.boat_id
+        f"""SELECT s.*, o.kind, o.date, o.time, o.end_time, o.title, o.location, o.capacity, o.coxed, o.boat_id
             FROM sub_requests s JOIN outings o ON o.id = s.outing_id WHERE {where}
             ORDER BY o.date, o.time, s.id""", params)]
     boats = _boats(conn)
@@ -313,7 +314,7 @@ def _sub_rows(conn, rules: Rules, where: str, params: tuple, admin: bool) -> lis
             "seat_label": seat_label(r["seat"], r["capacity"], r["kind"]),
             "requester": {"id": r["requester_id"], "name": req.get("name")},
             "sub": {"id": r["sub_id"], "name": sub.get("name")} if r["sub_id"] else None,
-            "outing": {"id": r["outing_id"], "kind": r["kind"], "date": r["date"], "time": r["time"],
+            "outing": {"id": r["outing_id"], "kind": r["kind"], "date": r["date"], "time": r["time"], "end_time": r["end_time"],
                        "title": r["title"], "location": r["location"],
                        "boat": boat["name"] if boat else None},
         })
@@ -637,6 +638,63 @@ def member_delete(member_id: int, _: str = Depends(require_admin)):
         return {"ok": True}
 
 
+# ------------------------------------------------------------------ places ----
+class PlaceIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    address: str = Field("", max_length=300)
+    coords: str = Field("", max_length=80)   # "51.74, -1.25" or a Google Maps link containing @lat,lon
+
+
+def _parse_coords(text: str) -> tuple[Optional[float], Optional[float]]:
+    import re as _re
+    text = (text or "").strip()
+    if not text:
+        return None, None
+    m = _re.search(r"@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)", text) or \
+        _re.search(r"(-?\d{1,2}(?:\.\d+)?)\s*[,; ]\s*(-?\d{1,3}(?:\.\d+)?)", text)
+    if not m:
+        raise HTTPException(400, "Coordinates not recognised. Use e.g. 51.7436, -1.2521")
+    lat, lon = float(m.group(1)), float(m.group(2))
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise HTTPException(400, "Coordinates out of range")
+    return lat, lon
+
+
+@app.get("/api/places")
+def places_list(role: str = Depends(require_member)):
+    with db.get_conn() as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM places ORDER BY name")]
+
+
+@app.post("/api/admin/places")
+def place_create(b: PlaceIn, _: str = Depends(require_admin)):
+    lat, lon = _parse_coords(b.coords)
+    with db.get_conn() as conn:
+        try:
+            cur = conn.execute("INSERT INTO places(name, address, lat, lon) VALUES (?,?,?,?)", (b.name.strip(), b.address.strip(), lat, lon))
+        except db.sqlite3.IntegrityError:
+            raise HTTPException(400, "A place with that name already exists")
+        return {"id": cur.lastrowid}
+
+
+@app.put("/api/admin/places/{place_id}")
+def place_update(place_id: int, b: PlaceIn, _: str = Depends(require_admin)):
+    lat, lon = _parse_coords(b.coords)
+    with db.get_conn() as conn:
+        try:
+            conn.execute("UPDATE places SET name=?, address=?, lat=?, lon=? WHERE id=?", (b.name.strip(), b.address.strip(), lat, lon, place_id))
+        except db.sqlite3.IntegrityError:
+            raise HTTPException(400, "A place with that name already exists")
+        return {"ok": True}
+
+
+@app.delete("/api/admin/places/{place_id}")
+def place_delete(place_id: int, _: str = Depends(require_admin)):
+    with db.get_conn() as conn:
+        conn.execute("DELETE FROM places WHERE id=?", (place_id,))
+        return {"ok": True}
+
+
 # ---------------------------------------------------------- subs reminders ----
 @app.get("/api/admin/subs-reminders")
 def subs_reminders(_: str = Depends(require_admin)):
@@ -861,6 +919,7 @@ class OutingIn(BaseModel):
     kind: str = "water"
     date: str
     time: str = Field("", max_length=20)
+    end_time: str = Field("", max_length=20)
     location: str = Field("", max_length=80)
     title: str = Field("", max_length=80)
     coach: str = Field("", max_length=120)
@@ -870,6 +929,20 @@ class OutingIn(BaseModel):
     notes: str = Field("", max_length=500)
     published: Optional[bool] = None
     seats: dict[str, Optional[int]] = {}
+
+
+def _times(start_text: str, end_text: str = "") -> tuple[str, str]:
+    """Normalise start/end to "HH:MM"; an end time must come after the start."""
+    start, end = norm_time(start_text)
+    if end_text.strip():
+        end = norm_time(end_text)[0]
+        if to_minutes(end) is None:
+            raise HTTPException(400, "End time not recognised. Use e.g. 08:00")
+    if end and to_minutes(start) is not None and to_minutes(end) is not None and to_minutes(end) <= to_minutes(start):
+        raise HTTPException(400, "The end time must be after the start time")
+    if end and to_minutes(start) is None:
+        end = ""
+    return start, end
 
 
 def _save_outing(conn, rules: Rules, oid: Optional[int], b: OutingIn) -> int:
@@ -905,18 +978,19 @@ def _save_outing(conn, rules: Rules, oid: Optional[int], b: OutingIn) -> int:
             raise HTTPException(400, f"{rules.members[mid]['name']} is in two seats")
         seen.add(mid)
         seats[s] = mid
-    fields = (b.kind, b.date, b.time.strip(), b.location.strip(), b.title.strip(), b.coach.strip(),
+    start, end = _times(b.time, b.end_time)
+    fields = (b.kind, b.date, start, end, b.location.strip(), b.title.strip(), b.coach.strip(),
               b.boat_id, cap, int(coxed), b.notes)
     if oid is None:
         cur = conn.execute(
-            """INSERT INTO outings(kind, date, time, location, title, coach, boat_id, capacity, coxed, notes, published)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""", fields + (int(bool(b.published)),))
+            """INSERT INTO outings(kind, date, time, end_time, location, title, coach, boat_id, capacity, coxed, notes, published)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", fields + (int(bool(b.published)),))
         oid = cur.lastrowid
     else:
         if not conn.execute("SELECT 1 FROM outings WHERE id=?", (oid,)).fetchone():
             raise HTTPException(404, "Outing not found")
         conn.execute(
-            """UPDATE outings SET kind=?, date=?, time=?, location=?, title=?, coach=?, boat_id=?, capacity=?,
+            """UPDATE outings SET kind=?, date=?, time=?, end_time=?, location=?, title=?, coach=?, boat_id=?, capacity=?,
                coxed=?, notes=? WHERE id=?""", fields + (oid,))
         if b.published is not None:
             conn.execute("UPDATE outings SET published=? WHERE id=?", (int(b.published), oid))
@@ -970,6 +1044,7 @@ def candidates(b: CandidatesIn, _: str = Depends(require_admin)):
             d = date.fromisoformat(b.date)
         except ValueError:
             raise HTTPException(400, "Bad date")
+        b.time = norm_time(b.time)[0]
         key = (b.date, b.time, b.outing_id or 10**12)
         busy = set()
         if b.time:
@@ -1033,9 +1108,9 @@ def week_copy(b: CopyWeekIn, _: str = Depends(require_admin)):
         for o in rows:
             nd = (date.fromisoformat(o["date"]) + delta).isoformat()
             cur = conn.execute(
-                """INSERT INTO outings(kind, date, time, location, title, coach, boat_id, capacity, coxed, notes, published)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,0)""",
-                (o["kind"], nd, o["time"], o["location"], o["title"], o["coach"], o["boat_id"], o["capacity"],
+                """INSERT INTO outings(kind, date, time, end_time, location, title, coach, boat_id, capacity, coxed, notes, published)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,0)""",
+                (o["kind"], nd, o["time"], o["end_time"], o["location"], o["title"], o["coach"], o["boat_id"], o["capacity"],
                  o["coxed"], o["notes"]))
             if b.include_crews:
                 conn.execute("""INSERT INTO assignments(outing_id, seat, member_id)

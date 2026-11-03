@@ -19,43 +19,12 @@ from fastapi.responses import Response
 from . import db
 from .auth import require_member
 from .logic import TZ, real_today, seat_label
+from .timeutil import parse_time
 
 router = APIRouter()
 
 DURATION = {"water": timedelta(minutes=90), "land": timedelta(minutes=60)}
 HISTORY_DAYS = 60
-
-
-# ----------------------------------------------------------------- time ----
-_T = r"(\d{1,2})(?:[:.h]?(\d{2}))?\s*(am|pm)?"
-
-
-def _hm(h: str, m: Optional[str], ap: Optional[str]) -> Optional[tuple[int, int]]:
-    hh, mm = int(h), int(m or 0)
-    if ap:
-        if hh > 12:
-            return None
-        hh = hh % 12 + (12 if ap.lower() == "pm" else 0)
-    return (hh, mm) if 0 <= hh < 24 and 0 <= mm < 60 else None
-
-
-def parse_time(text: str):
-    """'07:00', '7am', '0730', '17.30', '6:30-8pm' -> (start, end|None) as (h, m); None if unparseable."""
-    t = (text or "").strip().lower()
-    if not t:
-        return None
-    mt = re.match(rf"^{_T}\s*(?:-|–|to)\s*{_T}$", t)
-    if mt:
-        end = _hm(mt.group(4), mt.group(5), mt.group(6))
-        start = _hm(mt.group(1), mt.group(2), mt.group(3) or mt.group(6))
-        if start and end and end <= start and not mt.group(3):
-            start = _hm(mt.group(1), mt.group(2), None)
-        return (start, end) if start else None
-    m1 = re.match(rf"^{_T}$", t)
-    if m1:
-        s = _hm(m1.group(1), m1.group(2), m1.group(3))
-        return (s, None) if s else None
-    return None
 
 
 # ------------------------------------------------------------------ ics ----
@@ -89,6 +58,7 @@ def build_feed(conn, member: dict, base_url: str) -> str:
     since = (real_today() - timedelta(days=HISTORY_DAYS)).isoformat()
     members = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM members")}
     boats = {r["id"]: r for r in conn.execute("SELECT id, name, boat_type FROM boats")}
+    places = {r["name"].lower(): dict(r) for r in conn.execute("SELECT * FROM places")}
 
     # outings they're seated in
     rows = conn.execute(
@@ -150,11 +120,13 @@ def build_feed(conn, member: dict, base_url: str) -> str:
         desc += ["", f"Schedule: {base_url.rstrip('/')}/#/schedule"]
 
         t = parse_time(o["time"])
+        t_end = parse_time(o["end_time"]) if o["end_time"] else None
         ev = ["BEGIN:VEVENT", f"UID:outing-{oid}-m{member['id']}@{host}", f"DTSTAMP:{now}"]
         if t:
             start = t[0]
+            end = t_end[0] if t_end else t[1]
             sdt = datetime(d.year, d.month, d.day, *start)
-            edt = datetime(d.year, d.month, d.day, *t[1]) if t[1] else sdt + DURATION[o["kind"]]
+            edt = datetime(d.year, d.month, d.day, *end) if end else sdt + DURATION[o["kind"]]
             if edt <= sdt:
                 edt = sdt + DURATION[o["kind"]]
             ev += [f"DTSTART:{_utc(d, start)}", f"DTEND:{_utc(edt.date(), (edt.hour, edt.minute))}"]
@@ -164,11 +136,27 @@ def build_feed(conn, member: dict, base_url: str) -> str:
             desc.insert(1, "Time to be confirmed")
         ev += [f"SUMMARY:{_esc(summary)}", f"DESCRIPTION:{_esc(chr(10).join(desc))}"]
         if o["location"]:
-            ev.append(f"LOCATION:{_esc(o['location'])}")
+            ev += _location_lines(o["location"], places.get(o["location"].strip().lower()))
         ev += ["STATUS:CONFIRMED", "TRANSP:OPAQUE", "END:VEVENT"]
         lines += ev
     lines.append("END:VCALENDAR")
     return "\r\n".join(_fold(x) for x in lines) + "\r\n"
+
+
+def _location_lines(name: str, place: Optional[dict]) -> list[str]:
+    """LOCATION with the full address (so phones can navigate), plus an exact pin when coordinates are known."""
+    if not place or not (place.get("address") or place.get("lat") is not None):
+        return [f"LOCATION:{_esc(name)}"]
+    addr = place.get("address") or ""
+    label = f"{place['name']}, {addr}" if addr else place["name"]
+    lines = [f"LOCATION:{_esc(label)}"]
+    if place.get("lat") is not None and place.get("lon") is not None:
+        lat, lon = place["lat"], place["lon"]
+        lines.append(f"GEO:{lat:.6f};{lon:.6f}")
+        q = lambda v: (v or "").replace('"', "'")
+        lines.append(f'X-APPLE-STRUCTURED-LOCATION;VALUE=URI;X-ADDRESS="{q(addr)}";X-APPLE-RADIUS=70;'
+                     f'X-TITLE="{q(place["name"])}":geo:{lat:.6f},{lon:.6f}')
+    return lines
 
 
 # ------------------------------------------------------------- routes -----

@@ -114,6 +114,15 @@ CREATE TABLE IF NOT EXISTS signups (
     UNIQUE(week_start, member_id)
 );
 
+-- Named places with a real address, for maps links and calendar navigation
+CREATE TABLE IF NOT EXISTS places (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    address TEXT NOT NULL DEFAULT '',
+    lat REAL,
+    lon REAL
+);
+
 CREATE TABLE IF NOT EXISTS signup_availability (
     signup_id INTEGER NOT NULL REFERENCES signups(id) ON DELETE CASCADE,
     slot_id INTEGER NOT NULL REFERENCES signup_slots(id) ON DELETE CASCADE,
@@ -123,6 +132,8 @@ CREATE TABLE IF NOT EXISTS signup_availability (
 
 # Columns added after the first release; added to existing databases on start-up.
 MIGRATIONS = {
+    "outings": {"end_time": "TEXT NOT NULL DEFAULT ''"},
+    "signup_slots": {"end_time": "TEXT NOT NULL DEFAULT ''"},
     "members": {
         "phone": "TEXT NOT NULL DEFAULT ''",          # admin-only
         "college": "TEXT NOT NULL DEFAULT ''",
@@ -185,6 +196,7 @@ def init_db() -> None:
             for col, decl in cols.items():
                 if col not in have:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        _normalize_times(conn)
         for k, v in DEFAULT_SETTINGS.items():
             conn.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (k, v))
         conn.execute("UPDATE settings SET value = ? WHERE key = 'club_name' AND value IN ('Boat Club', 'Reuben College Boat Club')",
@@ -192,6 +204,17 @@ def init_db() -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def _normalize_times(conn) -> None:
+    """Store times as zero-padded 24h "HH:MM" (so they sort correctly); split "6:30-8pm" into start/end."""
+    from .timeutil import normalize
+    for table in ("outings", "signup_slots"):
+        for r in conn.execute(f"SELECT id, time, end_time FROM {table}").fetchall():
+            start, end = normalize(r["time"])
+            end = normalize(r["end_time"])[0] if r["end_time"] else end
+            if (start, end) != (r["time"], r["end_time"]):
+                conn.execute(f"UPDATE {table} SET time = ?, end_time = ? WHERE id = ?", (start, end, r["id"]))
 
 
 def get_settings(conn) -> dict:
