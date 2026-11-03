@@ -536,3 +536,17 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
 .cal-opt:hover { border-color: var(--accent); background: var(--accent-soft); }
 @media (max-width: 640px) { .cal-opts { grid-template-columns: 1fr; } }
 .land-open .btn.sm { padding: 4px 12px; }
+
+/* ---------- subs reminders ---------- */
+.count-pill { background: var(--crest-gold); color: #1d1500; font-size: 11px; font-weight: 750; border-radius: 99px; padding: 0 6px; margin-left: 2px; }
+.rem-h.bad { color: var(--bad); }
+.rem-h.warn { color: var(--warn); }
+.rem-h.accent { color: var(--accent); }
+.rem-list { display: flex; flex-direction: column; gap: 8px; }
+.rem { display: flex; gap: 14px; padding: 12px 14px; align-items: center; flex-wrap: wrap; }
+.rem-main { flex: 1; min-width: 260px; display: flex; flex-direction: column; gap: 4px; }
+.rem-name { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.rem-why { font-size: 13.5px; color: var(--text); }
+.rem-meta { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-3); align-items: center; }
+.rem-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.rem-reminded { border: 0; cursor: pointer; }

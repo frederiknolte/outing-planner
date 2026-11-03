@@ -637,6 +637,93 @@ def member_delete(member_id: int, _: str = Depends(require_admin)):
         return {"ok": True}
 
 
+# ---------------------------------------------------------- subs reminders ----
+@app.get("/api/admin/subs-reminders")
+def subs_reminders(_: str = Depends(require_admin)):
+    """Unpaid active members who need reminding, most urgent first.
+
+    Tiers: blocked (scheduled in sessions they can't do because subs aren't paid) ->
+    now (free outings used / senior after the cutoff) -> cutoff (same, but the cutoff
+    hasn't passed yet) -> soon (novice with 1 free outing left). Counts include outings
+    already scheduled.
+    """
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        today = rules.today.isoformat()
+        before_cutoff = rules.cutoff is not None and rules.today <= rules.cutoff
+        blocked, upcoming = defaultdict(list), defaultdict(list)
+        for r in conn.execute(
+                """SELECT a.member_id, o.id, o.kind, o.date, o.time, o.title FROM assignments a
+                   JOIN outings o ON o.id = a.outing_id WHERE o.date >= ? ORDER BY o.date, o.time, o.id""", (today,)):
+            info = {"id": r["id"], "kind": r["kind"], "date": r["date"], "time": r["time"], "title": r["title"]}
+            upcoming[r["member_id"]].append(info)
+            e = rules.check(r["member_id"], r["kind"], date.fromisoformat(r["date"]), (r["date"], r["time"], r["id"]))
+            if "Subs not paid" in e["reasons"]:
+                blocked[r["member_id"]].append(info)
+        last_out = {r["member_id"]: r["d"] for r in conn.execute(
+            "SELECT a.member_id, MAX(o.date) d FROM assignments a JOIN outings o ON o.id = a.outing_id WHERE o.date <= ? GROUP BY a.member_id", (today,))}
+        last_signup = {r["member_id"]: r["w"] for r in conn.execute("SELECT member_id, MAX(week_start) w FROM signups GROUP BY member_id")}
+        order = {"blocked": 0, "now": 1, "cutoff": 2, "soon": 3}
+        out = []
+        for mid, m in rules.members.items():
+            if not m["active"] or rules.subs_valid(m):
+                continue
+            t = rules.totals(mid)
+            novice = m["category"] == "Novice"
+            free_left = max(0, rules.free_n - t["water"]) if novice else None
+            if blocked[mid]:
+                tier = "blocked"
+            elif novice and free_left > 1:
+                continue
+            elif not novice or free_left == 0:
+                tier = "cutoff" if before_cutoff else "now"
+            else:
+                tier = "soon"
+            out.append({
+                "id": mid, "name": m["name"], "category": m["category"], "tier": tier,
+                "free_left": free_left, "free_n": rules.free_n, "water": t["water"], "land": t["land"],
+                "blocked": blocked[mid][:5], "next": (upcoming[mid] or [None])[0],
+                "last_activity": max(filter(None, [last_out.get(mid), last_signup.get(mid)]), default=None),
+                "subs_plan": m["subs_plan"], "subs_term": m["subs_term"], "subs_year": m["subs_year"],
+                "has_phone": bool(m["phone"]), "phone_masked": privacy.mask(m["phone"]),
+                "reminded_at": m["subs_reminded_at"] or None,
+            })
+        out.sort(key=lambda x: (order[x["tier"]], bool(x["reminded_at"]), x["next"]["date"] if x["next"] else "9999",
+                                -(int((x["last_activity"] or "0000-00-00").replace("-", "")))))
+        s = rules.settings
+        return {"members": out, "term": s.get("current_term"), "year": s.get("academic_year"),
+                "cutoff": s.get("subs_cutoff") or None, "before_cutoff": before_cutoff, "today": today,
+                "club": s.get("club_name"), "free_n": rules.free_n}
+
+
+class RemindedIn(BaseModel):
+    reminded: bool = True
+
+
+@app.post("/api/admin/members/{member_id}/reminded")
+def member_reminded(member_id: int, b: RemindedIn, _: str = Depends(require_admin)):
+    with db.get_conn() as conn:
+        conn.execute("UPDATE members SET subs_reminded_at = CASE WHEN ? THEN datetime('now') ELSE '' END WHERE id = ?",
+                     (int(b.reminded), member_id))
+        return {"ok": True}
+
+
+class PaidIn(BaseModel):
+    plan: str  # "Single term" (current term) | "Full year" (current academic year)
+
+
+@app.post("/api/admin/members/{member_id}/paid")
+def member_paid(member_id: int, b: PaidIn, _: str = Depends(require_admin)):
+    if b.plan not in ("Single term", "Full year"):
+        raise HTTPException(400, "Plan must be Single term or Full year")
+    with db.get_conn() as conn:
+        s = db.get_settings(conn)
+        conn.execute("""UPDATE members SET subs_plan = ?, subs_term = ?, subs_year = ?, subs_reminded_at = ''
+                        WHERE id = ?""",
+                     (b.plan, s.get("current_term", "") if b.plan == "Single term" else "", s.get("academic_year", ""), member_id))
+        return {"ok": True}
+
+
 @app.get("/api/admin/members/{member_id}/phone")
 def member_phone(member_id: int, _: str = Depends(require_admin)):
     """Reveal one member's full number (admin taps "Show")."""

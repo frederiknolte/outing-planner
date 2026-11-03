@@ -130,6 +130,7 @@ MIGRATIONS = {
         "needs_review": "INTEGER NOT NULL DEFAULT 0",  # created via the sign-up form
         "cal_token": "TEXT NOT NULL DEFAULT ''",       # secret for the personal calendar feed
         "phone_updated_at": "TEXT NOT NULL DEFAULT ''",  # for automatic deletion of old numbers
+        "subs_reminded_at": "TEXT NOT NULL DEFAULT ''",  # when an admin last reminded them to pay subs
     },
 }
 

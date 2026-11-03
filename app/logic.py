@@ -181,9 +181,10 @@ class Rules:
         return {"ok": not reasons, "reasons": reasons, "note": note}
 
     def status_now(self, member_id: int) -> dict:
-        """Member-level 'may row today' summary (like the spreadsheet's Members sheet)."""
+        """'May row' at the member's NEXT new outing: counts every outing already done or
+        scheduled, so it agrees with what the schedule shows for their upcoming sessions."""
         m = self.members[member_id]
-        key = (self.today.isoformat(), "", 0)  # a hypothetical next outing today
+        key = ("9999-12-31", "", 0)  # a hypothetical outing after everything already scheduled
         water = self.check(member_id, "water", self.today, key)
         land = self.check(member_id, "land", self.today, key)
         return {"subs_valid": self.subs_valid(m), "water": water, "land": land}

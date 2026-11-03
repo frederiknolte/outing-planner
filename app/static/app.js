@@ -922,7 +922,7 @@ async function pageMe() {
       <div class="card stat"><div class="k">Total</div><div class="v">${t.total}</div><div class="s">${t.upcoming} upcoming</div></div>
       ${free != null ? `<div class="card stat"><div class="k">Free novice outings</div><div class="v">${free}</div><div class="s">of ${S.boot.settings.novice_free_outings} left</div></div>` : ""}
     </div>
-    <div class="section-title">Eligibility today</div>
+    <div class="section-title">Eligibility for your next outing</div>
     <div class="card card-pad"><div style="display:flex;gap:10px;flex-wrap:wrap">
       <span class="chip ${st.water_ok ? "ok" : "bad"}">${st.water_ok ? I.check : I.x}Water${st.water_reasons.length ? ": " + esc(st.water_reasons.join(", ")) : ""}</span>
       <span class="chip ${st.land_ok ? "ok" : "bad"}">${st.land_ok ? I.check : I.x}Land${st.land_reasons.length ? ": " + esc(st.land_reasons.join(", ")) : ""}</span>
@@ -945,11 +945,18 @@ async function pageMe() {
 
 // ----------------------------------------------------------------- rowers --
 let rowerSort = { k: "name", dir: 1 }, rowerQ = "", rowerCat = "all";
+const rowersTabs = (on, nRem) => `<div class="seg" id="rw-tabs"><button data-t="members" class="${on === "members" ? "on" : ""}">Members</button><button data-t="subs" class="${on === "subs" ? "on" : ""}">Subs reminders${nRem ? ` <span class="count-pill">${nRem}</span>` : ""}</button></div>`;
+const wireRowersTabs = () => $$("#rw-tabs button").forEach((b) => b.onclick = () => { S.rowersTab = b.dataset.t; route(); });
+
 async function pageRowers() {
   const admin = isAdmin();
-  let rows, meta = {};
+  if (admin && S.rowersTab === "subs") return pageSubsReminders();
+  let rows, meta = {}, nRem = 0;
   try {
-    if (admin) { const r = await api("/api/admin/members"); rows = r.members.map((m) => ({ ...m, ...m.totals })); meta = r; }
+    if (admin) {
+      const [r, rem] = await Promise.all([api("/api/admin/members"), api("/api/admin/subs-reminders")]);
+      rows = r.members.map((m) => ({ ...m, ...m.totals })); meta = r; nRem = rem.members.length;
+    }
     else rows = await api("/api/rowers");
   } catch (e) { return fail(e); }
   const draw = () => {
@@ -960,7 +967,7 @@ async function pageRowers() {
     const max = Math.max(1, ...rows.map((r) => r.total));
     const th = (key, l, cls = "") => `<th class="sort ${cls}" data-k="${key}">${l}${rowerSort.k === key ? (rowerSort.dir > 0 ? " ↑" : " ↓") : ""}</th>`;
     $("#rw-table").innerHTML = `<table class="t"><thead><tr>${th("name", "Name")}${th("category", "Category")}
-      ${admin ? `<th>Swim</th><th>Subs</th>${th("cox_status", "Cox")}<th>May row</th>` : `${th("cox_status", "Cox")}`}
+      ${admin ? `<th>Swim</th><th>Subs</th>${th("cox_status", "Cox")}<th title="At their next new outing, counting everything already scheduled">May row next</th>` : `${th("cox_status", "Cox")}`}
       ${th("water", "Water", "num")}${th("land", "Land", "num")}${th("total", "Total", "num")}<th style="width:120px"></th>${th("novice_free_left", "Free left", "num")}</tr></thead>
       <tbody>${list.map((r) => `<tr class="${admin ? "clickable" : ""}" data-id="${r.id}">
         <td><b>${esc(r.name)}</b>${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${admin && !r.active ? ` <span class="chip">inactive</span>` : ""}${admin && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
@@ -982,12 +989,12 @@ async function pageRowers() {
   const allOut = rows.reduce((a, r) => a + r.total, 0);
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>${admin ? "Members" : "Rowers"}</h1><p>${admin ? "Manage the squad, subs and swim tests. Outing counts update automatically from the schedule." : "Outing counts across the squad."}</p></div>
-      ${admin ? `<div class="toolbar"><button class="btn" id="rw-export">${I.download}Export CSV</button><button class="btn primary" id="rw-add">${I.plus}Add member</button></div>` : ""}</div>
+      ${admin ? `<div class="toolbar">${rowersTabs("members", nRem)}<button class="btn" id="rw-export">${I.download}Export CSV</button><button class="btn primary" id="rw-add">${I.plus}Add member</button></div>` : ""}</div>
     <div class="stats" style="margin-bottom:16px">
       <div class="card stat"><div class="k">Members</div><div class="v">${rows.filter((r) => r.active !== false).length}</div><div class="s">${novices} novice · ${rows.filter((r) => r.active !== false).length - novices} senior</div></div>
       <div class="card stat"><div class="k">Coxes</div><div class="v">${rows.filter((r) => r.cox_status && r.active !== false).length}</div><div class="s">with a cox status</div></div>
       <div class="card stat"><div class="k">Outings logged</div><div class="v">${allOut}</div><div class="s">seat-sessions, all time</div></div>
-      ${admin ? `<div class="card stat"><div class="k">Can't row today</div><div class="v" style="color:${issues ? "var(--bad)" : "var(--ok)"}">${issues}</div><div class="s">subs or swim test missing</div></div>` : ""}
+      ${admin ? `<div class="card stat"><div class="k">Can't row next outing</div><div class="v" style="color:${issues ? "var(--bad)" : "var(--ok)"}">${issues}</div><div class="s">subs or swim test missing</div></div>` : ""}
     </div>
     <div class="filters">
       <input class="input" id="rw-q" placeholder="Search names…" style="max-width:260px" value="${esc(rowerQ)}">
@@ -997,6 +1004,7 @@ async function pageRowers() {
     <div class="card table-wrap" id="rw-table"></div>`;
   $("#rw-q").oninput = (e) => { rowerQ = e.target.value.trim().toLowerCase(); draw(); };
   $$("#rw-cat button").forEach((b) => b.onclick = () => { rowerCat = b.dataset.c; $$("#rw-cat button").forEach((x) => x.classList.toggle("on", x === b)); draw(); });
+  if (admin) wireRowersTabs();
   if (admin) { $("#rw-add").onclick = () => editMember(null, meta); $("#rw-export").onclick = () => exportModal("/api/admin/members.csv", "all members"); }
   draw();
 }
@@ -1062,6 +1070,96 @@ function editMember(m, meta) {
         try { await api(`/api/admin/members/${m.id}`, { method: "DELETE" }); toast("Member deleted"); await reboot(); pageRowers(); } catch (e) { fail(e); }
       };
     },
+  });
+}
+
+// ---------------------------------------------------------- subs reminders --
+const REM_TIERS = {
+  blocked: { title: "Can't do sessions they're down for", cls: "bad", hint: "Already scheduled, but blocked until subs are paid. Contact these first." },
+  now: { title: "Must pay before their next outing", cls: "warn", hint: "Free novice outings used up, or a senior past the subs cutoff." },
+  cutoff: { title: "Must pay by the subs cutoff", cls: "warn", hint: "They can still row until the cutoff date, but will need subs after it." },
+  soon: { title: "1 free novice outing left", cls: "accent", hint: "A heads-up: after their next water outing they'll need subs." },
+};
+const daysAgo = (ts) => { const d = Math.floor((Date.now() - Date.parse(ts.replace(" ", "T") + "Z")) / 86400000); return d <= 0 ? "today" : d === 1 ? "yesterday" : `${d} days ago`; };
+const sessLabel = (o) => `${o.title || (o.kind === "water" ? "water outing" : "land training")} on ${DAY[dow(o.date)]} ${fmtShort(o.date)}${o.time ? " at " + o.time : ""}`;
+
+function remMessage(x, d) {
+  const first = x.name.split(" ")[0], club = d.club || "the boat club", term = `${d.term} ${d.year}`;
+  const cutoff = d.cutoff ? fmtLong(d.cutoff) : null;
+  if (x.tier === "blocked") return `Hi ${first}, a quick reminder from ${club}: you're down for ${sessLabel(x.blocked[0])}, but your subs for ${term} aren't paid yet, so you can't take part until they are. Could you pay them as soon as possible? Thanks!`;
+  if (x.tier === "soon") return `Hi ${first}, just a heads-up from ${club}: you have 1 free novice outing left. After that you'll need to pay your subs for ${term} to keep rowing. Thanks!`;
+  const why = x.category === "Novice" ? `you've now used your ${x.free_n} free novice outings` : `your subs for ${term} aren't paid yet`;
+  if (x.tier === "cutoff") return `Hi ${first}, a reminder from ${club}: ${why}. Please pay your subs for ${term} by ${cutoff} to keep rowing after that. Thanks!`;
+  return `Hi ${first}, a reminder from ${club}: ${why}. Please pay your subs for ${term} before your next outing so you can keep rowing. Thanks!`;
+}
+
+async function pageSubsReminders() {
+  let d;
+  try { d = await api("/api/admin/subs-reminders"); } catch (e) { return fail(e); }
+  const hideReminded = !!S.remHide;
+  const list = d.members.filter((x) => !hideReminded || !x.reminded_at);
+  const row = (x) => {
+    const why = x.tier === "blocked" ? `Down for ${x.blocked.map((o) => `<b>${esc(sessLabel(o))}</b>`).join(", ")}`
+      : x.category === "Novice" ? (x.free_left === 0 ? `Used all ${x.free_n} free novice outings (${x.water} water outing${x.water === 1 ? "" : "s"} incl. scheduled)` : `${x.free_n - x.free_left} of ${x.free_n} free novice outings used, incl. scheduled`)
+      : "Senior, subs not paid";
+    const plan = x.subs_plan !== "Unpaid" ? `<span class="chip bad" title="Not valid for ${esc(d.term)} ${esc(d.year)}">Expired: ${esc(x.subs_plan === "Single term" ? `${x.subs_term} ${x.subs_year}` : `Full year ${x.subs_year}`)}</span>` : "";
+    return `<article class="card rem" data-id="${x.id}">
+      <div class="rem-main">
+        <div class="rem-name"><b>${esc(x.name)}</b> <span class="chip ${x.category === "Novice" ? "accent" : ""}">${esc(x.category)}</span> ${plan}
+          ${x.reminded_at ? `<button class="chip ok rem-reminded" data-unremind="${x.id}" title="Click to clear">${I.check}Reminded ${daysAgo(x.reminded_at)}</button>` : ""}</div>
+        <div class="rem-why">${why}</div>
+        <div class="rem-meta">${x.next && x.tier !== "blocked" ? `<span>Next: ${esc(sessLabel(x.next))}</span>` : ""}${x.last_activity ? `<span>Last active ${fmtShort(x.last_activity)}</span>` : `<span>${x.water + x.land ? `${x.water + x.land} outing${x.water + x.land === 1 ? "" : "s"} so far` : "No outings yet"}</span>`}
+          ${x.has_phone ? `<span>${phoneCell(x.id, x.phone_masked, x.has_phone)}</span>` : `<span>No phone number</span>`}</div>
+      </div>
+      <div class="rem-actions">
+        <button class="btn sm" data-copy="${x.id}" title="Copy a reminder message">${I.copy}Copy message</button>
+        ${x.has_phone ? `<button class="btn sm" data-text="${x.id}" title="Open your messages app with the reminder">${I.send}Text</button>` : ""}
+        ${x.reminded_at ? "" : `<button class="btn sm ghost" data-remind="${x.id}">${I.check}Mark reminded</button>`}
+        <button class="btn sm primary" data-paid="${x.id}">Mark paid</button>
+      </div></article>`;
+  };
+  const groups = Object.keys(REM_TIERS).map((t) => [t, list.filter((x) => x.tier === t)]).filter(([, l]) => l.length);
+  $("#main").innerHTML = `
+    <div class="page-head"><div><h1>Subs reminders</h1><p>Unpaid members to contact for ${esc(d.term)} ${esc(d.year)}, most urgent first. Outings already scheduled are counted.${d.cutoff ? ` Subs cutoff: <b>${fmtLong(d.cutoff)}</b>.` : ""}</p></div>
+      <div class="toolbar">${rowersTabs("subs", d.members.length)}</div></div>
+    <div class="filters">
+      <label class="check small"><input type="checkbox" id="rem-hide" ${hideReminded ? "checked" : ""}> Hide people already reminded</label>
+      ${list.length ? `<button class="btn sm" id="rem-names" style="margin-left:auto">${I.copy}Copy all names</button>` : ""}
+    </div>
+    ${groups.length ? groups.map(([t, l]) => `<div class="section-title rem-h ${REM_TIERS[t].cls}">${REM_TIERS[t].title} <span class="faint">${l.length}</span></div>
+      <p class="muted small" style="margin:-6px 0 10px">${REM_TIERS[t].hint}</p><div class="rem-list">${l.map(row).join("")}</div>`).join("")
+      : `<div class="card empty">${I.check}<h3>No one to remind</h3><p>${hideReminded && d.members.length ? "Everyone on the list has already been reminded." : "Every active member who needs subs has paid, or still has free novice outings left."}</p></div>`}`;
+  wireRowersTabs(); wireReveal($("#main"));
+  const byId = (id) => d.members.find((x) => x.id === +id);
+  const markReminded = async (id, on = true) => { try { await api(`/api/admin/members/${id}/reminded`, { method: "POST", body: { reminded: on } }); } catch (e) { fail(e); } };
+  const copy = async (text) => { try { await navigator.clipboard.writeText(text); return true; } catch { const t = document.createElement("textarea"); t.value = text; document.body.appendChild(t); t.select(); const ok = document.execCommand("copy"); t.remove(); return ok; } };
+  $("#rem-hide").onchange = (e) => { S.remHide = e.target.checked; pageSubsReminders(); };
+  const nm = $("#rem-names"); if (nm) nm.onclick = async () => { await copy(list.map((x) => x.name).join("\n")); toast(`Copied ${list.length} name${list.length === 1 ? "" : "s"}`); };
+  $$("[data-copy]").forEach((b) => b.onclick = async () => { const x = byId(b.dataset.copy); await copy(remMessage(x, d)); await markReminded(x.id); toast(`Message for ${x.name.split(" ")[0]} copied · marked as reminded`); pageSubsReminders(); });
+  $$("[data-text]").forEach((b) => b.onclick = async () => {
+    const x = byId(b.dataset.text);
+    try {
+      const { phone } = await api(`/api/admin/members/${x.id}/phone`);
+      if (!phone) return toast("No phone number on file", true);
+      await markReminded(x.id);
+      location.href = `sms:${phone.replace(/[^\d+]/g, "")}?&body=${encodeURIComponent(remMessage(x, d))}`;
+      setTimeout(pageSubsReminders, 800);
+    } catch (e) { fail(e); }
+  });
+  $$("[data-remind]").forEach((b) => b.onclick = async () => { await markReminded(b.dataset.remind); toast("Marked as reminded"); pageSubsReminders(); });
+  $$("[data-unremind]").forEach((b) => b.onclick = async () => { await markReminded(b.dataset.unremind, false); pageSubsReminders(); });
+  $$("[data-paid]").forEach((b) => b.onclick = () => {
+    const x = byId(b.dataset.paid);
+    modal({
+      title: `Mark ${esc(x.name)} as paid`,
+      body: `<p style="margin:0">Which subs have they paid?</p>
+        <div class="role-cards" style="grid-template-columns:1fr 1fr">
+          <button type="button" class="role-card" data-plan="Single term"><b>Single term</b><span>${esc(d.term)} ${esc(d.year)}</span></button>
+          <button type="button" class="role-card" data-plan="Full year"><b>Full year</b><span>${esc(d.year)}</span></button></div>`,
+      onMount: (m, close) => $$("[data-plan]", m).forEach((p) => p.onclick = async () => {
+        try { await api(`/api/admin/members/${x.id}/paid`, { method: "POST", body: { plan: p.dataset.plan } }); close(); toast(`${x.name}: ${p.dataset.plan} recorded`); pageSubsReminders(); } catch (e) { fail(e); }
+      }),
+    });
   });
 }
 
