@@ -42,6 +42,7 @@ const I = {
   upload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
   whistle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="14" r="6"/><path d="M13 10l8-4v4l-6 2"/></svg>',
   trophy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg>',
+  down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
 };
 
@@ -188,13 +189,26 @@ const ROUTES = [
   { id: "settings", label: "Settings", icon: I.info, admin: true },
 ];
 
+const routeLabel = (r) => (isAdmin() && r.adminLabel) || r.label;
+function setNavOpen(open) {
+  const bar = $(".topbar"), t = $("#nav-toggle");
+  if (!bar || !t) return;
+  bar.classList.toggle("nav-open", open);
+  t.setAttribute("aria-expanded", String(open));
+}
+// Close the phone page menu on Escape or a tap outside the header.
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") setNavOpen(false); });
+document.addEventListener("click", (e) => { if (!e.target.closest(".topbar")) setNavOpen(false); });
+
 function shell(active) {
   const routes = ROUTES.filter((r) => (!r.admin || isAdmin()));
+  const cur = routes.find((r) => r.id === active) || routes[0];
   const name = meName();
   $("#app").innerHTML = `
   <header class="topbar"><div class="topbar-inner">
     <a class="brand" href="#/schedule" style="color:inherit"><img class="brand-mark" src="/static/crest.png" alt=""><div>${esc(S.boot.club_name || "Reuben Boat Club")}<small>Outing planner · Oxford</small></div></a>
-    <nav class="nav">${routes.map((r) => `<a href="#/${r.id}" class="${r.id === active ? "active" : ""}">${esc((isAdmin() && r.adminLabel) || r.label)}${r.id === "subs" && S.openSubs ? `<span class="count">${S.openSubs}</span>` : ""}</a>`).join("")}</nav>
+    <button class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="main-nav"><span class="nav-ic">${cur.icon}</span><span class="nav-cur">${esc(routeLabel(cur))}</span><span class="count" id="nav-toggle-count"${active !== "subs" && S.openSubs ? "" : " hidden"}>${S.openSubs}</span><span class="chev">${I.down}</span></button>
+    <nav class="nav" id="main-nav">${routes.map((r) => `<a href="#/${r.id}" class="${r.id === active ? "active" : ""}"${r.id === active ? ` aria-current="page"` : ""}><span class="nav-ic">${r.icon}</span><span class="nav-l">${esc(routeLabel(r))}</span>${r.id === "subs" && S.openSubs ? `<span class="count">${S.openSubs}</span>` : ""}</a>`).join("")}</nav>
     <div class="top-actions">
       ${isAdmin() ? `<span class="role-badge">Admin</span>` : ""}
       <button class="me-chip" id="me-chip" title="Choose who you are">${name ? `<span class="avatar">${esc(initials(name))}</span><span class="n">${esc(name)}</span>` : `<span class="avatar" style="background:var(--surface-3);color:var(--text-3)">?</span><span class="n">Who are you?</span>`}</button>
@@ -202,6 +216,8 @@ function shell(active) {
     </div>
   </div></header>
   <main class="main" id="main"><div class="spinner"></div></main>`;
+  $("#nav-toggle").onclick = (e) => { e.stopPropagation(); setNavOpen(!$(".topbar").classList.contains("nav-open")); };
+  $("#main-nav").onclick = () => setNavOpen(false);
   $("#me-chip").onclick = () => pickIdentity();
   $("#logout").onclick = async () => { await api("/api/logout", { method: "POST" }).catch(() => {}); S.role = null; renderLogin(); };
 }
@@ -952,7 +968,8 @@ async function fillSub(subId) {
 }
 
 async function refreshSubsCount() {
-  try { const s = await api("/api/subs"); S.openSubs = s.open.length; const n = $('.nav a[href="#/subs"]'); if (n) n.innerHTML = `Sub board${S.openSubs ? `<span class="count">${S.openSubs}</span>` : ""}`; } catch {}
+  try { const s = await api("/api/subs"); S.openSubs = s.open.length; const n = $('.nav a[href="#/subs"]'); if (n) { n.querySelector(".count")?.remove(); if (S.openSubs) n.insertAdjacentHTML("beforeend", `<span class="count">${S.openSubs}</span>`); }
+    const tc = $("#nav-toggle-count"); if (tc) { tc.textContent = S.openSubs; tc.hidden = !S.openSubs || !!n?.classList.contains("active"); } } catch {}
 }
 
 async function pageSubs() {
