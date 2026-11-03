@@ -641,6 +641,38 @@ async function editOuting(o, defaults = {}) {
   });
 }
 
+// ---------------------------------------------------- phone privacy (admin) --
+const telHref = (p) => "tel:" + String(p).replace(/[^\d+]/g, "");
+/* Masked number with a "Show" button; the full number is only fetched when asked for. */
+function phoneCell(memberId, masked, hasPhone) {
+  if (!hasPhone) return `<span class="faint">—</span>`;
+  return `<span class="phone-mask" data-phone="${memberId}"><span class="tnum">${esc(masked)}</span> <button type="button" class="btn sm ghost" data-reveal="${memberId}">Show</button></span>`;
+}
+function wireReveal(root) {
+  $$("[data-reveal]", root).forEach((b) => b.onclick = async (e) => {
+    e.stopPropagation();
+    try {
+      const { phone } = await api(`/api/admin/members/${b.dataset.reveal}/phone`);
+      b.closest("[data-phone]").innerHTML = phone ? `<a class="tnum" href="${telHref(phone)}" onclick="event.stopPropagation()">${esc(phone)}</a>` : "—";
+    } catch (err) { fail(err); }
+  });
+}
+/* CSV export: phone numbers are left out unless explicitly ticked. */
+function exportModal(url, what) {
+  modal({
+    title: `Export ${what}`,
+    body: `<p style="margin:0" class="muted">Downloads a spreadsheet (CSV) of ${what}.</p>
+      <label class="check"><input type="checkbox" id="ex-phone"> Include phone numbers</label>
+      <div class="callout warn hidden" id="ex-warn">${I.alert}<div>The file will contain phone numbers <b>unencrypted</b>. Only do this if you need them, keep the file private, and delete it when you're done.</div></div>`,
+    foot: `<div class="r"><button class="btn" data-close>Cancel</button><a class="btn primary" id="ex-go" href="${url}">${I.download}Download</a></div>`,
+    onMount: (m, close) => {
+      const cb = $("#ex-phone", m), go = $("#ex-go", m);
+      cb.onchange = () => { go.href = url + (cb.checked ? (url.includes("?") ? "&" : "?") + "include_phone=1" : ""); $("#ex-warn", m).classList.toggle("hidden", !cb.checked); };
+      go.addEventListener("click", () => setTimeout(close, 300));
+    },
+  });
+}
+
 // --------------------------------------------------------------- calendar --
 function calendarModal() {
   requireMe(async () => {
@@ -864,7 +896,7 @@ async function pageRowers() {
   const allOut = rows.reduce((a, r) => a + r.total, 0);
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>${admin ? "Members" : "Rowers"}</h1><p>${admin ? "Manage the squad, subs and swim tests. Outing counts update automatically from the schedule." : "Outing counts across the squad."}</p></div>
-      ${admin ? `<div class="toolbar"><a class="btn" href="/api/admin/members.csv">${I.download}Export CSV</a><button class="btn primary" id="rw-add">${I.plus}Add member</button></div>` : ""}</div>
+      ${admin ? `<div class="toolbar"><button class="btn" id="rw-export">${I.download}Export CSV</button><button class="btn primary" id="rw-add">${I.plus}Add member</button></div>` : ""}</div>
     <div class="stats" style="margin-bottom:16px">
       <div class="card stat"><div class="k">Members</div><div class="v">${rows.filter((r) => r.active !== false).length}</div><div class="s">${novices} novice · ${rows.filter((r) => r.active !== false).length - novices} senior</div></div>
       <div class="card stat"><div class="k">Coxes</div><div class="v">${rows.filter((r) => r.cox_status && r.active !== false).length}</div><div class="s">with a cox status</div></div>
@@ -879,7 +911,7 @@ async function pageRowers() {
     <div class="card table-wrap" id="rw-table"></div>`;
   $("#rw-q").oninput = (e) => { rowerQ = e.target.value.trim().toLowerCase(); draw(); };
   $$("#rw-cat button").forEach((b) => b.onclick = () => { rowerCat = b.dataset.c; $$("#rw-cat button").forEach((x) => x.classList.toggle("on", x === b)); draw(); });
-  if (admin) $("#rw-add").onclick = () => editMember(null, meta);
+  if (admin) { $("#rw-add").onclick = () => editMember(null, meta); $("#rw-export").onclick = () => exportModal("/api/admin/members.csv", "all members"); }
   draw();
 }
 
@@ -894,7 +926,9 @@ function editMember(m, meta) {
         <label class="field"><span>Category</span><select class="input" id="me-cat"><option ${v.category === "Novice" ? "selected" : ""}>Novice</option><option ${v.category === "Senior" ? "selected" : ""}>Senior</option></select></label>
       </div>
       <div class="grid-3">
-        <label class="field"><span>Phone <span class="faint">(admins only)</span></span><input class="input" id="me-phone" type="tel" value="${esc(v.phone || "")}"></label>
+        <label class="field"><span>Phone <span class="faint">(admins only · encrypted)</span></span>
+          <div style="display:flex;gap:6px"><input class="input tnum" id="me-phone" type="tel" placeholder="${m && m.has_phone ? esc(m.phone_masked) : "Not on file"}">
+          ${m && m.has_phone ? `<button type="button" class="btn sm" id="me-phone-show" title="Show the full number">Show</button><button type="button" class="btn sm danger" id="me-phone-del" title="Delete this number">Delete</button>` : ""}</div></label>
         <label class="field"><span>College</span><input class="input" id="me-college" list="me-colleges" value="${esc(v.college || "")}"><datalist id="me-colleges"><option value="Reuben"><option value="Blackfriars"><option value="St Stephen's House"></datalist></label>
         <label class="field"><span>Side preference</span><select class="input" id="me-side">${["", ...Object.keys(SIDE_SHORT)].map((x) => `<option value="${esc(x)}" ${(v.side || "") === x ? "selected" : ""}>${x || "—"}</option>`).join("")}</select></label>
       </div>
@@ -919,12 +953,19 @@ function editMember(m, meta) {
     onMount: (el, close) => {
       const sync = () => { const p = $("#me-plan", el).value; $("#me-term-f", el).classList.toggle("hidden", p !== "Single term"); $("#me-year-f", el).classList.toggle("hidden", p === "Unpaid"); };
       $("#me-plan", el).onchange = sync; sync();
+      // Phone: only sent when changed (null = keep the stored, encrypted number).
+      let phoneTouched = false;
+      const ph = $("#me-phone", el);
+      ph.oninput = () => { phoneTouched = true; };
+      const show = $("#me-phone-show", el), delp = $("#me-phone-del", el);
+      if (show) show.onclick = async () => { try { ph.value = (await api(`/api/admin/members/${m.id}/phone`)).phone; phoneTouched = false; } catch (e) { fail(e); } };
+      if (delp) delp.onclick = () => { ph.value = ""; ph.placeholder = "Will be deleted when you save"; phoneTouched = true; };
       $("#me-save", el).onclick = async () => {
         const body = { name: $("#me-name", el).value.trim(), category: $("#me-cat", el).value, subs_plan: $("#me-plan", el).value,
           subs_term: $("#me-plan", el).value === "Single term" ? $("#me-term", el).value : "", subs_year: $("#me-plan", el).value === "Unpaid" ? "" : $("#me-year", el).value.trim(),
           cox_status: $("#me-cox", el).value, swim_test: $("#me-swim", el).checked, past_water: +$("#me-pw", el).value || 0, past_land: +$("#me-pl", el).value || 0,
           active: $("#me-active", el).checked, notes: $("#me-notes", el).value,
-          phone: $("#me-phone", el).value.trim(), college: $("#me-college", el).value.trim(), side: $("#me-side", el).value };
+          phone: phoneTouched ? $("#me-phone", el).value.trim() : (m ? null : ($("#me-phone", el).value.trim() || null)), college: $("#me-college", el).value.trim(), side: $("#me-side", el).value };
         if (!body.name) return toast("Name is required", true);
         try { await api(m ? `/api/admin/members/${m.id}` : "/api/admin/members", { method: m ? "PUT" : "POST", body }); close(); toast("Saved"); await reboot(); pageRowers(); }
         catch (e) { fail(e); }
@@ -1069,21 +1110,40 @@ async function pageSettings() {
           <div id="s-import-res"></div>
         </div>
         <div class="card card-pad" style="display:flex;flex-direction:column;gap:12px">
+          <h3 style="margin:0">Phone numbers</h3>
+          ${s.phone_encryption
+            ? `<div class="callout">${I.check}<div>Stored <b>encrypted</b> with the server's <code>PHONE_KEY</code>. ${s.phone_count} number${s.phone_count === 1 ? "" : "s"} on file.</div></div>`
+            : `<div class="callout warn">${I.alert}<div><b><code>PHONE_KEY</code> isn't set</b>, so the sign-up form doesn't ask for phone numbers. To collect them, set <code>PHONE_KEY</code> on the server (at least 16 characters, e.g. from <code>openssl rand -base64 32</code>) and restart.${s.phone_count ? ` <b>${s.phone_count}</b> number${s.phone_count === 1 ? " is" : "s are"} stored from before without encryption. Setting the key encrypts them.` : ""}</div></div>`}
+          <label class="field"><span>Ask for a phone number on the sign-up form</span>
+            <select class="input" id="s-phone-mode" ${s.phone_encryption ? "" : "disabled"}>${[["required", "Required"], ["optional", "Optional"], ["off", "Don't ask"]].map(([k, l]) => `<option value="${k}" ${s.phone_mode === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+          <label class="field"><span>Delete a number after this many days without a sign-up</span>
+            <input class="input" type="number" min="0" max="3650" id="s-phone-days" value="${s.phone_retention_days}"><span class="hint">0 keeps numbers until deleted by hand. Old numbers are checked every few hours.</span></label>
+          <div><button class="btn" id="s-phone-save">Save phone settings</button></div>
+        </div>
+        <div class="card card-pad" style="display:flex;flex-direction:column;gap:12px">
           <h3 style="margin:0">Data</h3>
-          <div class="toolbar"><a class="btn" href="/api/admin/backup">${I.download}Download database backup</a><a class="btn" href="/api/admin/members.csv">${I.download}Members CSV</a></div>
+          <div class="toolbar"><a class="btn" href="/api/admin/backup">${I.download}Download database backup</a><button class="btn" id="s-csv">${I.download}Members CSV</button></div>
+          <p class="muted small" style="margin:0">Phone numbers in the backup stay encrypted. They can only be read with this server's <code>PHONE_KEY</code>.</p>
         </div>
       </div>
     </div>`;
+  const phoneFields = () => ({ phone_mode: $("#s-phone-mode").value, phone_retention_days: Math.max(0, Math.min(3650, +$("#s-phone-days").value || 0)) });
+  $("#s-csv").onclick = () => exportModal("/api/admin/members.csv", "all members");
+  $("#s-phone-save").onclick = async () => {
+    const body = { club_name: s.club_name, academic_year: s.academic_year, current_term: s.current_term, subs_cutoff: s.subs_cutoff, novice_free_outings: s.novice_free_outings,
+      novice_land_free: s.novice_land_free, season_start: s.season_start, today_override: s.today_override, ...phoneFields() };
+    try { await api("/api/admin/settings", { method: "PUT", body }); toast("Phone settings saved"); pageSettings(); } catch (e) { fail(e); }
+  };
   $("#s-save").onclick = async () => {
     const body = { club_name: $("#s-club").value.trim() || "Reuben Boat Club", academic_year: $("#s-ay").value.trim(), current_term: $("#s-term").value, subs_cutoff: $("#s-cut").value,
-      novice_free_outings: +$("#s-free").value || 0, novice_land_free: $("#s-land").checked, season_start: $("#s-season").value, today_override: $("#s-today").value };
+      novice_free_outings: +$("#s-free").value || 0, novice_land_free: $("#s-land").checked, season_start: $("#s-season").value, today_override: $("#s-today").value, ...phoneFields() };
     try { await api("/api/admin/settings", { method: "PUT", body }); toast("Settings saved"); await reboot(); shell("settings"); pageSettings(); } catch (e) { fail(e); }
   };
   $("#s-mpw-save").onclick = async () => {
     const pw = $("#s-mpw").value;
     if (!pw) return toast("Type a password first", true);
     const body = { club_name: s.club_name, academic_year: s.academic_year, current_term: s.current_term, subs_cutoff: s.subs_cutoff, novice_free_outings: s.novice_free_outings,
-      novice_land_free: s.novice_land_free, season_start: s.season_start, today_override: s.today_override, member_password: pw };
+      novice_land_free: s.novice_land_free, season_start: s.season_start, today_override: s.today_override, member_password: pw, ...phoneFields() };
     try { await api("/api/admin/settings", { method: "PUT", body }); toast("Rower password updated"); pageSettings(); } catch (e) { fail(e); }
   };
   const r = $("#s-mpw-reset"); if (r) r.onclick = async () => { await api("/api/admin/settings/reset-member-password", { method: "POST" }).catch(fail); toast("Using server password"); pageSettings(); };
@@ -1151,8 +1211,8 @@ async function pageSignup() {
         <h3>About you</h3>
         <label class="field"><span>Your name</span><div id="su-name"></div><span class="hint">Pick your name, or type it in full if you're new to the club.</span></label>
         <div class="grid-2">
-          <label class="field"><span>Phone number</span><input class="input" id="su-phone" type="tel" autocomplete="tel" placeholder="${st.has_phone ? "We have your number — leave blank to keep it" : "e.g. 07700 900123"}" value="${esc(st.phone)}">
-            <span class="hint">🔒 Only visible to club admins and coaches.</span></label>
+          ${meta.phone_mode === "off" ? "" : `<label class="field"><span>Phone number${meta.phone_mode === "optional" ? ` <span class="faint">(optional)</span>` : ""}</span><input class="input" id="su-phone" type="tel" autocomplete="tel" placeholder="${st.has_phone ? "We have your number. Leave blank to keep it" : "e.g. 07700 900123"}" value="${esc(st.phone)}">
+            <span class="hint">🔒 Only club admins can see it. Stored encrypted${meta.phone_retention_days ? ` and deleted after ${meta.phone_retention_days >= 60 ? Math.round(meta.phone_retention_days / 30) + " months" : meta.phone_retention_days + " days"} without a sign-up` : ""}.</span></label>`}
           <div class="field"><span>College</span>${pills("college", meta.colleges.map((c) => [c, c]), st.college)}
             <input class="input ${st.college === "Other" ? "" : "hidden"}" id="su-college-other" placeholder="Which college?" value="${esc(st.college_other)}" style="margin-top:6px"></div>
         </div>
@@ -1315,7 +1375,7 @@ async function pageSignupAdmin() {
     </div>
     <div class="filters">
       <div class="seg" id="sw-tabs">${[["responses", `Responses (${R.length})`], ["grid", "Availability grid"], ["sessions", `Sessions (${d.slots.length})`]].map(([k, l]) => `<button data-t="${k}" class="${S.suTab === k ? "on" : ""}">${l}</button>`).join("")}</div>
-      <div class="toolbar" style="margin-left:auto">${S.suTab === "sessions" ? `<button class="btn" id="sw-copy">${I.copy}Copy last week's sessions</button><button class="btn primary" id="sw-add">${I.plus}Add session</button>` : `<a class="btn" href="/api/admin/signup/${ws}/responses.csv">${I.download}Export CSV</a>`}</div>
+      <div class="toolbar" style="margin-left:auto">${S.suTab === "sessions" ? `<button class="btn" id="sw-copy">${I.copy}Copy last week's sessions</button><button class="btn primary" id="sw-add">${I.plus}Add session</button>` : `<button class="btn" id="sw-export">${I.download}Export CSV</button>`}</div>
     </div>
     <div id="sw-body"></div>`;
 
@@ -1354,7 +1414,7 @@ async function pageSignupAdmin() {
     body.innerHTML = R.length ? `<div class="card table-wrap"><table class="t"><thead><tr><th>Name</th><th>Phone</th><th>College</th><th>As</th><th class="num">Row</th><th class="num">Cox</th><th>Side</th><th class="num">Sched / max</th><th>Bankride</th><th class="num">Free for</th></tr></thead>
       <tbody>${R.map((r) => `<tr class="clickable" data-id="${r.id}">
         <td><b>${esc(r.name)}</b>${r.needs_review ? ` <span class="chip warn" title="Added through the form — check their details in Rowers">New</span>` : ""}${r.comments ? ` <span title="${esc(r.comments)}">💬</span>` : ""}</td>
-        <td class="tnum">${r.phone ? `<a href="tel:${esc(r.phone.replace(/\s+/g, ""))}" onclick="event.stopPropagation()">${esc(r.phone)}</a>` : `<span class="faint">—</span>`}</td>
+        <td>${phoneCell(r.member_id, r.phone_masked, r.has_phone)}</td>
         <td>${esc(r.college)}</td><td><span class="chip ${r.role === "bankrider" ? "violet" : r.role === "rower" ? "" : "accent"}">${roleShort[r.role]}</span></td>
         <td class="num">${r.want_row || ""}</td><td class="num">${r.want_cox || ""}</td><td>${r.side ? `<span class="chip">${esc(SIDE_SHORT[r.side] || r.side)}</span>` : ""}</td>
         <td class="num"><span class="${r.max_outings && r.scheduled > r.max_outings ? "chip bad" : ""}">${r.scheduled}${r.max_outings ? ` / ${r.max_outings}` : ""}</span></td>
@@ -1362,8 +1422,10 @@ async function pageSignupAdmin() {
         <td class="num">${r.slot_ids.length}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="card empty">${I.user}<h3>No responses yet</h3><p>${d.week.open ? "The form is open — share the site link with the squad." : "Add sessions, then open sign-ups so rowers can respond."}</p></div>`;
     $$("tr[data-id]", body).forEach((tr) => tr.onclick = () => responseDetail(R.find((x) => x.id === +tr.dataset.id), d, roleShort));
+    wireReveal(body);
   }
   $$("#sw-tabs button").forEach((b) => b.onclick = () => { S.suTab = b.dataset.t; pageSignupAdmin(); });
+  const swx = $("#sw-export"); if (swx) swx.onclick = () => exportModal(`/api/admin/signup/${ws}/responses.csv`, `sign-ups for the week of ${fmtShort(ws)}`);
   $("#sw-prev").onclick = () => { S.suWeek = addDays(ws, -7); pageSignupAdmin(); };
   $("#sw-next").onclick = () => { S.suWeek = addDays(ws, 7); pageSignupAdmin(); };
   const goSessions = $("#sw-go-sessions");
@@ -1397,7 +1459,7 @@ function responseDetail(r, d, roleShort) {
   const slots = d.slots.filter((sl) => r.slot_ids.includes(sl.id));
   modal({
     title: esc(r.name),
-    body: `<dl class="kv"><dt>Phone</dt><dd>${r.phone ? `<a href="tel:${esc(r.phone.replace(/\s+/g, ""))}">${esc(r.phone)}</a>` : "—"}</dd>
+    body: `<dl class="kv"><dt>Phone</dt><dd>${phoneCell(r.member_id, r.phone_masked, r.has_phone)}${r.has_phone ? ` <button type="button" class="btn sm ghost danger" id="rd-delphone">Delete number</button>` : ""}</dd>
       <dt>College</dt><dd>${esc(r.college)}</dd><dt>Signing up as</dt><dd>${roleShort[r.role]}</dd>
       ${r.want_row ? `<dt>Rowing outings</dt><dd>${r.want_row}</dd>` : ""}${r.want_cox ? `<dt>Coxing outings</dt><dd>${r.want_cox}</dd>` : ""}
       ${r.side ? `<dt>Side</dt><dd>${esc(r.side)}</dd>` : ""}${r.max_outings ? `<dt>Max this week</dt><dd>${r.max_outings} (scheduled: ${r.scheduled})</dd>` : ""}
@@ -1408,6 +1470,12 @@ function responseDetail(r, d, roleShort) {
       ${r.needs_review ? `<div class="callout warn">${I.alert}<div>${esc(r.name)} was added through the form. Check their category, swim test and subs on the <a href="#/rowers">Rowers</a> page.</div></div>` : ""}`,
     foot: `<button class="btn danger" id="rd-del">Delete response</button><div class="r"><button class="btn" data-close>Close</button></div>`,
     onMount: (m, close) => {
+      wireReveal(m);
+      const dp = $("#rd-delphone", m);
+      if (dp) dp.onclick = async () => {
+        if (!await confirmBox(`Delete ${esc(r.name)}'s phone number?`, "It's removed from the club's records. They'll be asked for it again next time they sign up.", "Delete number", true)) return;
+        try { await api(`/api/admin/members/${r.member_id}/phone`, { method: "DELETE" }); toast("Phone number deleted"); pageSignupAdmin(); } catch (e) { fail(e); }
+      };
       $("#rd-del", m).onclick = async () => {
         if (!await confirmBox("Delete this response?", `${esc(r.name)}'s sign-up for this week will be removed. Their member record stays.`, "Delete", true)) return;
         try { await api(`/api/admin/signup/responses/${r.id}`, { method: "DELETE" }); toast("Response deleted"); pageSignupAdmin(); } catch (e) { fail(e); }

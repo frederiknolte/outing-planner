@@ -20,6 +20,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import db
 from .auth import require_admin, require_member, role_of
+from . import privacy
 from .importer import import_workbook
 from .calendar import router as calendar_router
 from .signup import availability_for_outing, router as signup_router
@@ -36,6 +37,22 @@ if ADMIN_PASSWORD == MEMBER_PASSWORD:
     raise SystemExit("ADMIN_PASSWORD and MEMBER_PASSWORD must be different.")
 
 db.init_db()
+with db.get_conn() as _c:
+    _r = privacy.migrate(_c)
+    if _r["encrypted"]:
+        print(f"[privacy] encrypted {_r['encrypted']} stored phone number(s)", flush=True)
+if _r["encrypted"]:
+    # Rewrite the database file so no unencrypted copies remain in free space or the WAL.
+    _v = db.connect()
+    try:
+        _v.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        _v.execute("VACUUM")
+        _v.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        _v.close()
+    if _r["plaintext_left"]:
+        print(f"[privacy] WARNING: {_r['plaintext_left']} phone number(s) stored unencrypted; set PHONE_KEY to encrypt them", flush=True)
+privacy.start_retention_thread(db)
 
 
 def _secret_key() -> str:
@@ -477,9 +494,23 @@ class MemberIn(BaseModel):
     past_land: int = Field(0, ge=0)
     active: bool = True
     notes: str = Field("", max_length=500)
-    phone: str = Field("", max_length=40)
+    phone: Optional[str] = Field(None, max_length=40)   # None = keep the stored number, "" = delete it
     college: str = Field("", max_length=80)
     side: str = Field("", max_length=40)
+
+
+def _phone_value(phone: Optional[str]) -> Optional[str]:
+    """Encrypted value to store, '' to delete, None to keep unchanged."""
+    if phone is None:
+        return None
+    phone = phone.strip()
+    if not phone:
+        return ""
+    if sum(c.isdigit() for c in phone) < 7:
+        raise HTTPException(400, "That phone number looks too short")
+    if not privacy.enabled():
+        raise HTTPException(400, "Phone numbers can't be stored: set the PHONE_KEY environment variable first")
+    return privacy.encrypt(phone)
 
 
 def _member_validate(m: MemberIn):
@@ -498,7 +529,9 @@ def members_list(_: str = Depends(require_admin)):
         out = []
         for m in sorted(rules.members.values(), key=lambda m: m["name"].lower()):
             st = rules.status_now(m["id"])
-            out.append({**m, "swim_test": bool(m["swim_test"]), "active": bool(m["active"]),
+            safe = {k: v for k, v in m.items() if k not in ("phone", "cal_token")}
+            out.append({**safe, "has_phone": bool(m["phone"]), "phone_masked": privacy.mask(m["phone"]),
+                        "swim_test": bool(m["swim_test"]), "active": bool(m["active"]),
                         "totals": rules.totals(m["id"]), "subs_valid": st["subs_valid"],
                         "water_ok": st["water"]["ok"], "land_ok": st["land"]["ok"],
                         "water_reasons": st["water"]["reasons"], "land_reasons": st["land"]["reasons"],
@@ -513,10 +546,11 @@ def member_create(m: MemberIn, _: str = Depends(require_admin)):
         try:
             cur = conn.execute(
                 """INSERT INTO members(name, category, swim_test, subs_plan, subs_term, subs_year, cox_status,
-                   past_water, past_land, active, notes, phone, college, side) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   past_water, past_land, active, notes, phone, phone_updated_at, college, side)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ? != '' THEN datetime('now') ELSE '' END,?,?)""",
                 (m.name.strip(), m.category, int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
-                 m.cox_status, m.past_water, m.past_land, int(m.active), m.notes, m.phone.strip(),
-                 m.college.strip(), m.side))
+                 m.cox_status, m.past_water, m.past_land, int(m.active), m.notes, _phone_value(m.phone) or "",
+                 m.phone or "", m.college.strip(), m.side))
         except db.sqlite3.IntegrityError:
             raise HTTPException(400, "A member with that name already exists")
         return {"id": cur.lastrowid}
@@ -529,11 +563,15 @@ def member_update(member_id: int, m: MemberIn, _: str = Depends(require_admin)):
         try:
             conn.execute(
                 """UPDATE members SET name=?, category=?, swim_test=?, subs_plan=?, subs_term=?, subs_year=?,
-                   cox_status=?, past_water=?, past_land=?, active=?, notes=?, phone=?, college=?, side=?,
+                   cox_status=?, past_water=?, past_land=?, active=?, notes=?, college=?, side=?,
                    needs_review=0 WHERE id=?""",
                 (m.name.strip(), m.category, int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
-                 m.cox_status, m.past_water, m.past_land, int(m.active), m.notes, m.phone.strip(),
+                 m.cox_status, m.past_water, m.past_land, int(m.active), m.notes,
                  m.college.strip(), m.side, member_id))
+            new_phone = _phone_value(m.phone)
+            if new_phone is not None:
+                conn.execute("UPDATE members SET phone = ?, phone_updated_at = CASE WHEN ? != '' THEN datetime('now') ELSE '' END WHERE id = ?",
+                             (new_phone, new_phone, member_id))
         except db.sqlite3.IntegrityError:
             raise HTTPException(400, "A member with that name already exists")
         return {"ok": True}
@@ -546,17 +584,37 @@ def member_delete(member_id: int, _: str = Depends(require_admin)):
         return {"ok": True}
 
 
+@app.get("/api/admin/members/{member_id}/phone")
+def member_phone(member_id: int, _: str = Depends(require_admin)):
+    """Reveal one member's full number (admin taps "Show")."""
+    with db.get_conn() as conn:
+        r = conn.execute("SELECT phone FROM members WHERE id = ?", (member_id,)).fetchone()
+        if not r:
+            raise HTTPException(404, "Unknown member")
+        plain = privacy.decrypt(r["phone"])
+        if plain is None:
+            raise HTTPException(409, "This number can't be read: PHONE_KEY is missing or has changed")
+        return {"phone": plain}
+
+
+@app.delete("/api/admin/members/{member_id}/phone")
+def member_phone_delete(member_id: int, _: str = Depends(require_admin)):
+    with db.get_conn() as conn:
+        conn.execute("UPDATE members SET phone = '', phone_updated_at = '' WHERE id = ?", (member_id,))
+        return {"ok": True}
+
+
 @app.get("/api/admin/members.csv")
-def members_csv(_: str = Depends(require_admin)):
+def members_csv(include_phone: bool = False, _: str = Depends(require_admin)):
     with db.get_conn() as conn:
         rules = Rules(conn)
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(["Name", "Phone", "College", "Side", "Category", "Swim test", "Subs plan", "Term", "Year",
+        w.writerow(["Name"] + (["Phone"] if include_phone else []) + ["College", "Side", "Category", "Swim test", "Subs plan", "Term", "Year",
                     "Subs valid", "Cox status", "Water outings", "Land sessions", "Total", "Novice free left", "Active"])
         for m in sorted(rules.members.values(), key=lambda m: m["name"].lower()):
             t = rules.totals(m["id"])
-            w.writerow([m["name"], m["phone"], m["college"], m["side"], m["category"], "Yes" if m["swim_test"] else "No", m["subs_plan"], m["subs_term"],
+            w.writerow([m["name"]] + ([privacy.decrypt(m["phone"]) or ""] if include_phone else []) + [m["college"], m["side"], m["category"], "Yes" if m["swim_test"] else "No", m["subs_plan"], m["subs_term"],
                         m["subs_year"], "Yes" if rules.subs_valid(m) else "No", m["cox_status"], t["water"],
                         t["land"], t["total"], "" if t["novice_free_left"] is None else t["novice_free_left"],
                         "Yes" if m["active"] else "No"])
@@ -836,6 +894,8 @@ class SettingsIn(BaseModel):
     novice_land_free: bool = True
     season_start: str = ""
     member_password: str = Field("", max_length=200)
+    phone_mode: str = "required"
+    phone_retention_days: int = Field(180, ge=0, le=3650)
 
 
 @app.get("/api/admin/settings")
@@ -846,6 +906,9 @@ def settings_get(_: str = Depends(require_admin)):
         s["novice_land_free"] = s.get("novice_land_free") == "1"
         s["novice_free_outings"] = int(s.get("novice_free_outings") or 0)
         s["terms"] = TERMS
+        s["phone_encryption"] = privacy.enabled()
+        s["phone_retention_days"] = int(s.get("phone_retention_days") or 0)
+        s["phone_count"] = conn.execute("SELECT COUNT(*) FROM members WHERE phone != ''").fetchone()[0]
         return s
 
 
@@ -859,7 +922,12 @@ def settings_put(b: SettingsIn, _: str = Depends(require_admin)):
                 date.fromisoformat(v)
             except ValueError:
                 raise HTTPException(400, f"Bad date: {v}")
+    if b.phone_mode not in ("required", "optional", "off"):
+        raise HTTPException(400, "Bad phone setting")
     with db.get_conn() as conn:
+        db.set_setting(conn, "phone_mode", b.phone_mode)
+        db.set_setting(conn, "phone_retention_days", str(b.phone_retention_days))
+        privacy.purge_expired(conn, b.phone_retention_days)
         for k in ("club_name", "academic_year", "current_term", "subs_cutoff", "today_override", "season_start"):
             db.set_setting(conn, k, getattr(b, k).strip())
         db.set_setting(conn, "novice_free_outings", str(b.novice_free_outings))

@@ -129,6 +129,7 @@ MIGRATIONS = {
         "side": "TEXT NOT NULL DEFAULT ''",
         "needs_review": "INTEGER NOT NULL DEFAULT 0",  # created via the sign-up form
         "cal_token": "TEXT NOT NULL DEFAULT ''",       # secret for the personal calendar feed
+        "phone_updated_at": "TEXT NOT NULL DEFAULT ''",  # for automatic deletion of old numbers
     },
 }
 
@@ -142,6 +143,8 @@ DEFAULT_SETTINGS = {
     "novice_land_free": "1",
     "season_start": "2026-10-01",
     "member_password_hash": "",
+    "phone_mode": "required",          # sign-up form: required | optional | off
+    "phone_retention_days": "180",     # delete numbers after this long without a sign-up (0 = keep)
 }
 
 
@@ -149,6 +152,8 @@ def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Overwrite deleted/replaced data with zeros, so e.g. old phone numbers don't linger in the file.
+    conn.execute("PRAGMA secure_delete = ON")
     return conn
 
 

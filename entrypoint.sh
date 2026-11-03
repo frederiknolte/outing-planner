@@ -120,7 +120,17 @@ fi
 
 PUID="${PUID:-99}"
 PGID="${PGID:-100}"
-find "$DATA_DIR" \( ! -user "$PUID" -o ! -group "$PGID" \) -exec chown "$PUID:$PGID" {} + 2>/dev/null || true
+# Give the app's files to PUID:PGID, but leave Tailscale's state (node private keys; Unraid's
+# Tailscale integration may put it in /data/.tailscale_state) owned by root and unreadable
+# by the app, so a compromised app can't steal the node's identity.
+find "$DATA_DIR" -mindepth 1 -path "$DATA_DIR/.tailscale*" -prune -o \
+  \( ! -user "$PUID" -o ! -group "$PGID" \) -exec chown "$PUID:$PGID" {} + 2>/dev/null || true
+chown "$PUID:$PGID" "$DATA_DIR" 2>/dev/null || true
+for ts in "$DATA_DIR"/.tailscale*; do
+  [ -e "$ts" ] || continue
+  chown -R 0:0 "$ts" 2>/dev/null || true
+  chmod -R go-rwx "$ts" 2>/dev/null || true
+done
 chmod u+rwx "$DATA_DIR"
 umask "${UMASK:-002}"
 

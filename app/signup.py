@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from . import db
+from . import db, privacy
 from .auth import require_admin, require_member
 from .logic import effective_today, monday_of
 
@@ -96,7 +96,10 @@ def signup_forms(role: str = Depends(require_member)):
                               (this_week,)):
             slots = [s for s in _slots(conn, w["week_start"]) if s["date"] >= today.isoformat()]
             weeks.append({"week_start": w["week_start"], "note": w["note"], "slots": slots})
-        return {"weeks": weeks, "colleges": COLLEGES, "roles": ROLES, "sides": SIDES, "slot_kinds": SLOT_KINDS}
+        s = db.get_settings(conn)
+        days = int(s.get("phone_retention_days") or 0)
+        return {"weeks": weeks, "colleges": COLLEGES, "roles": ROLES, "sides": SIDES, "slot_kinds": SLOT_KINDS,
+                "phone_mode": privacy.phone_mode(s), "phone_retention_days": days}
 
 
 @router.get("/api/signup/{week_start}/member/{member_id}")
@@ -162,11 +165,14 @@ def signup_submit(b: SignupIn, role: str = Depends(require_member)):
         raise HTTPException(400, "How many coxing outings would you like?")
     if b.role != "bankrider" and b.max_outings < 1:
         raise HTTPException(400, "Set the maximum number of outings for the week")
-    phone = b.phone.strip()
-    if phone and sum(c.isdigit() for c in phone) < 7:
-        raise HTTPException(400, "That phone number looks too short")
+    phone = " ".join(b.phone.split())
 
     with db.get_conn() as conn:
+        mode = privacy.phone_mode(db.get_settings(conn))
+        if mode == "off":
+            phone = ""  # not collected
+        if phone and sum(c.isdigit() for c in phone) < 7:
+            raise HTTPException(400, "That phone number looks too short")
         w = _week_row(conn, ws)
         if not w["open"] and role != "admin":
             raise HTTPException(400, "Sign-ups for this week are closed")
@@ -195,15 +201,18 @@ def signup_submit(b: SignupIn, role: str = Depends(require_member)):
                 m = conn.execute("SELECT * FROM members WHERE id = ?", (cur.lastrowid,)).fetchone()
                 created = True
         mid = m["id"]
-        if not phone and not m["phone"]:
+        if mode == "required" and not phone and not m["phone"]:
             if created:
                 conn.execute("DELETE FROM members WHERE id = ?", (mid,))
             raise HTTPException(400, "Please add a phone number so coaches can reach you")
 
-        # keep member profile up to date
+        # keep member profile up to date (phone numbers are stored encrypted)
+        enc = privacy.encrypt(phone) if phone else ""
         conn.execute(
-            "UPDATE members SET phone = CASE WHEN ? != '' THEN ? ELSE phone END, college = ?, side = CASE WHEN ? != '' THEN ? ELSE side END, active = 1 WHERE id = ?",
-            (phone, phone, college, b.side if rows else "", b.side if rows else "", mid))
+            """UPDATE members SET phone = CASE WHEN ? != '' THEN ? ELSE phone END,
+                   phone_updated_at = CASE WHEN ? != '' THEN datetime('now') ELSE phone_updated_at END,
+                   college = ?, side = CASE WHEN ? != '' THEN ? ELSE side END, active = 1 WHERE id = ?""",
+            (enc, enc, enc, college, b.side if rows else "", b.side if rows else "", mid))
 
         existing = conn.execute("SELECT id FROM signups WHERE week_start = ? AND member_id = ?", (ws, mid)).fetchone()
         vals = (b.role, b.want_row if rows else 0, b.want_cox if coxes else 0, b.side if rows else "",
@@ -238,7 +247,8 @@ def signup_admin(week_start: str, _: str = Depends(require_admin)):
             m = members.get(r["member_id"], {})
             responses.append({
                 **dict(r), "can_bankride": bool(r["can_bankride"]),
-                "name": m.get("name"), "phone": m.get("phone", ""), "category": m.get("category"),
+                "name": m.get("name"), "has_phone": bool(m.get("phone")), "phone_masked": privacy.mask(m.get("phone", "")),
+                "category": m.get("category"),
                 "cox_status": m.get("cox_status"), "needs_review": bool(m.get("needs_review")),
                 "slot_ids": sorted(s for s, ms in avail.items() if r["member_id"] in ms),
             })
@@ -344,16 +354,20 @@ def response_delete(signup_id: int, _: str = Depends(require_admin)):
 
 
 @router.get("/api/admin/signup/{week_start}/responses.csv")
-def responses_csv(week_start: str, _: str = Depends(require_admin)):
+def responses_csv(week_start: str, include_phone: bool = False, _: str = Depends(require_admin)):
     data = signup_admin(week_start)
+    phones = {}
+    if include_phone:
+        with db.get_conn() as conn:
+            phones = {r["id"]: privacy.decrypt(r["phone"]) or "" for r in conn.execute("SELECT id, phone FROM members")}
     slots = data["slots"]
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["Name", "Phone", "College", "Signing up as", "Rowing outings wanted", "Coxing outings wanted",
+    w.writerow(["Name"] + (["Phone"] if include_phone else []) + ["College", "Signing up as", "Rowing outings wanted", "Coxing outings wanted",
                 "Side", "Max outings", "Can bankride", "Comments", "Submitted"]
                + [f"{SLOT_KINDS[s['kind']]} {s['date']} {s['time']}".strip() for s in slots])
     for r in data["responses"]:
-        w.writerow([r["name"], r["phone"], r["college"], ROLES.get(r["role"], r["role"]), r["want_row"] or "",
+        w.writerow([r["name"]] + ([phones.get(r["member_id"], "")] if include_phone else []) + [r["college"], ROLES.get(r["role"], r["role"]), r["want_row"] or "",
                     r["want_cox"] or "", r["side"], r["max_outings"], "Yes" if r["can_bankride"] else "No",
                     r["comments"], r["updated_at"]]
                    + ["Yes" if s["id"] in r["slot_ids"] else "" for s in slots])
