@@ -1,0 +1,17 @@
+services:
+  outing-planner:
+    build: .
+    image: outing-planner:latest
+    container_name: outing-planner
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      # Owner of the files in the data folder (Unraid: 99 = nobody, 100 = users).
+      - PUID=${PUID:-99}
+      - PGID=${PGID:-100}
+    volumes:
+      # Everything the app stores lives in this one host folder.
+      # On Unraid, e.g. DATA_PATH=/mnt/user/appdata/outing-planner in .env
+      - ${DATA_PATH:-./data}:/data

@@ -1,0 +1,929 @@
+"""Boat club outing planner — FastAPI app."""
+from __future__ import annotations
+
+import csv
+import hashlib
+import hmac
+import io
+import os
+import secrets
+import time
+from collections import defaultdict
+from datetime import date, timedelta
+from typing import Optional
+
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+from starlette.middleware.sessions import SessionMiddleware
+
+from . import db
+from .auth import require_admin, require_member, role_of
+from .importer import import_workbook
+from .calendar import router as calendar_router
+from .signup import availability_for_outing, router as signup_router
+from .logic import (BOAT_TYPES, SUBS_PLANS, TERMS, Rules, monday_of, outing_payload,
+                    seat_label, seat_list)
+
+STATIC = os.path.join(os.path.dirname(__file__), "static")
+
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+MEMBER_PASSWORD = os.environ.get("MEMBER_PASSWORD", "")
+if not ADMIN_PASSWORD or not MEMBER_PASSWORD:
+    raise SystemExit("ADMIN_PASSWORD and MEMBER_PASSWORD environment variables must both be set.")
+if ADMIN_PASSWORD == MEMBER_PASSWORD:
+    raise SystemExit("ADMIN_PASSWORD and MEMBER_PASSWORD must be different.")
+
+db.init_db()
+
+
+def _secret_key() -> str:
+    key = os.environ.get("SECRET_KEY")
+    if key:
+        return key
+    path = os.path.join(db.DATA_DIR, ".secret_key")
+    if os.path.exists(path):
+        with open(path) as f:
+            return f.read().strip()
+    key = secrets.token_urlsafe(48)
+    with open(path, "w") as f:
+        f.write(key)
+    os.chmod(path, 0o600)
+    return key
+
+
+app = FastAPI(title="Reuben Boat Club Outing Planner", docs_url=None, redoc_url=None, openapi_url=None)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=_secret_key(),
+    session_cookie="op_session",
+    max_age=60 * 60 * 24 * 30,
+    same_site="lax",
+    https_only=os.environ.get("COOKIE_SECURE", "0") == "1",
+)
+
+
+# ---------------------------------------------------------------- auth ----
+def _hash_pw(pw: str, salt: Optional[bytes] = None) -> str:
+    salt = salt or secrets.token_bytes(16)
+    h = hashlib.scrypt(pw.encode(), salt=salt, n=2**14, r=8, p=1)
+    return salt.hex() + "$" + h.hex()
+
+
+def _check_hash(pw: str, stored: str) -> bool:
+    try:
+        salt_hex, h_hex = stored.split("$")
+        return hmac.compare_digest(_hash_pw(pw, bytes.fromhex(salt_hex)).split("$")[1], h_hex)
+    except ValueError:
+        return False
+
+
+_attempts: dict[str, list[float]] = defaultdict(list)
+
+
+def _rate_limited(ip: str) -> bool:
+    now = time.time()
+    _attempts[ip] = [t for t in _attempts[ip] if now - t < 300]
+    return len(_attempts[ip]) >= 10
+
+
+class LoginIn(BaseModel):
+    password: str
+
+
+@app.post("/api/login")
+def login(body: LoginIn, request: Request):
+    ip = request.client.host if request.client else "?"
+    if _rate_limited(ip):
+        raise HTTPException(429, "Too many attempts — try again in a few minutes")
+    pw = body.password
+    role = None
+    if hmac.compare_digest(pw.encode(), ADMIN_PASSWORD.encode()):
+        role = "admin"
+    else:
+        with db.get_conn() as conn:
+            stored = db.get_settings(conn).get("member_password_hash")
+        if stored:
+            ok = _check_hash(pw, stored)
+        else:
+            ok = hmac.compare_digest(pw.encode(), MEMBER_PASSWORD.encode())
+        if ok:
+            role = "member"
+    if not role:
+        _attempts[ip].append(time.time())
+        raise HTTPException(401, "Wrong password")
+    request.session.clear()
+    request.session["role"] = role
+    return {"role": role}
+
+
+@app.post("/api/logout")
+def logout(request: Request):
+    request.session.clear()
+    return {"ok": True}
+
+
+@app.get("/api/me")
+def me(request: Request):
+    return {"role": role_of(request)}
+
+
+# ------------------------------------------------------------- helpers ----
+def _week_start(start: Optional[str], rules: Rules) -> date:
+    if start:
+        try:
+            return monday_of(date.fromisoformat(start))
+        except ValueError:
+            raise HTTPException(400, "Bad date")
+    return monday_of(rules.today)
+
+
+def _boats(conn) -> dict:
+    return {r["id"]: dict(r) for r in conn.execute("SELECT * FROM boats")}
+
+
+def _outings_payload(conn, rules: Rules, where: str, params: tuple, admin: bool) -> list[dict]:
+    outings = [dict(r) for r in conn.execute(f"SELECT * FROM outings WHERE {where} ORDER BY date, time, id", params)]
+    if not outings:
+        return []
+    ids = [o["id"] for o in outings]
+    qs = ",".join("?" * len(ids))
+    assigns = defaultdict(list)
+    for r in conn.execute(f"SELECT * FROM assignments WHERE outing_id IN ({qs})", ids):
+        assigns[r["outing_id"]].append(dict(r))
+    subs = defaultdict(list)
+    for r in conn.execute(f"SELECT * FROM sub_requests WHERE outing_id IN ({qs}) AND status != 'cancelled'", ids):
+        subs[r["outing_id"]].append(dict(r))
+    # double-booking detection: same date+time, any outing
+    dates = sorted({o["date"] for o in outings})
+    dq = ",".join("?" * len(dates))
+    slot = defaultdict(lambda: defaultdict(list))  # (date,time) -> member -> [outing ids]
+    for r in conn.execute(
+        f"""SELECT a.member_id, o.id, o.date, o.time FROM assignments a JOIN outings o ON o.id = a.outing_id
+            WHERE o.date IN ({dq}) AND o.time != ''""", dates):
+        slot[(r["date"], r["time"])][r["member_id"]].append(r["id"])
+    boats = _boats(conn)
+    boat_slot = defaultdict(list)
+    for o in conn.execute(f"SELECT id, date, time, boat_id FROM outings WHERE date IN ({dq}) AND boat_id IS NOT NULL", dates):
+        boat_slot[(o["date"], o["time"], o["boat_id"])].append(o["id"])
+    out = []
+    for o in outings:
+        p = outing_payload(rules, o, assigns[o["id"]], subs[o["id"]], boats,
+                           slot.get((o["date"], o["time"]), {}) if o["time"] else {}, admin)
+        if admin and o["boat_id"] and o["time"] and len(boat_slot[(o["date"], o["time"], o["boat_id"])]) > 1:
+            p["warnings"].append(f"{boats[o['boat_id']]['name']} is booked twice at this time")
+        out.append(p)
+    return out
+
+
+# ------------------------------------------------------------ bootstrap ----
+@app.get("/api/bootstrap")
+def bootstrap(role: str = Depends(require_member)):
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        s = rules.settings
+        members = [
+            {"id": m["id"], "name": m["name"], "category": m["category"], "cox_status": m["cox_status"]}
+            for m in sorted(rules.members.values(), key=lambda m: m["name"].lower()) if m["active"]
+        ]
+        return {
+            "role": role,
+            "club_name": s.get("club_name"),
+            "today": rules.today.isoformat(),
+            "this_week": monday_of(rules.today).isoformat(),
+            "members": members,
+            "settings": {
+                "academic_year": s.get("academic_year"), "current_term": s.get("current_term"),
+                "novice_free_outings": rules.free_n,
+            },
+        }
+
+
+# ---------------------------------------------------------------- week ----
+@app.get("/api/week")
+def week(start: Optional[str] = None, role: str = Depends(require_member)):
+    admin = role == "admin"
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        ws = _week_start(start, rules)
+        we = ws + timedelta(days=6)
+        where = "date BETWEEN ? AND ?" + ("" if admin else " AND published = 1")
+        outings = _outings_payload(conn, rules, where, (ws.isoformat(), we.isoformat()), admin)
+        counts = conn.execute(
+            "SELECT COUNT(*) AS n, SUM(published) AS p FROM outings WHERE date BETWEEN ? AND ?",
+            (ws.isoformat(), we.isoformat())).fetchone()
+        return {
+            "start": ws.isoformat(),
+            "days": [(ws + timedelta(days=i)).isoformat() for i in range(7)],
+            "outings": outings,
+            "total": counts["n"] or 0,
+            "published": counts["p"] or 0,
+            "today": rules.today.isoformat(),
+        }
+
+
+# ------------------------------------------------------------- members ----
+@app.get("/api/members/{member_id}/summary")
+def member_summary(member_id: int, role: str = Depends(require_member)):
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        m = rules.members.get(member_id)
+        if not m:
+            raise HTTPException(404, "Unknown member")
+        ids = [r["outing_id"] for r in conn.execute(
+            "SELECT a.outing_id FROM assignments a JOIN outings o ON o.id=a.outing_id WHERE a.member_id=? AND o.date >= ? AND o.published=1",
+            (member_id, rules.today.isoformat()))]
+        upcoming = []
+        if ids:
+            qs = ",".join("?" * len(ids))
+            upcoming = _outings_payload(conn, rules, f"id IN ({qs})", tuple(ids), role == "admin")
+        status = rules.status_now(member_id)
+        return {
+            "member": {"id": m["id"], "name": m["name"], "category": m["category"], "cox_status": m["cox_status"]},
+            "totals": rules.totals(member_id),
+            "status": {"water_ok": status["water"]["ok"], "land_ok": status["land"]["ok"],
+                       "water_reasons": status["water"]["reasons"], "land_reasons": status["land"]["reasons"],
+                       "subs_valid": status["subs_valid"], "swim_test": bool(m["swim_test"])},
+            "upcoming": upcoming,
+        }
+
+
+@app.get("/api/rowers")
+def rowers(role: str = Depends(require_member)):
+    """Outing counts for everyone (visible to all signed-in users)."""
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        out = []
+        for m in rules.members.values():
+            if not m["active"]:
+                continue
+            out.append({"id": m["id"], "name": m["name"], "category": m["category"],
+                        "cox_status": m["cox_status"], **rules.totals(m["id"])})
+        out.sort(key=lambda r: r["name"].lower())
+        return out
+
+
+# ---------------------------------------------------------------- subs ----
+class SubRequestIn(BaseModel):
+    outing_id: int
+    member_id: int
+    reason: str = Field("", max_length=300)
+
+
+class SubFillIn(BaseModel):
+    member_id: int
+
+
+class SubCancelIn(BaseModel):
+    member_id: Optional[int] = None
+
+
+def _sub_rows(conn, rules: Rules, where: str, params: tuple, admin: bool) -> list[dict]:
+    rows = [dict(r) for r in conn.execute(
+        f"""SELECT s.*, o.kind, o.date, o.time, o.title, o.location, o.capacity, o.coxed, o.boat_id
+            FROM sub_requests s JOIN outings o ON o.id = s.outing_id WHERE {where}
+            ORDER BY o.date, o.time, s.id""", params)]
+    boats = _boats(conn)
+    out = []
+    for r in rows:
+        req = rules.members.get(r["requester_id"], {})
+        sub = rules.members.get(r["sub_id"], {}) if r["sub_id"] else {}
+        boat = boats.get(r["boat_id"])
+        out.append({
+            "id": r["id"], "status": r["status"], "reason": r["reason"], "created_at": r["created_at"],
+            "resolved_at": r["resolved_at"], "seat": r["seat"],
+            "seat_label": seat_label(r["seat"], r["capacity"], r["kind"]),
+            "requester": {"id": r["requester_id"], "name": req.get("name")},
+            "sub": {"id": r["sub_id"], "name": sub.get("name")} if r["sub_id"] else None,
+            "outing": {"id": r["outing_id"], "kind": r["kind"], "date": r["date"], "time": r["time"],
+                       "title": r["title"], "location": r["location"],
+                       "boat": boat["name"] if boat else None},
+        })
+    return out
+
+
+@app.get("/api/subs")
+def list_subs(role: str = Depends(require_member)):
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        today = rules.today.isoformat()
+        open_ = _sub_rows(conn, rules, "s.status = 'open' AND o.date >= ? AND o.published = 1", (today,), role == "admin")
+        recent = _sub_rows(conn, rules, "s.status = 'filled' AND o.date >= ?",
+                           ((rules.today - timedelta(days=7)).isoformat(),), role == "admin")
+        return {"open": open_, "recent": recent[-30:]}
+
+
+@app.get("/api/subs/{sub_id}/candidates")
+def sub_candidates(sub_id: int, role: str = Depends(require_member)):
+    """Who could take this seat, with eligibility — used to pre-warn people volunteering."""
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        r = conn.execute("SELECT s.*, o.kind, o.date, o.time FROM sub_requests s JOIN outings o ON o.id=s.outing_id WHERE s.id=?", (sub_id,)).fetchone()
+        if not r:
+            raise HTTPException(404, "Not found")
+        return {str(mid): _candidate_status(conn, rules, mid, r["outing_id"], r["seat"]) for mid in rules.members}
+
+
+def _candidate_status(conn, rules: Rules, member_id: int, outing_id: int, seat: int) -> dict:
+    o = conn.execute("SELECT * FROM outings WHERE id = ?", (outing_id,)).fetchone()
+    m = rules.members[member_id]
+    elig = rules.check(member_id, o["kind"], date.fromisoformat(o["date"]), (o["date"], o["time"], o["id"]))
+    problems = list(elig["reasons"])
+    if conn.execute("SELECT 1 FROM assignments WHERE outing_id=? AND member_id=?", (outing_id, member_id)).fetchone():
+        problems.append("Already in this outing")
+    elif o["time"] and conn.execute(
+            """SELECT 1 FROM assignments a JOIN outings x ON x.id=a.outing_id
+               WHERE a.member_id=? AND x.date=? AND x.time=? AND x.id != ?""",
+            (member_id, o["date"], o["time"], outing_id)).fetchone():
+        problems.append("Booked in another outing at this time")
+    if o["kind"] == "water" and seat == 0 and not m["cox_status"]:
+        problems.append("Not a cox")
+    return {"ok": not problems, "problems": problems, "note": elig["note"]}
+
+
+@app.post("/api/subs")
+def request_sub(body: SubRequestIn, role: str = Depends(require_member)):
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        o = conn.execute("SELECT * FROM outings WHERE id = ?", (body.outing_id,)).fetchone()
+        if not o or (not o["published"] and role != "admin"):
+            raise HTTPException(404, "Outing not found")
+        if o["date"] < rules.today.isoformat():
+            raise HTTPException(400, "This outing is in the past")
+        a = conn.execute("SELECT * FROM assignments WHERE outing_id=? AND member_id=?",
+                         (body.outing_id, body.member_id)).fetchone()
+        if not a:
+            raise HTTPException(400, "That person isn't in this outing")
+        if conn.execute("SELECT 1 FROM sub_requests WHERE outing_id=? AND seat=? AND status='open'",
+                        (body.outing_id, a["seat"])).fetchone():
+            raise HTTPException(400, "A sub has already been requested for this seat")
+        conn.execute("INSERT INTO sub_requests(outing_id, seat, requester_id, reason) VALUES (?, ?, ?, ?)",
+                     (body.outing_id, a["seat"], body.member_id, body.reason.strip()))
+        return {"ok": True}
+
+
+@app.post("/api/subs/{sub_id}/fill")
+def fill_sub(sub_id: int, body: SubFillIn, role: str = Depends(require_member)):
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        s = conn.execute("SELECT * FROM sub_requests WHERE id = ?", (sub_id,)).fetchone()
+        if not s or s["status"] != "open":
+            raise HTTPException(400, "This sub request is no longer open")
+        if body.member_id not in rules.members:
+            raise HTTPException(400, "Unknown member")
+        if body.member_id == s["requester_id"]:
+            raise HTTPException(400, "You can't sub for yourself — cancel the request instead")
+        st = _candidate_status(conn, rules, body.member_id, s["outing_id"], s["seat"])
+        if not st["ok"]:
+            raise HTTPException(400, "Can't sub: " + "; ".join(st["problems"]))
+        cur = conn.execute("UPDATE assignments SET member_id=? WHERE outing_id=? AND seat=? AND member_id=?",
+                           (body.member_id, s["outing_id"], s["seat"], s["requester_id"]))
+        if cur.rowcount != 1:
+            raise HTTPException(409, "The seat has changed — refresh and try again")
+        conn.execute("UPDATE sub_requests SET status='filled', sub_id=?, resolved_at=datetime('now') WHERE id=?",
+                     (body.member_id, sub_id))
+        return {"ok": True}
+
+
+@app.post("/api/subs/{sub_id}/cancel")
+def cancel_sub(sub_id: int, body: SubCancelIn, role: str = Depends(require_member)):
+    with db.get_conn() as conn:
+        s = conn.execute("SELECT * FROM sub_requests WHERE id = ?", (sub_id,)).fetchone()
+        if not s or s["status"] != "open":
+            raise HTTPException(400, "This sub request is no longer open")
+        if role != "admin" and body.member_id != s["requester_id"]:
+            raise HTTPException(403, "Only the person who asked (or an admin) can cancel this")
+        conn.execute("UPDATE sub_requests SET status='cancelled', resolved_at=datetime('now') WHERE id=?", (sub_id,))
+        return {"ok": True}
+
+
+# ============================================================== ADMIN =====
+# ---------------------------------------------------------------- boats ----
+class BoatIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    boat_type: str = "8+"
+    seats: int = Field(8, ge=1, le=8)
+    coxed: bool = True
+    status: str = "available"
+    rigging: str = Field("", max_length=120)
+    notes: str = Field("", max_length=500)
+
+
+@app.get("/api/admin/boats")
+def boats_list(role: str = Depends(require_member)):
+    # readable by everyone signed in (boat park view); edits are admin only
+    with db.get_conn() as conn:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM boats ORDER BY status != 'available', seats DESC, name")]
+        today = Rules(conn).today.isoformat()
+        usage = {r["boat_id"]: r["n"] for r in conn.execute(
+            "SELECT boat_id, COUNT(*) n FROM outings WHERE boat_id IS NOT NULL GROUP BY boat_id")}
+        nxt = {r["boat_id"]: r["d"] for r in conn.execute(
+            "SELECT boat_id, MIN(date) d FROM outings WHERE boat_id IS NOT NULL AND date >= ? GROUP BY boat_id", (today,))}
+        for r in rows:
+            r["outings"] = usage.get(r["id"], 0)
+            r["next_outing"] = nxt.get(r["id"])
+        return {"boats": rows, "types": {k: {"seats": v[0], "coxed": bool(v[1])} for k, v in BOAT_TYPES.items()}}
+
+
+def _boat_validate(b: BoatIn):
+    if b.status not in ("available", "repair", "retired"):
+        raise HTTPException(400, "Bad status")
+    if b.boat_type not in BOAT_TYPES:
+        raise HTTPException(400, "Bad boat type")
+
+
+@app.post("/api/admin/boats")
+def boat_create(b: BoatIn, _: str = Depends(require_admin)):
+    _boat_validate(b)
+    with db.get_conn() as conn:
+        try:
+            cur = conn.execute("INSERT INTO boats(name, boat_type, seats, coxed, status, rigging, notes) VALUES (?,?,?,?,?,?,?)",
+                               (b.name.strip(), b.boat_type, b.seats, int(b.coxed), b.status, b.rigging, b.notes))
+        except db.sqlite3.IntegrityError:
+            raise HTTPException(400, "A boat with that name already exists")
+        return {"id": cur.lastrowid}
+
+
+@app.put("/api/admin/boats/{boat_id}")
+def boat_update(boat_id: int, b: BoatIn, _: str = Depends(require_admin)):
+    _boat_validate(b)
+    with db.get_conn() as conn:
+        try:
+            conn.execute("UPDATE boats SET name=?, boat_type=?, seats=?, coxed=?, status=?, rigging=?, notes=? WHERE id=?",
+                         (b.name.strip(), b.boat_type, b.seats, int(b.coxed), b.status, b.rigging, b.notes, boat_id))
+        except db.sqlite3.IntegrityError:
+            raise HTTPException(400, "A boat with that name already exists")
+        return {"ok": True}
+
+
+@app.delete("/api/admin/boats/{boat_id}")
+def boat_delete(boat_id: int, _: str = Depends(require_admin)):
+    with db.get_conn() as conn:
+        conn.execute("DELETE FROM boats WHERE id=?", (boat_id,))
+        return {"ok": True}
+
+
+# -------------------------------------------------------------- members ----
+class MemberIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    category: str = "Novice"
+    swim_test: bool = False
+    subs_plan: str = "Unpaid"
+    subs_term: str = ""
+    subs_year: str = ""
+    cox_status: str = ""
+    past_water: int = Field(0, ge=0)
+    past_land: int = Field(0, ge=0)
+    active: bool = True
+    notes: str = Field("", max_length=500)
+    phone: str = Field("", max_length=40)
+    college: str = Field("", max_length=80)
+    side: str = Field("", max_length=40)
+
+
+def _member_validate(m: MemberIn):
+    if m.category not in ("Novice", "Senior"):
+        raise HTTPException(400, "Category must be Novice or Senior")
+    if m.subs_plan not in SUBS_PLANS:
+        raise HTTPException(400, "Bad subs plan")
+    if m.cox_status not in ("", "N", "X", "S"):
+        raise HTTPException(400, "Bad cox status")
+
+
+@app.get("/api/admin/members")
+def members_list(_: str = Depends(require_admin)):
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        out = []
+        for m in sorted(rules.members.values(), key=lambda m: m["name"].lower()):
+            st = rules.status_now(m["id"])
+            out.append({**m, "swim_test": bool(m["swim_test"]), "active": bool(m["active"]),
+                        "totals": rules.totals(m["id"]), "subs_valid": st["subs_valid"],
+                        "water_ok": st["water"]["ok"], "land_ok": st["land"]["ok"],
+                        "water_reasons": st["water"]["reasons"], "land_reasons": st["land"]["reasons"],
+                        "note": st["water"]["note"]})
+        return {"members": out, "terms": TERMS, "plans": SUBS_PLANS}
+
+
+@app.post("/api/admin/members")
+def member_create(m: MemberIn, _: str = Depends(require_admin)):
+    _member_validate(m)
+    with db.get_conn() as conn:
+        try:
+            cur = conn.execute(
+                """INSERT INTO members(name, category, swim_test, subs_plan, subs_term, subs_year, cox_status,
+                   past_water, past_land, active, notes, phone, college, side) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (m.name.strip(), m.category, int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
+                 m.cox_status, m.past_water, m.past_land, int(m.active), m.notes, m.phone.strip(),
+                 m.college.strip(), m.side))
+        except db.sqlite3.IntegrityError:
+            raise HTTPException(400, "A member with that name already exists")
+        return {"id": cur.lastrowid}
+
+
+@app.put("/api/admin/members/{member_id}")
+def member_update(member_id: int, m: MemberIn, _: str = Depends(require_admin)):
+    _member_validate(m)
+    with db.get_conn() as conn:
+        try:
+            conn.execute(
+                """UPDATE members SET name=?, category=?, swim_test=?, subs_plan=?, subs_term=?, subs_year=?,
+                   cox_status=?, past_water=?, past_land=?, active=?, notes=?, phone=?, college=?, side=?,
+                   needs_review=0 WHERE id=?""",
+                (m.name.strip(), m.category, int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
+                 m.cox_status, m.past_water, m.past_land, int(m.active), m.notes, m.phone.strip(),
+                 m.college.strip(), m.side, member_id))
+        except db.sqlite3.IntegrityError:
+            raise HTTPException(400, "A member with that name already exists")
+        return {"ok": True}
+
+
+@app.delete("/api/admin/members/{member_id}")
+def member_delete(member_id: int, _: str = Depends(require_admin)):
+    with db.get_conn() as conn:
+        conn.execute("DELETE FROM members WHERE id=?", (member_id,))
+        return {"ok": True}
+
+
+@app.get("/api/admin/members.csv")
+def members_csv(_: str = Depends(require_admin)):
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["Name", "Phone", "College", "Side", "Category", "Swim test", "Subs plan", "Term", "Year",
+                    "Subs valid", "Cox status", "Water outings", "Land sessions", "Total", "Novice free left", "Active"])
+        for m in sorted(rules.members.values(), key=lambda m: m["name"].lower()):
+            t = rules.totals(m["id"])
+            w.writerow([m["name"], m["phone"], m["college"], m["side"], m["category"], "Yes" if m["swim_test"] else "No", m["subs_plan"], m["subs_term"],
+                        m["subs_year"], "Yes" if rules.subs_valid(m) else "No", m["cox_status"], t["water"],
+                        t["land"], t["total"], "" if t["novice_free_left"] is None else t["novice_free_left"],
+                        "Yes" if m["active"] else "No"])
+        return Response(buf.getvalue(), media_type="text/csv",
+                        headers={"Content-Disposition": "attachment; filename=members.csv"})
+
+
+# -------------------------------------------------------------- coaches ----
+class CoachIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    search_text: str = Field("", max_length=100)
+
+
+@app.get("/api/admin/coaches")
+def coaches_list(role: str = Depends(require_member)):
+    with db.get_conn() as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM coaches ORDER BY name")]
+
+
+@app.post("/api/admin/coaches")
+def coach_create(c: CoachIn, _: str = Depends(require_admin)):
+    with db.get_conn() as conn:
+        try:
+            cur = conn.execute("INSERT INTO coaches(name, search_text) VALUES (?, ?)", (c.name.strip(), c.search_text.strip()))
+        except db.sqlite3.IntegrityError:
+            raise HTTPException(400, "Coach already exists")
+        return {"id": cur.lastrowid}
+
+
+@app.put("/api/admin/coaches/{coach_id}")
+def coach_update(coach_id: int, c: CoachIn, _: str = Depends(require_admin)):
+    with db.get_conn() as conn:
+        conn.execute("UPDATE coaches SET name=?, search_text=? WHERE id=?", (c.name.strip(), c.search_text.strip(), coach_id))
+        return {"ok": True}
+
+
+@app.delete("/api/admin/coaches/{coach_id}")
+def coach_delete(coach_id: int, _: str = Depends(require_admin)):
+    with db.get_conn() as conn:
+        conn.execute("DELETE FROM coaches WHERE id=?", (coach_id,))
+        return {"ok": True}
+
+
+@app.get("/api/admin/coaching-stats")
+def coaching_stats(_: str = Depends(require_admin)):
+    """Sessions per coach per month over 12 months from the season start (substring match, like the sheet)."""
+    with db.get_conn() as conn:
+        s = db.get_settings(conn)
+        try:
+            start = date.fromisoformat(s.get("season_start") or "").replace(day=1)
+        except ValueError:
+            t = Rules(conn).today
+            start = date(t.year if t.month >= 9 else t.year - 1, 10, 1)
+        months = []
+        y, mo = start.year, start.month
+        for _ in range(12):
+            months.append(f"{y:04d}-{mo:02d}")
+            mo += 1
+            if mo > 12:
+                y, mo = y + 1, 1
+        coaches = [dict(r) for r in conn.execute("SELECT * FROM coaches ORDER BY name")]
+        outings = conn.execute("SELECT date, coach FROM outings WHERE coach != '' AND date >= ? AND date < ?",
+                               (start.isoformat(), f"{y:04d}-{mo:02d}-01")).fetchall()
+        rows, uncounted = [], defaultdict(int)
+        counted_any = [False] * len(outings)
+        for c in coaches:
+            key = (c["search_text"] or c["name"]).lower()
+            per = {m: 0 for m in months}
+            for i, o in enumerate(outings):
+                if key and key in o["coach"].lower():
+                    per[o["date"][:7]] += 1
+                    counted_any[i] = True
+            rows.append({"name": c["name"], "months": per, "total": sum(per.values())})
+        for i, o in enumerate(outings):
+            if not counted_any[i]:
+                uncounted[o["coach"]] += 1
+        return {"months": months, "rows": rows,
+                "uncounted": [{"coach": k, "n": v} for k, v in sorted(uncounted.items())]}
+
+
+# -------------------------------------------------------------- outings ----
+class OutingIn(BaseModel):
+    kind: str = "water"
+    date: str
+    time: str = Field("", max_length=20)
+    location: str = Field("", max_length=80)
+    title: str = Field("", max_length=80)
+    coach: str = Field("", max_length=120)
+    boat_id: Optional[int] = None
+    capacity: int = Field(8, ge=1, le=40)
+    coxed: bool = True
+    notes: str = Field("", max_length=500)
+    published: Optional[bool] = None
+    seats: dict[str, Optional[int]] = {}
+
+
+def _save_outing(conn, rules: Rules, oid: Optional[int], b: OutingIn) -> int:
+    if b.kind not in ("water", "land"):
+        raise HTTPException(400, "Kind must be water or land")
+    try:
+        date.fromisoformat(b.date)
+    except ValueError:
+        raise HTTPException(400, "Bad date")
+    cap, coxed = b.capacity, b.coxed
+    if b.kind == "water":
+        if b.boat_id:
+            boat = conn.execute("SELECT * FROM boats WHERE id=?", (b.boat_id,)).fetchone()
+            if not boat:
+                raise HTTPException(400, "Unknown boat")
+            cap, coxed = boat["seats"], bool(boat["coxed"])
+        cap = min(cap, 8)
+    else:
+        coxed = False
+        b.boat_id = None
+    valid_seats = set(seat_list(b.kind, cap, coxed))
+    seats: dict[int, int] = {}
+    seen = set()
+    for k, mid in b.seats.items():
+        if mid is None:
+            continue
+        s = int(k)
+        if s not in valid_seats:
+            continue
+        if mid not in rules.members:
+            raise HTTPException(400, "Unknown member in seat list")
+        if mid in seen:
+            raise HTTPException(400, f"{rules.members[mid]['name']} is in two seats")
+        seen.add(mid)
+        seats[s] = mid
+    fields = (b.kind, b.date, b.time.strip(), b.location.strip(), b.title.strip(), b.coach.strip(),
+              b.boat_id, cap, int(coxed), b.notes)
+    if oid is None:
+        cur = conn.execute(
+            """INSERT INTO outings(kind, date, time, location, title, coach, boat_id, capacity, coxed, notes, published)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""", fields + (int(bool(b.published)),))
+        oid = cur.lastrowid
+    else:
+        if not conn.execute("SELECT 1 FROM outings WHERE id=?", (oid,)).fetchone():
+            raise HTTPException(404, "Outing not found")
+        conn.execute(
+            """UPDATE outings SET kind=?, date=?, time=?, location=?, title=?, coach=?, boat_id=?, capacity=?,
+               coxed=?, notes=? WHERE id=?""", fields + (oid,))
+        if b.published is not None:
+            conn.execute("UPDATE outings SET published=? WHERE id=?", (int(b.published), oid))
+    # replace seat assignments; open sub requests whose requester left the seat get cancelled
+    conn.execute("DELETE FROM assignments WHERE outing_id=?", (oid,))
+    for s, mid in seats.items():
+        conn.execute("INSERT INTO assignments(outing_id, seat, member_id) VALUES (?,?,?)", (oid, s, mid))
+    for sr in conn.execute("SELECT * FROM sub_requests WHERE outing_id=? AND status='open'", (oid,)).fetchall():
+        if seats.get(sr["seat"]) != sr["requester_id"]:
+            new = seats.get(sr["seat"])
+            if new:
+                conn.execute("UPDATE sub_requests SET status='filled', sub_id=?, resolved_at=datetime('now') WHERE id=?",
+                             (new, sr["id"]))
+            else:
+                conn.execute("UPDATE sub_requests SET status='cancelled', resolved_at=datetime('now') WHERE id=?", (sr["id"],))
+    return oid
+
+
+@app.post("/api/admin/outings")
+def outing_create(b: OutingIn, _: str = Depends(require_admin)):
+    with db.get_conn() as conn:
+        return {"id": _save_outing(conn, Rules(conn), None, b)}
+
+
+@app.put("/api/admin/outings/{oid}")
+def outing_update(oid: int, b: OutingIn, _: str = Depends(require_admin)):
+    with db.get_conn() as conn:
+        return {"id": _save_outing(conn, Rules(conn), oid, b)}
+
+
+@app.delete("/api/admin/outings/{oid}")
+def outing_delete(oid: int, _: str = Depends(require_admin)):
+    with db.get_conn() as conn:
+        conn.execute("DELETE FROM outings WHERE id=?", (oid,))
+        return {"ok": True}
+
+
+class CandidatesIn(BaseModel):
+    kind: str
+    date: str
+    time: str = ""
+    outing_id: Optional[int] = None
+
+
+@app.post("/api/admin/candidates")
+def candidates(b: CandidatesIn, _: str = Depends(require_admin)):
+    """Eligibility of every member for a (possibly unsaved) outing — powers the seat picker."""
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        try:
+            d = date.fromisoformat(b.date)
+        except ValueError:
+            raise HTTPException(400, "Bad date")
+        key = (b.date, b.time, b.outing_id or 10**12)
+        busy = set()
+        if b.time:
+            busy = {r["member_id"] for r in conn.execute(
+                """SELECT a.member_id FROM assignments a JOIN outings o ON o.id=a.outing_id
+                   WHERE o.date=? AND o.time=? AND o.id != ?""", (b.date, b.time, b.outing_id or -1))}
+        same_day = defaultdict(int)
+        for r in conn.execute(
+                """SELECT a.member_id FROM assignments a JOIN outings o ON o.id=a.outing_id
+                   WHERE o.date=? AND o.id != ?""", (b.date, b.outing_id or -1)):
+            same_day[r["member_id"]] += 1
+        # sign-up form answers for this week + scheduled count, to compare against max outings
+        su = availability_for_outing(conn, b.kind, b.date, b.time)
+        ws = monday_of(d)
+        week_count = defaultdict(int)
+        for r in conn.execute(
+                """SELECT a.member_id FROM assignments a JOIN outings o ON o.id=a.outing_id
+                   WHERE o.date BETWEEN ? AND ? AND o.id != ?""",
+                (ws.isoformat(), (ws + timedelta(days=6)).isoformat(), b.outing_id or -1)):
+            week_count[r["member_id"]] += 1
+        out = {}
+        for mid, m in rules.members.items():
+            e = rules.check(mid, b.kind, d, key)
+            out[str(mid)] = {"ok": e["ok"], "reasons": e["reasons"], "note": e["note"],
+                             "busy": mid in busy, "same_day": same_day.get(mid, 0),
+                             "week_count": week_count.get(mid, 0),
+                             "signup": su["members"].get(mid)}
+        return {"members": out, "has_slots": su["has_slots"]}
+
+
+class WeekIn(BaseModel):
+    start: str
+    published: bool = True
+
+
+@app.post("/api/admin/week/publish")
+def week_publish(b: WeekIn, _: str = Depends(require_admin)):
+    ws = monday_of(date.fromisoformat(b.start))
+    with db.get_conn() as conn:
+        conn.execute("UPDATE outings SET published=? WHERE date BETWEEN ? AND ?",
+                     (int(b.published), ws.isoformat(), (ws + timedelta(days=6)).isoformat()))
+        return {"ok": True}
+
+
+class CopyWeekIn(BaseModel):
+    source: str
+    target: str
+    include_crews: bool = False
+
+
+@app.post("/api/admin/week/copy")
+def week_copy(b: CopyWeekIn, _: str = Depends(require_admin)):
+    src, dst = monday_of(date.fromisoformat(b.source)), monday_of(date.fromisoformat(b.target))
+    if src == dst:
+        raise HTTPException(400, "Source and target week are the same")
+    delta = dst - src
+    with db.get_conn() as conn:
+        rows = conn.execute("SELECT * FROM outings WHERE date BETWEEN ? AND ? ORDER BY date, time, id",
+                            (src.isoformat(), (src + timedelta(days=6)).isoformat())).fetchall()
+        n = 0
+        for o in rows:
+            nd = (date.fromisoformat(o["date"]) + delta).isoformat()
+            cur = conn.execute(
+                """INSERT INTO outings(kind, date, time, location, title, coach, boat_id, capacity, coxed, notes, published)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,0)""",
+                (o["kind"], nd, o["time"], o["location"], o["title"], o["coach"], o["boat_id"], o["capacity"],
+                 o["coxed"], o["notes"]))
+            if b.include_crews:
+                conn.execute("""INSERT INTO assignments(outing_id, seat, member_id)
+                                SELECT ?, seat, member_id FROM assignments WHERE outing_id=?""", (cur.lastrowid, o["id"]))
+            n += 1
+        return {"copied": n}
+
+
+# ------------------------------------------------------------- settings ----
+class SettingsIn(BaseModel):
+    club_name: str = Field("Reuben Boat Club", max_length=80)
+    academic_year: str = Field(..., max_length=20)
+    current_term: str
+    subs_cutoff: str = ""
+    today_override: str = ""
+    novice_free_outings: int = Field(4, ge=0, le=50)
+    novice_land_free: bool = True
+    season_start: str = ""
+    member_password: str = Field("", max_length=200)
+
+
+@app.get("/api/admin/settings")
+def settings_get(_: str = Depends(require_admin)):
+    with db.get_conn() as conn:
+        s = db.get_settings(conn)
+        s["member_password_custom"] = bool(s.pop("member_password_hash", ""))
+        s["novice_land_free"] = s.get("novice_land_free") == "1"
+        s["novice_free_outings"] = int(s.get("novice_free_outings") or 0)
+        s["terms"] = TERMS
+        return s
+
+
+@app.put("/api/admin/settings")
+def settings_put(b: SettingsIn, _: str = Depends(require_admin)):
+    if b.current_term not in TERMS:
+        raise HTTPException(400, "Bad term")
+    for v in (b.subs_cutoff, b.today_override, b.season_start):
+        if v:
+            try:
+                date.fromisoformat(v)
+            except ValueError:
+                raise HTTPException(400, f"Bad date: {v}")
+    with db.get_conn() as conn:
+        for k in ("club_name", "academic_year", "current_term", "subs_cutoff", "today_override", "season_start"):
+            db.set_setting(conn, k, getattr(b, k).strip())
+        db.set_setting(conn, "novice_free_outings", str(b.novice_free_outings))
+        db.set_setting(conn, "novice_land_free", "1" if b.novice_land_free else "0")
+        if b.member_password:
+            if len(b.member_password) < 6:
+                raise HTTPException(400, "Member password must be at least 6 characters")
+            if hmac.compare_digest(b.member_password.encode(), ADMIN_PASSWORD.encode()):
+                raise HTTPException(400, "Member password must differ from the admin password")
+            db.set_setting(conn, "member_password_hash", _hash_pw(b.member_password))
+        return {"ok": True}
+
+
+@app.post("/api/admin/settings/reset-member-password")
+def settings_reset_pw(_: str = Depends(require_admin)):
+    with db.get_conn() as conn:
+        db.set_setting(conn, "member_password_hash", "")
+        return {"ok": True}
+
+
+@app.post("/api/admin/import")
+async def import_xlsx(file: UploadFile = File(...), include_schedule: bool = Form(False),
+                      _: str = Depends(require_admin)):
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(400, "File too large")
+    with db.get_conn() as conn:
+        try:
+            return import_workbook(conn, data, include_schedule)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(400, f"Could not read workbook: {e}")
+
+
+@app.get("/api/admin/backup")
+def backup(_: str = Depends(require_admin)):
+    """Download a consistent snapshot of the SQLite database."""
+    path = os.path.join(db.DATA_DIR, "backup.db")
+    src = db.connect()
+    try:
+        dst = db.sqlite3.connect(path)
+        src.backup(dst)
+        dst.close()
+    finally:
+        src.close()
+    return FileResponse(path, filename=f"outings-backup-{date.today().isoformat()}.db",
+                        media_type="application/octet-stream")
+
+
+# -------------------------------------------------------------- static ----
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+
+@app.exception_handler(HTTPException)
+async def http_exc(_, exc: HTTPException):
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+
+app.include_router(signup_router)
+app.include_router(calendar_router)
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+@app.get("/")
+def index():
+    return FileResponse(os.path.join(STATIC, "index.html"), headers={"Cache-Control": "no-cache"})
