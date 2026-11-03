@@ -415,6 +415,59 @@ def cancel_sub(sub_id: int, body: SubCancelIn, role: str = Depends(require_membe
         return {"ok": True}
 
 
+# ------------------------------------------------- open land sessions ----
+class JoinIn(BaseModel):
+    member_id: int
+
+
+def _land_outing(conn, rules: Rules, oid: int, role: str):
+    o = conn.execute("SELECT * FROM outings WHERE id = ?", (oid,)).fetchone()
+    if not o or (not o["published"] and role != "admin"):
+        raise HTTPException(404, "Session not found")
+    if o["kind"] != "land":
+        raise HTTPException(400, "Only land sessions are open to join. Water crews are picked by the coaches")
+    if o["date"] < rules.today.isoformat():
+        raise HTTPException(400, "This session is in the past")
+    return o
+
+
+@app.post("/api/outings/{oid}/join")
+def outing_join(oid: int, b: JoinIn, role: str = Depends(require_member)):
+    """A rower takes a free spot in a land session."""
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        o = _land_outing(conn, rules, oid, role)
+        if b.member_id not in rules.members:
+            raise HTTPException(400, "Unknown member")
+        st = _candidate_status(conn, rules, b.member_id, oid, 1)
+        if not st["ok"]:
+            raise HTTPException(400, "Can't join: " + "; ".join(st["problems"]))
+        taken = {r["seat"] for r in conn.execute("SELECT seat FROM assignments WHERE outing_id = ?", (oid,))}
+        free = [s for s in range(1, o["capacity"] + 1) if s not in taken]
+        if not free:
+            raise HTTPException(400, "Sorry, this session is full")
+        try:
+            conn.execute("INSERT INTO assignments(outing_id, seat, member_id) VALUES (?, ?, ?)", (oid, free[0], b.member_id))
+        except db.sqlite3.IntegrityError:
+            raise HTTPException(409, "Someone just took that spot. Please try again")
+        return {"ok": True}
+
+
+@app.post("/api/outings/{oid}/leave")
+def outing_leave(oid: int, b: JoinIn, role: str = Depends(require_member)):
+    """A rower gives up their spot in a land session (no sub needed; the spot just reopens)."""
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        _land_outing(conn, rules, oid, role)
+        a = conn.execute("SELECT seat FROM assignments WHERE outing_id = ? AND member_id = ?", (oid, b.member_id)).fetchone()
+        if not a:
+            raise HTTPException(400, "You're not in this session")
+        conn.execute("DELETE FROM assignments WHERE outing_id = ? AND member_id = ?", (oid, b.member_id))
+        conn.execute("""UPDATE sub_requests SET status = 'cancelled', resolved_at = datetime('now')
+                        WHERE outing_id = ? AND seat = ? AND status = 'open'""", (oid, a["seat"]))
+        return {"ok": True}
+
+
 # ============================================================== ADMIN =====
 # ---------------------------------------------------------------- boats ----
 class BoatIn(BaseModel):

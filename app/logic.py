@@ -250,7 +250,9 @@ def outing_payload(rules: Rules, o: dict, assignments: list[dict], subs: list[di
     if boat and boat["status"] != "available" and admin:
         warnings.append(f"{boat['name']} is marked '{boat['status']}'")
     spots = empty_rowers + (1 if cox_seat and not cox_seat["member"] else 0)
-    if empty_rowers == 0:
+    if kind == "land":  # land sessions are open: anyone can take a free spot
+        spots_text = "Full" if empty_rowers == 0 else f"{empty_rowers} spot{'' if empty_rowers == 1 else 's'} open"
+    elif empty_rowers == 0:
         spots_text = "Cox needed" if (cox_seat and not cox_seat["member"]) else "Full"
     else:
         spots_text = f"{empty_rowers} {'rower' if empty_rowers == 1 else 'rowers'}" + (

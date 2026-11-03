@@ -237,11 +237,39 @@ function seatRow(o, s) {
   let tag = "";
   const subTag = s.subbed_for ? `<span class="tag violet" title="Subbing for ${esc(s.subbed_for)}">sub</span>` : "";
   if (s.sub_request) tag = `<button class="tag warn" data-act="fill" data-sub="${s.sub_request.id}" title="${esc(s.sub_request.reason || "Sub needed")}">Sub needed</button>`;
+  // Land sessions are open: you just leave, the spot reopens for anyone.
+  else if (mine && !o.past && o.kind === "land") tag = `<span class="tags">${subTag}<button class="tag ok" data-act="leave" title="Give up your spot">Leave</button></span>`;
   // Your own seat always offers "Can't go" — including a seat you took as a sub.
   else if (mine && !o.past) tag = `<span class="tags">${subTag}<button class="tag ok" data-act="reqsub" data-o="${o.id}" title="Can't make it? Request a sub">Can't go</button></span>`;
   else tag = subTag;
   const title = m && isAdmin() && s.eligibility ? (s.eligibility.reasons.join(", ") || s.eligibility.note || "") : "";
   return `<div class="${cls.join(" ")}" title="${esc(title)}"><span class="sl">${esc(({ Stroke: "S", Bow: "B", Sculler: "1x" })[s.label] || s.label)}</span><span class="sn">${m ? esc(m.name) : "Open"}</span>${tag}</div>`;
+}
+
+/* Land sessions: list who's in, then the open spots anyone can take. */
+function landSpots(o) {
+  const inIt = o.seats.filter((s) => s.member);
+  const mine = inIt.some((s) => s.member.id === S.me);
+  const join = o.spots > 0 && !o.past && !mine;
+  return `<div class="seats">${inIt.map((s, i) => seatRow(o, { ...s, label: String(i + 1) })).join("") || `<div class="seat open"><span class="sl"></span><span class="sn">No one yet. Be the first!</span></div>`}</div>
+    <div class="o-foot land-open">
+      <span class="chip ${o.spots ? "accent" : "ok"}">${o.spots ? "" : I.check}${esc(o.spots_text)}${o.spots ? ` of ${o.capacity}` : ""}</span>
+      ${join ? `<button class="btn sm primary" data-act="join" title="Take a spot in this session">${I.plus}Join</button>` : mine && !o.past ? `<span class="chip ok">${I.check}You're in</span>` : ""}
+    </div>`;
+}
+
+function joinLand(o) {
+  requireMe(async () => {
+    try {
+      await api(`/api/outings/${o.id}/join`, { method: "POST", body: { member_id: S.me } });
+      toast(`You're in: ${o.title || "Land training"}, ${DAY[dow(o.date)]} ${fmtShort(o.date)}${o.time ? " " + o.time : ""}`);
+      route();
+    } catch (e) { fail(e); }
+  });
+}
+async function leaveLand(o) {
+  if (!await confirmBox("Leave this session?", `Your spot in <b>${esc(o.title || "Land training")}</b> on ${fmtLong(o.date)} opens up for someone else.`, "Leave")) return;
+  try { await api(`/api/outings/${o.id}/leave`, { method: "POST", body: { member_id: S.me } }); toast("You've left the session"); route(); } catch (e) { fail(e); }
 }
 
 function outingCard(o) {
@@ -257,8 +285,8 @@ function outingCard(o) {
       ${o.location ? `<span>${I.pin}${esc(o.location)}</span>` : ""}
       ${o.coach ? `<span>${I.whistle}${esc(o.coach)}</span>` : ""}
     </div>
-    <div class="seats">${o.seats.map((s) => seatRow(o, s)).join("")}</div>
-    <div class="o-foot"><span class="chip ${full ? "ok" : "warn"}">${full ? I.check : ""}${esc(o.spots_text)}</span>${coxChip}</div>
+    ${o.kind === "land" ? landSpots(o) : `<div class="seats">${o.seats.map((s) => seatRow(o, s)).join("")}</div>
+    <div class="o-foot"><span class="chip ${full ? "ok" : "warn"}">${full ? I.check : ""}${esc(o.spots_text)}</span>${coxChip}</div>`}
     ${o.notes ? `<div class="small muted" style="margin-top:6px">${esc(o.notes)}</div>` : ""}
     ${admin && o.warnings.length ? `<div class="warnings">${o.warnings.map((w) => `<div>${I.alert}<span>${esc(w)}</span></div>`).join("")}</div>` : ""}
   </article>`;
@@ -277,7 +305,7 @@ async function pageSchedule() {
     ? `<span class="status-pill" style="background:var(--ok-soft);color:var(--ok)"><span class="dot"></span>Published</span>`
     : data.published === 0 ? `<span class="status-pill" style="background:var(--surface-3);color:var(--text-2)"><span class="dot"></span>Draft — not visible to rowers</span>`
     : `<span class="status-pill" style="background:var(--warn-soft);color:var(--warn)"><span class="dot"></span>${data.published}/${data.total} published</span>`;
-  const outs = data.outings.filter((o) => S.filter === "all" || (S.filter === "mine" ? o.seats.some((s) => s.member && s.member.id === S.me) : S.filter === "subs" ? o.open_subs > 0 : o.kind === S.filter));
+  const outs = data.outings.filter((o) => S.filter === "all" || (S.filter === "mine" ? o.seats.some((s) => s.member && s.member.id === S.me) : S.filter === "subs" ? o.open_subs > 0 : S.filter === "open" ? (o.kind === "land" && o.spots > 0 && !o.past) : o.kind === S.filter));
   const myCount = data.outings.filter((o) => o.seats.some((s) => s.member && s.member.id === S.me)).length;
   main.innerHTML = `
     <div class="page-head">
@@ -298,7 +326,7 @@ async function pageSchedule() {
     </div>
     <div class="filters">
       <div class="seg" id="flt">
-        ${[["all", "All"], ["water", "Water"], ["land", "Land"], ["mine", `Mine${S.me ? ` (${myCount})` : ""}`], ["subs", "Needs sub"]].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? "on" : ""}">${l}</button>`).join("")}
+        ${[["all", "All"], ["water", "Water"], ["land", "Land"], ["open", "Open spots"], ["mine", `Mine${S.me ? ` (${myCount})` : ""}`], ["subs", "Needs sub"]].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? "on" : ""}">${l}</button>`).join("")}
       </div>
       ${admin ? `<div style="margin-left:auto" class="toolbar"><button class="btn" data-new="land">${I.plus}Land session</button><button class="btn primary" data-new="water">${I.plus}Water outing</button></div>` : ""}
     </div>
@@ -338,6 +366,8 @@ async function pageSchedule() {
       e.stopPropagation();
       if (t.dataset.act === "reqsub") return requestSub(o);
       if (t.dataset.act === "fill") return fillSub(+t.dataset.sub, o);
+      if (t.dataset.act === "join") return joinLand(o);
+      if (t.dataset.act === "leave") return leaveLand(o);
     }
     if (admin) editOuting(o);
   }));
@@ -909,6 +939,7 @@ async function pageMe() {
     const o = d.upcoming.find((x) => x.id === +card.dataset.oid);
     if (t.dataset.act === "reqsub") requestSub(o);
     if (t.dataset.act === "fill") fillSub(+t.dataset.sub);
+    if (t.dataset.act === "leave") leaveLand(o);
   }));
 }
 

@@ -535,3 +535,4 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
 .cal-opt span { font-size: 12px; color: var(--text-3); }
 .cal-opt:hover { border-color: var(--accent); background: var(--accent-soft); }
 @media (max-width: 640px) { .cal-opts { grid-template-columns: 1fr; } }
+.land-open .btn.sm { padding: 4px 12px; }
