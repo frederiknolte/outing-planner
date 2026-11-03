@@ -41,6 +41,7 @@ const I = {
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
   upload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
   whistle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="14" r="6"/><path d="M13 10l8-4v4l-6 2"/></svg>',
+  trophy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
 };
 
@@ -180,6 +181,7 @@ const ROUTES = [
   { id: "signup", label: "Sign up", adminLabel: "Sign-ups", icon: I.calendar },
   { id: "subs", label: "Sub board", icon: I.swap },
   { id: "me", label: "My outings", icon: I.user, member: true },
+  { id: "stats", label: "Leaderboard", icon: I.trophy },
   { id: "rowers", label: "Rowers", icon: I.user },
   { id: "boats", label: "Boat park", icon: I.boat },
   { id: "coaches", label: "Coaches", icon: I.whistle, admin: true },
@@ -925,6 +927,7 @@ async function pageMe() {
       <div class="card stat"><div class="k">Total</div><div class="v">${t.total}</div><div class="s">${t.upcoming} upcoming</div></div>
       ${free != null ? `<div class="card stat"><div class="k">Free novice outings</div><div class="v">${free}</div><div class="s">of ${S.boot.settings.novice_free_outings} left</div></div>` : ""}
     </div>
+    <a class="card card-pad lb-teaser" href="#/stats"><span class="lb-ico">🏆</span><div><b>See how you rank this season</b><div class="small faint">Streaks, early-bird and super-sub awards, milestones and more</div></div>${I.right}</a>
     <div class="section-title">Eligibility for your next outing</div>
     <div class="card card-pad"><div style="display:flex;gap:10px;flex-wrap:wrap">
       <span class="chip ${st.water_ok ? "ok" : "bad"}">${st.water_ok ? I.check : I.x}Water${st.water_reasons.length ? ": " + esc(st.water_reasons.join(", ")) : ""}</span>
@@ -944,6 +947,64 @@ async function pageMe() {
     if (t.dataset.act === "fill") fillSub(+t.dataset.sub);
     if (t.dataset.act === "leave") leaveLand(o);
   }));
+}
+
+// ------------------------------------------------------------ leaderboard --
+const BOARD_ICON = { water: "🚣", land: "🏋️", total: "⭐", early: "🌅", late: "🌙", weekend: "📅", cox: "📣", subs: "🦸", streak: "🔥", boats: "🛶" };
+const MEDAL = ["🥇", "🥈", "🥉"];
+const plural = (n, unit) => `${n} ${n === 1 ? unit.replace(/s$/, "") : unit}`;
+
+function meStatsCard(p, boards) {
+  if (!p) return "";
+  const ms = p.milestone;
+  const pct = ms.next ? Math.round(((p.all_time - ms.reached) / (ms.next - ms.reached)) * 100) : 100;
+  const ranks = boards.map((b) => ({ b, r: b.me[String(S.me)] })).filter((x) => x.r && x.r.rank <= 10).sort((a, b) => a.r.rank - b.r.rank).slice(0, 4);
+  return `<div class="card card-pad lb-me">
+    <div class="lb-me-head"><span class="avatar">${esc(initials(meName()))}</span><div><b>${esc(meName())}</b><div class="small faint">${plural(p.season_total, "sessions")} this season · ${plural(p.all_time, "sessions")} all time</div></div></div>
+    <div class="lb-progress"><div class="small"><b>${ms.next ? `${plural(ms.to_go, "sessions")} to your ${ms.next}${ms.next === 1 ? "st" : "th"} session` : "Every milestone reached. Legend!"}</b></div><div class="bar"><i style="width:${pct}%"></i></div></div>
+    <div class="lb-me-grid">
+      <div><div class="k">Current streak</div><div class="v">${p.current_streak ? "🔥 " : ""}${plural(p.current_streak, "weeks")}</div><div class="s">best ${plural(p.streak, "weeks")}</div></div>
+      <div><div class="k">Early starts</div><div class="v">${p.early}</div><div class="s">before 08:00</div></div>
+      <div><div class="k">Subs filled</div><div class="v">${p.subs}</div><div class="s">seats saved</div></div>
+      <div><div class="k">Boat buddy</div><div class="v lb-small">${p.buddy ? esc(p.buddy.name) : "–"}</div><div class="s">${p.buddy ? `${plural(p.buddy.value, "outings")} together` : "row more to find one"}</div></div>
+    </div>
+    ${p.badges.length || ranks.length ? `<div class="lb-badges">${p.badges.map((b) => `<span class="chip ok">🏆 ${esc(b)}</span>`).join("")}${ranks.filter((x) => !p.badges.includes(x.b.title)).map((x) => `<span class="chip accent">#${x.r.rank} ${esc(x.b.title)}</span>`).join("")}</div>` : ""}
+  </div>`;
+}
+
+async function pageStats() {
+  let d;
+  try { d = await api("/api/stats"); } catch (e) { return fail(e); }
+  const c = d.club, me = S.me && meName() ? d.people[String(S.me)] : null;
+  const diff = c.this_week - c.last_week;
+  const boardCard = (b) => {
+    const mine = S.me ? b.me[String(S.me)] : null;
+    const inTop = mine && b.entries.some((e) => e.id === S.me);
+    return `<div class="card lb-board">
+      <div class="lb-title"><span class="lb-ico">${BOARD_ICON[b.key] || "🏅"}</span><div><b>${esc(b.title)}</b><div class="small faint">${esc(b.desc)}</div></div></div>
+      ${b.entries.length ? `<ol class="lb-list">${b.entries.map((e) => `<li class="${e.id === S.me ? "you" : ""}"><span class="lb-rank">${MEDAL[e.rank - 1] || e.rank}</span><span class="lb-name">${esc(e.name)}${e.id === S.me ? ` <span class="chip accent">you</span>` : ""}</span><span class="lb-val">${e.value}</span></li>`).join("")}
+        ${mine && !inTop ? `<li class="you lb-gap"><span class="lb-rank">${mine.rank}</span><span class="lb-name">You</span><span class="lb-val">${mine.value}</span></li>` : ""}</ol>`
+        : `<p class="small faint lb-empty">Up for grabs: nobody yet!</p>`}
+    </div>`;
+  };
+  $("#main").innerHTML = `
+    <div class="page-head"><div><h1>Leaderboard</h1><p>Season awards since ${esc(fmtShort(d.season_start))}. Sessions count once they've happened.</p></div>
+      ${!me ? `<div class="toolbar"><button class="btn" id="lb-pick">${I.user}Show my stats</button></div>` : ""}</div>
+    <div class="stats" style="margin-bottom:16px">
+      <div class="card stat"><div class="k">Seats filled</div><div class="v">${c.seat_sessions}</div><div class="s">across ${plural(c.sessions, "sessions")}</div></div>
+      <div class="card stat"><div class="k">This week so far</div><div class="v">${c.this_week}</div><div class="s">${diff > 0 ? `▲ ${diff} on last week` : diff < 0 ? `${c.last_week} last week, catch up!` : `same as last week`}</div></div>
+      <div class="card stat"><div class="k">Rowers out</div><div class="v">${c.active_rowers}</div><div class="s">at least one session</div></div>
+      <div class="card stat"><div class="k">Subs filled</div><div class="v">${c.subs_filled}</div><div class="s">${c.busiest_day != null ? `busiest day: ${DAYL[c.busiest_day]}` : "teamwork!"}</div></div>
+    </div>
+    ${me ? meStatsCard(me, d.boards) : ""}
+    <div class="section-title">Awards</div>
+    <div class="lb-grid">${d.boards.map(boardCard).join("")}
+      <div class="card lb-board">
+        <div class="lb-title"><span class="lb-ico">🤝</span><div><b>Crew chemistry</b><div class="small faint">Pairs who've been in the same boat most often</div></div></div>
+        ${d.pairs.length ? `<ol class="lb-list">${d.pairs.map((p, i) => `<li class="${p.ids.includes(S.me) ? "you" : ""}"><span class="lb-rank">${MEDAL[i] || i + 1}</span><span class="lb-name">${esc(p.a)} &amp; ${esc(p.b)}</span><span class="lb-val">${p.value}</span></li>`).join("")}</ol>` : `<p class="small faint lb-empty">No crews on the water yet.</p>`}
+      </div>
+    </div>`;
+  const pk = $("#lb-pick"); if (pk) pk.onclick = () => pickIdentity();
 }
 
 // ----------------------------------------------------------------- rowers --
@@ -1781,7 +1842,7 @@ function route() {
   const id = (location.hash.replace(/^#\/?/, "") || "schedule").split("?")[0];
   const r = ROUTES.find((x) => x.id === id && (!x.admin || isAdmin())) || ROUTES[0];
   shell(r.id);
-  ({ schedule: pageSchedule, signup: pageSignup, subs: pageSubs, me: pageMe, rowers: pageRowers, boats: pageBoats, coaches: pageCoaches, settings: pageSettings })[r.id]();
+  ({ schedule: pageSchedule, signup: pageSignup, subs: pageSubs, me: pageMe, stats: pageStats, rowers: pageRowers, boats: pageBoats, coaches: pageCoaches, settings: pageSettings })[r.id]();
   window.scrollTo(0, 0);
 }
 
