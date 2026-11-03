@@ -18,6 +18,9 @@ Then open http://localhost:8000. All data is stored in the host folder set by `D
 | `SECRET_KEY` | Signs session cookies. If unset, a key is generated and stored in `/data`. |
 | `COOKIE_SECURE` | Set to `1` when serving over HTTPS (recommended, e.g. behind Caddy/Traefik/nginx). |
 | `PUBLIC_URL` | Optional. The site's public address (e.g. `https://outings.example.org`), used in calendar-subscription links. Set it if those links show the wrong host behind your proxy. |
+| `EGRESS_FIREWALL` | `on` (default) restricts the container to the public internet only (see the Tailscale Funnel section). Needs `NET_ADMIN`. Set `off` to disable. |
+| `EGRESS_DNS` | DNS servers used when the firewall is on (default `1.1.1.1 9.9.9.9`). |
+| `EGRESS_EXTRA_BLOCKED` | Extra address ranges to block, e.g. if your LAN uses non-private addresses. |
 | `TZ_NAME` | Club time zone (default `Europe/London`). Used to decide "today". |
 
 **First run:** sign in as admin, go to **Settings → Import from spreadsheet**, and upload `Rowing_Outings.xlsx`. This brings in the members, coaches and term settings. Then add your fleet under **Boat park**.
@@ -54,8 +57,41 @@ First build the image on the server (`docker build -t outing-planner:latest .` i
 - Port: container `8000` → host port of your choice
 - Path: container `/data` → host `/mnt/user/appdata/outing-planner`
 - Variables: `ADMIN_PASSWORD`, `MEMBER_PASSWORD`, `SECRET_KEY`, `PUID=99`, `PGID=100`, and `PUBLIC_URL` / `COOKIE_SECURE=1` if it's served over HTTPS
+- Extra Parameters: `--cap-add=NET_ADMIN` (needed for the built-in egress firewall; see the Tailscale Funnel section below)
 
 **Backups**: back up the whole folder. For a copy that's safe to take while the app is running, use **Settings → Data → Download database backup** in the app. If you copy `outings.db` by hand, stop the container first (or copy the `-wal` file along with it).
+
+## Public access with Tailscale Funnel on Unraid, isolated from your network
+
+The goal: the site is public through Tailscale Funnel, but the container can't reach the LAN, the Unraid host, other containers, or anything on the tailnet. All of this is set up **inside the container**: no firewall rules on the host and no router changes.
+
+**How it's isolated**
+
+1. **Egress firewall inside the container** (`entrypoint.sh`, on by default). At start-up the container sets firewall rules in its *own* network namespace. Outgoing traffic may go to the public internet only. Private ranges (LAN, Unraid host, other containers), `100.64.0.0/10` / `fd7a:115c:a1e0::/48` (Tailscale) and MagicDNS are rejected *before the packet leaves the container*. So the host never routes anything into its own Tailscale, and nothing can show up on the tailnet as the host's node. Incoming connections from private ranges are dropped too, except to the app's own port (8000), so a published port still works if you use one. DNS goes to public resolvers (`EGRESS_DNS`, default `1.1.1.1 9.9.9.9`). The app then runs as `PUID:PGID` with **no capabilities**, so it can't change the rules. This needs the `NET_ADMIN` capability, which only affects the container's own namespace, not the host. If the firewall can't be set up, the container refuses to start (set `EGRESS_FIREWALL=off` to override).
+2. **Tailscale access controls** for the container's *own* Tailscale node. Its tailnet traffic leaves inside an encrypted tunnel, so the firewall can't see it. Tag the node `tag:outings` and give that tag no rules as a source: see `unraid/tailscale-policy-snippet.hujson`. Funnel still works, because it's incoming public traffic.
+
+**Unraid container settings**
+
+| Setting | Value |
+|---|---|
+| Network Type | **bridge** (not host, none or container; see below) |
+| Port mappings | **none.** Remove the 8000 mapping; the site is only reached through Funnel |
+| Path | container `/data` → host `/mnt/user/appdata/outing-planner` |
+| Extra Parameters | `--cap-add=NET_ADMIN` |
+| Variables | `ADMIN_PASSWORD`, `MEMBER_PASSWORD`, `SECRET_KEY`, `PUID=99`, `PGID=100`, `COOKIE_SECURE=1`, `PUBLIC_URL=https://<hostname>.<your-tailnet>.ts.net` |
+| Use Tailscale | Yes, with a hostname such as `outings`. Turn on **userspace networking** if offered, and **Funnel** to port `8000`. Don't use an exit node, and don't allow LAN access |
+
+- **Network type:** `host` would put the container's firewall rules on the *host*, and it could see the host's Tailscale interface. `none` has no internet, so Tailscale can't connect. `container:` makes the isolation depend on another container. `bridge` gives the container its own namespace behind the host's NAT.
+- **Tailscale node:** when it first joins, give the node the tag `tag:outings` in the admin console (or use a tagged auth key). Funnel needs HTTPS certificates and MagicDNS turned on for the tailnet.
+- **Host exit node:** if the Unraid *host* uses a Tailscale exit node, all of its internet traffic (including the container's) goes out through that exit node. That can only be changed on the host.
+
+**Check it on the server**
+
+```bash
+docker logs outing-planner | grep entrypoint     # "egress firewall active ..."
+docker exec outing-planner egress-check <unraid-LAN-IP> <unraid-tailscale-IP>
+```
+Every private, LAN and Tailscale target should show `BLOCKED`, the internet checks `OK`, and the result `ALL GOOD`.
 
 ## Features
 

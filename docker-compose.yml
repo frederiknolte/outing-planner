@@ -7,6 +7,10 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
+    # Lets the container set up its own egress firewall (only inside its own network
+    # namespace; the app itself runs without any capabilities).
+    cap_add:
+      - NET_ADMIN
     environment:
       # Owner of the files in the data folder (Unraid: 99 = nobody, 100 = users).
       - PUID=${PUID:-99}
