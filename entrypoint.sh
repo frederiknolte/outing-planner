@@ -96,6 +96,28 @@ else
   log "WARNING: egress firewall disabled (EGRESS_FIREWALL=off)"
 fi
 
+# Optional: switch on Tailscale Funnel to the app automatically (TS_FUNNEL_PORT=8000).
+# Waits in the background until Tailscale (e.g. Unraid's built-in integration) is
+# running and logged in, then runs `tailscale funnel --bg <port>`, which Tailscale
+# also remembers across restarts. Gives up after ~10 minutes.
+if [ -n "${TS_FUNNEL_PORT:-}" ]; then
+  (
+    i=0
+    while [ "$i" -lt 120 ]; do
+      if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
+        if out=$(tailscale funnel --bg "$TS_FUNNEL_PORT" 2>&1); then
+          log "Tailscale Funnel on: public HTTPS -> http://127.0.0.1:$TS_FUNNEL_PORT"
+          tailscale funnel status 2>/dev/null | sed 's/^/[entrypoint]   /' || true
+          exit 0
+        fi
+        last="$out"
+      fi
+      i=$((i + 1)); sleep 5
+    done
+    log "WARNING: could not switch on Tailscale Funnel. Is Tailscale running and logged in in this container? ${last:-}"
+  ) &
+fi
+
 PUID="${PUID:-99}"
 PGID="${PGID:-100}"
 find "$DATA_DIR" \( ! -user "$PUID" -o ! -group "$PGID" \) -exec chown "$PUID:$PGID" {} + 2>/dev/null || true

@@ -19,6 +19,7 @@ Then open http://localhost:8000. All data is stored in the host folder set by `D
 | `COOKIE_SECURE` | Set to `1` when serving over HTTPS (recommended, e.g. behind Caddy/Traefik/nginx). |
 | `PUBLIC_URL` | Optional. The site's public address (e.g. `https://outings.example.org`), used in calendar-subscription links. Set it if those links show the wrong host behind your proxy. |
 | `EGRESS_FIREWALL` | `on` (default) restricts the container to the public internet only (see the Tailscale Funnel section). Needs `NET_ADMIN`. Set `off` to disable. |
+| `TS_FUNNEL_PORT` | Optional, e.g. `8000`. When Tailscale runs inside the container, waits until it's logged in, then runs `tailscale funnel --bg <port>` so the site goes public automatically. |
 | `EGRESS_DNS` | DNS servers used when the firewall is on (default `1.1.1.1 9.9.9.9`). |
 | `EGRESS_EXTRA_BLOCKED` | Extra address ranges to block, e.g. if your LAN uses non-private addresses. |
 | `TZ_NAME` | Club time zone (default `Europe/London`). Used to decide "today". |
