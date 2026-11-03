@@ -896,6 +896,7 @@ class SettingsIn(BaseModel):
     member_password: str = Field("", max_length=200)
     phone_mode: str = "required"
     phone_retention_days: int = Field(180, ge=0, le=3650)
+    swim_test_after: Optional[int] = Field(None, ge=0, le=50)   # None = keep current
 
 
 @app.get("/api/admin/settings")
@@ -906,6 +907,7 @@ def settings_get(_: str = Depends(require_admin)):
         s["novice_land_free"] = s.get("novice_land_free") == "1"
         s["novice_free_outings"] = int(s.get("novice_free_outings") or 0)
         s["terms"] = TERMS
+        s["swim_test_after"] = int(s.get("swim_test_after") or 0)
         s["phone_encryption"] = privacy.enabled()
         s["phone_retention_days"] = int(s.get("phone_retention_days") or 0)
         s["phone_count"] = conn.execute("SELECT COUNT(*) FROM members WHERE phone != ''").fetchone()[0]
@@ -926,6 +928,8 @@ def settings_put(b: SettingsIn, _: str = Depends(require_admin)):
         raise HTTPException(400, "Bad phone setting")
     with db.get_conn() as conn:
         db.set_setting(conn, "phone_mode", b.phone_mode)
+        if b.swim_test_after is not None:
+            db.set_setting(conn, "swim_test_after", str(b.swim_test_after))
         db.set_setting(conn, "phone_retention_days", str(b.phone_retention_days))
         privacy.purge_expired(conn, b.phone_retention_days)
         for k in ("club_name", "academic_year", "current_term", "subs_cutoff", "today_override", "season_start"):

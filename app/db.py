@@ -143,6 +143,7 @@ DEFAULT_SETTINGS = {
     "novice_land_free": "1",
     "season_start": "2026-10-01",
     "member_password_hash": "",
+    "swim_test_after": "4",            # water outings allowed before a swim test is required
     "phone_mode": "required",          # sign-up form: required | optional | off
     "phone_retention_days": "180",     # delete numbers after this long without a sign-up (0 = keep)
 }

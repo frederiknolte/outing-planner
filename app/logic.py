@@ -4,10 +4,11 @@ Rules follow the club's original spreadsheet:
   * Subs are valid if the member has a Full-year plan for the current academic year,
     or a Single-term plan for the current term + year.
   * Anyone may row (subs-wise) up to and including the subs cutoff date.
-  * Water needs a swim test; land doesn't.
-  * A NOVICE gets N free water outings (default 4) needing neither swim test nor subs.
-    While they still have free water outings left, land training is also free
-    (configurable).
+  * Swim test: nobody needs one for their first `swim_test_after` water outings
+    (default 4); from the next water outing on it's required. Land never needs one.
+  * A NOVICE who hasn't paid subs gets N free water outings (default 4) that don't need
+    subs. Once their subs are paid the allowance no longer applies. While they still have
+    free water outings left, land training is also free (configurable).
   * Cox seats count as water outings.
   * A novice cox (status N) needs a bankrider/coach.
 """
@@ -81,6 +82,10 @@ class Rules:
             self.free_n = max(0, int(self.settings.get("novice_free_outings") or 0))
         except ValueError:
             self.free_n = 4
+        try:
+            self.swim_after = max(0, int(self.settings.get("swim_test_after") or 0))
+        except ValueError:
+            self.swim_after = 4
         self.land_free = self.settings.get("novice_land_free") == "1"
         self.cutoff = None
         if self.settings.get("subs_cutoff"):
@@ -136,7 +141,9 @@ class Rules:
             "water_done": m["past_water"] + c["water_done"],
             "land_done": m["past_land"] + c["land_done"],
             "upcoming": (c["water"] - c["water_done"]) + (c["land"] - c["land_done"]),
-            "novice_free_left": max(0, self.free_n - water) if m["category"] == "Novice" else None,
+            # only relevant while subs are unpaid
+            "novice_free_left": (max(0, self.free_n - water)
+                                 if m["category"] == "Novice" and not self.subs_valid(m) else None),
         }
 
     # ---- eligibility ------------------------------------------------------
@@ -146,16 +153,24 @@ class Rules:
         if not m:
             return {"ok": False, "reasons": ["Not in members list"], "note": ""}
         reasons, note = [], ""
-        novice = m["category"] == "Novice"
+        # The novice allowance only matters while subs are unpaid.
+        novice = m["category"] == "Novice" and not self.subs_valid(m)
         before = self.water_before(member_id, key)
         if kind == "water":
             nth = before + 1
-            if novice and nth <= self.free_n:
-                return {"ok": True, "reasons": [], "note": f"Novice free outing {nth} of {self.free_n}"}
-            if not m["swim_test"]:
+            free_subs = novice and nth <= self.free_n
+            if not m["swim_test"] and nth > self.swim_after:
                 reasons.append("No swim test")
-            if not self.subs_ok_on(m, d):
+            if not free_subs and not self.subs_ok_on(m, d):
                 reasons.append("Subs not paid")
+            if not reasons:
+                if free_subs:
+                    note = f"Novice free outing {nth} of {self.free_n}"
+                elif not m["swim_test"]:
+                    note = f"Outing {nth} of {self.swim_after} before a swim test is needed"
+                elif not self.subs_valid(m):
+                    note = "Before subs cutoff"
+            return {"ok": not reasons, "reasons": reasons, "note": note}
         else:
             if self.land_free and novice and before < self.free_n:
                 return {"ok": True, "reasons": [], "note": "Novice: land free while free water outings remain"}

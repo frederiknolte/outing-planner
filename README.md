@@ -117,8 +117,8 @@ Every private, LAN and Tailscale target should show `BLOCKED`, the internet chec
 ### Rules (taken from the spreadsheet)
 
 - Subs are valid for a *Full year* plan that matches the current academic year, or a *Single term* plan that matches the current term and year. Anyone can row up to and including the **subs cutoff date**.
-- Water needs a swim test.
-- A **novice** gets N free water outings (default 4) that need no swim test and no subs. Cox seats count as water outings. While a novice still has free outings left, land training is free too (this can be switched off).
+- **Swim test**: nobody needs one for their first 4 water outings (setting: *Swim test required after*). From the 5th water outing on, it's required. Land sessions never need one.
+- A **novice who hasn't paid subs** gets N free water outings (default 4) that need no subs. Once their subs are paid, the allowance no longer applies. Cox seats count as water outings. While a novice still has free outings left, land training is free too (this can be switched off).
 - Eligibility is checked for each session using that session's date and the person's running water count up to it.
 - A novice cox (status N) with no coach/bankrider set gets flagged **Bankrider needed**.
 

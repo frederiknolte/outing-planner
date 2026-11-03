@@ -394,7 +394,7 @@ async function editOuting(o, defaults = {}) {
     </div>
     <div class="grid-2">
       <label class="field"><span>Crew / session name</span><input class="input" id="oe-title" placeholder="e.g. M1, Novice W" value="${esc(st.title)}"></label>
-      <label class="field"><span id="oe-coach-l">${st.kind === "water" ? "Coach / bankrider" : "Coach"}</span><input class="input" id="oe-coach" list="oe-coaches" value="${esc(st.coach)}" placeholder="Optional"><datalist id="oe-coaches">${coaches.map((c) => `<option value="${esc(c.name)}">`).join("")}</datalist></label>
+      <label class="field"><span id="oe-coach-l">${st.kind === "water" ? "Coach / bankrider" : "Coach"}</span><div class="combo" id="oe-coach-wrap"><input class="input" id="oe-coach" autocomplete="off" value="${esc(st.coach)}" placeholder="Optional · pick anyone or type a name"></div></label>
     </div>
     <div class="grid-2" id="oe-water-row">
       <label class="field"><span>Boat</span><select class="input" id="oe-boat"><option value="">— No specific boat —</option>${boats.map((b) => `<option value="${b.id}" ${b.id === st.boat_id ? "selected" : ""}>${esc(b.name)} · ${esc(b.boat_type)}${b.status !== "available" ? ` (${b.status})` : ""}</option>`).join("")}</select>
@@ -594,6 +594,60 @@ async function editOuting(o, defaults = {}) {
         $$("[data-pick]", box).forEach((b) => b.onclick = () => place(+b.dataset.pick, b.dataset.intent));
         $$("[data-br]", box).forEach((b) => b.onclick = () => toggleBankrider(b.dataset.br));
       };
+      // ---- coach / bankrider: dropdown of everyone (coaches + all members), free text still allowed ----
+      function coachPicker() {
+        const inp = $("#oe-coach", m), wrap = $("#oe-coach-wrap", m);
+        let list = null, hl = 0, shown = [];
+        const parts = () => inp.value.split(/\s*,\s*/);
+        const build = () => {
+          const ps = parts(), q = (ps[ps.length - 1] || "").trim().toLowerCase();
+          const taken = new Set(ps.slice(0, -1).map((x) => x.trim().toLowerCase()));
+          const byName = new Map();
+          coaches.forEach((c) => byName.set(c.name.toLowerCase(), { name: c.name, coach: true }));
+          members.forEach((mm) => { const k = mm.name.toLowerCase(); byName.set(k, { ...(byName.get(k) || { name: mm.name }), mid: mm.id }); });
+          return [...byName.values()]
+            .filter((e) => !taken.has(e.name.toLowerCase()) && (!q || e.name.toLowerCase().includes(q)))
+            .map((e) => {
+              const c = e.mid != null ? cand[e.mid] || {} : {}, su = c.signup;
+              const br = !!(su && su.can_bankride), free = !!(su && su.available), inBoat = e.mid != null && seatOf(e.mid) != null;
+              return { ...e, br, free, inBoat, busy: !!c.busy, rank: inBoat || c.busy ? 5 : br && free ? 0 : e.coach ? 1 : br ? 2 : free ? 3 : 4 };
+            })
+            .sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name)).slice(0, 80);
+        };
+        const why = (e) => [
+          e.br && e.free ? `<span class="chip ok">${I.check}Can bankride · free</span>` : e.br ? `<span class="chip ok">Can bankride</span>` : "",
+          e.coach ? `<span class="chip violet">Coach</span>` : "",
+          !e.br && e.free ? `<span class="chip">Free</span>` : "",
+          e.inBoat ? `<span class="chip warn">In the boat</span>` : "",
+          e.busy ? `<span class="chip bad">Booked at this time</span>` : "",
+        ].join(" ");
+        const close = () => { list?.remove(); list = null; };
+        const draw = () => {
+          shown = build(); hl = Math.min(hl, Math.max(0, shown.length - 1));
+          if (!list) { list = document.createElement("div"); list.className = "combo-list"; wrap.appendChild(list); }
+          list.innerHTML = shown.length ? shown.map((e, k) => `<div class="combo-item ${k === hl ? "hl" : ""} ${e.inBoat || e.busy ? "dim" : ""}" data-k="${k}"><span class="nm">${esc(e.name)}</span><span class="why">${why(e)}</span></div>`).join("")
+            : `<div class="combo-empty">No match. The name you typed will be used as it is.</div>`;
+          $$(".combo-item", list).forEach((el) => el.addEventListener("mousedown", (ev) => { ev.preventDefault(); pick(shown[+el.dataset.k]); }));
+          const h = $(".hl", list); h && h.scrollIntoView({ block: "nearest" });
+        };
+        const pick = (e) => {
+          const ps = parts(); ps[ps.length - 1] = e.name;
+          inp.value = ps.map((x) => x.trim()).filter(Boolean).join(", ");
+          close(); status();
+        };
+        inp.addEventListener("focus", () => { hl = 0; draw(); });
+        inp.addEventListener("input", () => { hl = 0; draw(); });
+        inp.addEventListener("blur", () => setTimeout(close, 120));
+        inp.addEventListener("keydown", (ev) => {
+          if (!list && (ev.key === "ArrowDown")) { draw(); return; }
+          if (!list) return;
+          if (ev.key === "ArrowDown") { hl = Math.min(hl + 1, shown.length - 1); draw(); ev.preventDefault(); }
+          else if (ev.key === "ArrowUp") { hl = Math.max(hl - 1, 0); draw(); ev.preventDefault(); }
+          else if (ev.key === "Enter") { ev.preventDefault(); if (shown[hl]) pick(shown[hl]); }
+          else if (ev.key === "Escape") { ev.stopPropagation(); close(); }
+        });
+      }
+
       $("#oe-clear", m).onclick = (e) => { e.preventDefault(); st.seats = {}; target = null; drawSeats(); };
       const syncKind = () => {
         $$("#oe-kind button", m).forEach((b) => b.classList.toggle("on", b.dataset.k === st.kind));
@@ -617,6 +671,7 @@ async function editOuting(o, defaults = {}) {
       $("#oe-date", m).onchange = (e) => { st.date = e.target.value; loadCand(); };
       $("#oe-time", m).onchange = (e) => { st.time = e.target.value.trim(); loadCand(); };
       $("#oe-coach", m).oninput = status;
+      coachPicker();
       const save = async (published) => {
         const body = {
           kind: st.kind, date: st.date, time: $("#oe-time", m).value.trim(), location: $("#oe-loc", m).value,
@@ -1085,10 +1140,12 @@ async function pageSettings() {
         </div>
         <label class="field"><span>Subs cutoff date</span><input class="input" type="date" id="s-cut" value="${esc(s.subs_cutoff)}"><span class="hint">Unpaid members may row up to and including this date.</span></label>
         <div class="grid-2">
-          <label class="field"><span>Free water outings for novices</span><input class="input" type="number" min="0" max="50" id="s-free" value="${s.novice_free_outings}"><span class="hint">No swim test or subs needed for these.</span></label>
+          <label class="field"><span>Free water outings for novices</span><input class="input" type="number" min="0" max="50" id="s-free" value="${s.novice_free_outings}"><span class="hint">For novices who haven't paid subs yet: no subs needed for these.</span></label>
           <div class="field"><span>&nbsp;</span><label class="check"><input type="checkbox" id="s-land" ${s.novice_land_free ? "checked" : ""}> Land free for novices while free water outings remain</label></div>
         </div>
         <div class="grid-2">
+          <label class="field"><span>Swim test required after</span><input class="input" type="number" min="0" max="50" id="s-swim" value="${s.swim_test_after}"><span class="hint">Water outings anyone may do before a swim test is needed (applies to everyone).</span></label>
+          <span></span>
           <label class="field"><span>Coaching year starts</span><input class="input" type="date" id="s-season" value="${esc(s.season_start)}"><span class="hint">First month on the Coaches page.</span></label>
           <label class="field"><span>Override “today” (testing)</span><input class="input" type="date" id="s-today" value="${esc(s.today_override)}"><span class="hint">Leave blank normally.</span></label>
         </div>
@@ -1136,7 +1193,7 @@ async function pageSettings() {
   };
   $("#s-save").onclick = async () => {
     const body = { club_name: $("#s-club").value.trim() || "Reuben Boat Club", academic_year: $("#s-ay").value.trim(), current_term: $("#s-term").value, subs_cutoff: $("#s-cut").value,
-      novice_free_outings: +$("#s-free").value || 0, novice_land_free: $("#s-land").checked, season_start: $("#s-season").value, today_override: $("#s-today").value, ...phoneFields() };
+      novice_free_outings: +$("#s-free").value || 0, novice_land_free: $("#s-land").checked, season_start: $("#s-season").value, today_override: $("#s-today").value, swim_test_after: Math.max(0, +$("#s-swim").value || 0), ...phoneFields() };
     try { await api("/api/admin/settings", { method: "PUT", body }); toast("Settings saved"); await reboot(); shell("settings"); pageSettings(); } catch (e) { fail(e); }
   };
   $("#s-mpw-save").onclick = async () => {
