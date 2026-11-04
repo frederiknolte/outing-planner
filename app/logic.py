@@ -204,7 +204,7 @@ def maps_url(place) -> str:
 
 
 def outing_payload(rules: Rules, o: dict, assignments: list[dict], subs: list[dict],
-                   boats: dict, same_slot: dict, admin: bool) -> dict:
+                   boats: dict, same_slot: dict, committee: bool) -> dict:
     """Serialise one outing with seats, eligibility flags and warnings."""
     kind, cap, coxed = o["kind"], o["capacity"], bool(o["coxed"]) and o["kind"] == "water"
     d = date.fromisoformat(o["date"])
@@ -226,7 +226,7 @@ def outing_payload(rules: Rules, o: dict, assignments: list[dict], subs: list[di
                 "id": a["member_id"], "name": m.get("name", "?"),
                 "category": m.get("category"), "cox_status": m.get("cox_status"),
             }
-            if admin:  # payment / swim-test status is admin-only information
+            if committee:  # payment / swim-test status is committee-only information
                 entry["eligibility"] = elig
             if s in open_subs:
                 sr = open_subs[s]
@@ -258,10 +258,10 @@ def outing_payload(rules: Rules, o: dict, assignments: list[dict], subs: list[di
                 cox_check = "Cox status not set"
     if cox_check == "Bankrider needed":
         warnings.append("Novice cox: bankrider/coach needed")
-    if ineligible and admin:
+    if ineligible and committee:
         warnings.append(f"{ineligible} ineligible athlete{'s' if ineligible > 1 else ''}")
     boat = boats.get(o["boat_id"]) if o["boat_id"] else None
-    if boat and boat["status"] != "available" and admin:
+    if boat and boat["status"] != "available" and committee:
         warnings.append(f"{boat['name']} is marked '{boat['status']}'")
     spots = empty_rowers + (1 if cox_seat and not cox_seat["member"] else 0)
     if kind == "land":  # land sessions are open: anyone can take a free spot

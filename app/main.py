@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import db
-from .auth import require_admin, require_member, role_of
+from .auth import require_committee, require_member, role_of
 from . import privacy
 from . import river
 from .importer import import_workbook
@@ -34,12 +34,12 @@ from .logic import (BOAT_TYPES, SUBS_PLANS, TERMS, TZ, Rules, monday_of, outing_
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+COMMITTEE_PASSWORD = os.environ.get("COMMITTEE_PASSWORD", "")
 MEMBER_PASSWORD = os.environ.get("MEMBER_PASSWORD", "")
-if not ADMIN_PASSWORD or not MEMBER_PASSWORD:
-    raise SystemExit("ADMIN_PASSWORD and MEMBER_PASSWORD environment variables must both be set.")
-if ADMIN_PASSWORD == MEMBER_PASSWORD:
-    raise SystemExit("ADMIN_PASSWORD and MEMBER_PASSWORD must be different.")
+if not COMMITTEE_PASSWORD or not MEMBER_PASSWORD:
+    raise SystemExit("COMMITTEE_PASSWORD and MEMBER_PASSWORD environment variables must both be set.")
+if COMMITTEE_PASSWORD == MEMBER_PASSWORD:
+    raise SystemExit("COMMITTEE_PASSWORD and MEMBER_PASSWORD must be different.")
 
 db.init_db()
 if _n := issues.sweep_orphans():
@@ -125,8 +125,8 @@ def login(body: LoginIn, request: Request):
         raise HTTPException(429, "Too many attempts — try again in a few minutes")
     pw = body.password
     role = None
-    if hmac.compare_digest(pw.encode(), ADMIN_PASSWORD.encode()):
-        role = "admin"
+    if hmac.compare_digest(pw.encode(), COMMITTEE_PASSWORD.encode()):
+        role = "committee"
     else:
         with db.get_conn() as conn:
             stored = db.get_settings(conn).get("member_password_hash")
@@ -169,7 +169,7 @@ def _boats(conn) -> dict:
     return {r["id"]: dict(r) for r in conn.execute("SELECT * FROM boats")}
 
 
-def _outings_payload(conn, rules: Rules, where: str, params: tuple, admin: bool) -> list[dict]:
+def _outings_payload(conn, rules: Rules, where: str, params: tuple, committee: bool) -> list[dict]:
     outings = [dict(r) for r in conn.execute(f"SELECT * FROM outings WHERE {where} ORDER BY date, time, id", params)]
     if not outings:
         return []
@@ -200,11 +200,11 @@ def _outings_payload(conn, rules: Rules, where: str, params: tuple, admin: bool)
     out = []
     for o in outings:
         p = outing_payload(rules, o, assigns[o["id"]], subs[o["id"]], boats,
-                           slot.get((o["date"], o["time"]), {}) if o["time"] else {}, admin)
+                           slot.get((o["date"], o["time"]), {}) if o["time"] else {}, committee)
         crew = {a["seat"]: a["member_id"] for a in assigns[o["id"]]}
         p["river"] = river.check_outing(o, crew, rules.members, boats.get(o["boat_id"]), rules.settings, flag,
                                         rules.today, TZ, [x for x in day_water[o["date"]] if x["id"] != o["id"]])
-        if admin and o["boat_id"] and o["time"] and len(boat_slot[(o["date"], o["time"], o["boat_id"])]) > 1:
+        if committee and o["boat_id"] and o["time"] and len(boat_slot[(o["date"], o["time"], o["boat_id"])]) > 1:
             p["warnings"].append(f"{boats[o['boat_id']]['name']} is booked twice at this time")
         out.append(p)
     return out
@@ -236,13 +236,13 @@ def bootstrap(role: str = Depends(require_member)):
 # ---------------------------------------------------------------- week ----
 @app.get("/api/week")
 def week(start: Optional[str] = None, role: str = Depends(require_member)):
-    admin = role == "admin"
+    committee = role == "committee"
     with db.get_conn() as conn:
         rules = Rules(conn)
         ws = _week_start(start, rules)
         we = ws + timedelta(days=6)
-        where = "date BETWEEN ? AND ?" + ("" if admin else " AND published = 1")
-        outings = _outings_payload(conn, rules, where, (ws.isoformat(), we.isoformat()), admin)
+        where = "date BETWEEN ? AND ?" + ("" if committee else " AND published = 1")
+        outings = _outings_payload(conn, rules, where, (ws.isoformat(), we.isoformat()), committee)
         counts = conn.execute(
             "SELECT COUNT(*) AS n, SUM(published) AS p FROM outings WHERE date BETWEEN ? AND ?",
             (ws.isoformat(), we.isoformat())).fetchone()
@@ -272,7 +272,7 @@ def member_summary(member_id: int, role: str = Depends(require_member)):
         upcoming = []
         if ids:
             qs = ",".join("?" * len(ids))
-            upcoming = _outings_payload(conn, rules, f"id IN ({qs})", tuple(ids), role == "admin")
+            upcoming = _outings_payload(conn, rules, f"id IN ({qs})", tuple(ids), role == "committee")
         status = rules.status_now(member_id)
         return {
             "member": {"id": m["id"], "name": m["name"], "category": m["category"], "cox_status": m["cox_status"]},
@@ -314,7 +314,7 @@ class SubCancelIn(BaseModel):
     member_id: Optional[int] = None
 
 
-def _sub_rows(conn, rules: Rules, where: str, params: tuple, admin: bool) -> list[dict]:
+def _sub_rows(conn, rules: Rules, where: str, params: tuple, committee: bool) -> list[dict]:
     rows = [dict(r) for r in conn.execute(
         f"""SELECT s.*, o.kind, o.date, o.time, o.end_time, o.title, o.location, o.capacity, o.coxed, o.boat_id
             FROM sub_requests s JOIN outings o ON o.id = s.outing_id WHERE {where}
@@ -343,9 +343,9 @@ def list_subs(role: str = Depends(require_member)):
     with db.get_conn() as conn:
         rules = Rules(conn)
         today = rules.today.isoformat()
-        open_ = _sub_rows(conn, rules, "s.status = 'open' AND o.date >= ? AND o.published = 1", (today,), role == "admin")
+        open_ = _sub_rows(conn, rules, "s.status = 'open' AND o.date >= ? AND o.published = 1", (today,), role == "committee")
         recent = _sub_rows(conn, rules, "s.status = 'filled' AND o.date >= ?",
-                           ((rules.today - timedelta(days=7)).isoformat(),), role == "admin")
+                           ((rules.today - timedelta(days=7)).isoformat(),), role == "committee")
         return {"open": open_, "recent": recent[-30:]}
 
 
@@ -382,7 +382,7 @@ def request_sub(body: SubRequestIn, role: str = Depends(require_member)):
     with db.get_conn() as conn:
         rules = Rules(conn)
         o = conn.execute("SELECT * FROM outings WHERE id = ?", (body.outing_id,)).fetchone()
-        if not o or (not o["published"] and role != "admin"):
+        if not o or (not o["published"] and role != "committee"):
             raise HTTPException(404, "Outing not found")
         if o["date"] < rules.today.isoformat():
             raise HTTPException(400, "This outing is in the past")
@@ -427,8 +427,8 @@ def cancel_sub(sub_id: int, body: SubCancelIn, role: str = Depends(require_membe
         s = conn.execute("SELECT * FROM sub_requests WHERE id = ?", (sub_id,)).fetchone()
         if not s or s["status"] != "open":
             raise HTTPException(400, "This sub request is no longer open")
-        if role != "admin" and body.member_id != s["requester_id"]:
-            raise HTTPException(403, "Only the person who asked (or an admin) can cancel this")
+        if role != "committee" and body.member_id != s["requester_id"]:
+            raise HTTPException(403, "Only the person who asked (or an committee) can cancel this")
         conn.execute("UPDATE sub_requests SET status='cancelled', resolved_at=datetime('now') WHERE id=?", (sub_id,))
         return {"ok": True}
 
@@ -440,7 +440,7 @@ class JoinIn(BaseModel):
 
 def _land_outing(conn, rules: Rules, oid: int, role: str):
     o = conn.execute("SELECT * FROM outings WHERE id = ?", (oid,)).fetchone()
-    if not o or (not o["published"] and role != "admin"):
+    if not o or (not o["published"] and role != "committee"):
         raise HTTPException(404, "Session not found")
     if o["kind"] != "land":
         raise HTTPException(400, "Only land sessions are open to join. Water crews are picked by the coaches")
@@ -486,7 +486,7 @@ def outing_leave(oid: int, b: JoinIn, role: str = Depends(require_member)):
         return {"ok": True}
 
 
-# ============================================================== ADMIN =====
+# ========================================================== COMMITTEE =====
 # ---------------------------------------------------------------- boats ----
 class BoatIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
@@ -498,9 +498,9 @@ class BoatIn(BaseModel):
     notes: str = Field("", max_length=500)
 
 
-@app.get("/api/admin/boats")
+@app.get("/api/committee/boats")
 def boats_list(role: str = Depends(require_member)):
-    # readable by everyone signed in (boat park view); edits are admin only
+    # readable by everyone signed in (boat park view); edits are committee only
     with db.get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT * FROM boats ORDER BY status != 'available', seats DESC, name")]
         today = Rules(conn).today.isoformat()
@@ -528,8 +528,8 @@ def _boat_validate(b: BoatIn):
         raise HTTPException(400, "Bad boat type")
 
 
-@app.post("/api/admin/boats")
-def boat_create(b: BoatIn, _: str = Depends(require_admin)):
+@app.post("/api/committee/boats")
+def boat_create(b: BoatIn, _: str = Depends(require_committee)):
     _boat_validate(b)
     with db.get_conn() as conn:
         try:
@@ -540,8 +540,8 @@ def boat_create(b: BoatIn, _: str = Depends(require_admin)):
         return {"id": cur.lastrowid}
 
 
-@app.put("/api/admin/boats/{boat_id}")
-def boat_update(boat_id: int, b: BoatIn, _: str = Depends(require_admin)):
+@app.put("/api/committee/boats/{boat_id}")
+def boat_update(boat_id: int, b: BoatIn, _: str = Depends(require_committee)):
     _boat_validate(b)
     with db.get_conn() as conn:
         try:
@@ -552,8 +552,8 @@ def boat_update(boat_id: int, b: BoatIn, _: str = Depends(require_admin)):
         return {"ok": True}
 
 
-@app.delete("/api/admin/boats/{boat_id}")
-def boat_delete(boat_id: int, _: str = Depends(require_admin)):
+@app.delete("/api/committee/boats/{boat_id}")
+def boat_delete(boat_id: int, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         issues.delete_boat_photos(conn, boat_id)
         conn.execute("DELETE FROM boats WHERE id=?", (boat_id,))
@@ -601,8 +601,8 @@ def _member_validate(m: MemberIn):
         raise HTTPException(400, "Bad cox status")
 
 
-@app.get("/api/admin/members")
-def members_list(_: str = Depends(require_admin)):
+@app.get("/api/committee/members")
+def members_list(_: str = Depends(require_committee)):
     with db.get_conn() as conn:
         rules = Rules(conn)
         out = []
@@ -618,8 +618,8 @@ def members_list(_: str = Depends(require_admin)):
         return {"members": out, "terms": TERMS, "plans": SUBS_PLANS}
 
 
-@app.post("/api/admin/members")
-def member_create(m: MemberIn, _: str = Depends(require_admin)):
+@app.post("/api/committee/members")
+def member_create(m: MemberIn, _: str = Depends(require_committee)):
     _member_validate(m)
     with db.get_conn() as conn:
         try:
@@ -635,8 +635,8 @@ def member_create(m: MemberIn, _: str = Depends(require_admin)):
         return {"id": cur.lastrowid}
 
 
-@app.put("/api/admin/members/{member_id}")
-def member_update(member_id: int, m: MemberIn, _: str = Depends(require_admin)):
+@app.put("/api/committee/members/{member_id}")
+def member_update(member_id: int, m: MemberIn, _: str = Depends(require_committee)):
     _member_validate(m)
     with db.get_conn() as conn:
         try:
@@ -656,8 +656,8 @@ def member_update(member_id: int, m: MemberIn, _: str = Depends(require_admin)):
         return {"ok": True}
 
 
-@app.delete("/api/admin/members/{member_id}")
-def member_delete(member_id: int, _: str = Depends(require_admin)):
+@app.delete("/api/committee/members/{member_id}")
+def member_delete(member_id: int, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         conn.execute("DELETE FROM members WHERE id=?", (member_id,))
         return {"ok": True}
@@ -691,8 +691,8 @@ def places_list(role: str = Depends(require_member)):
         return [dict(r) for r in conn.execute("SELECT * FROM places ORDER BY name")]
 
 
-@app.post("/api/admin/places")
-def place_create(b: PlaceIn, _: str = Depends(require_admin)):
+@app.post("/api/committee/places")
+def place_create(b: PlaceIn, _: str = Depends(require_committee)):
     lat, lon = _parse_coords(b.coords)
     with db.get_conn() as conn:
         try:
@@ -702,8 +702,8 @@ def place_create(b: PlaceIn, _: str = Depends(require_admin)):
         return {"id": cur.lastrowid}
 
 
-@app.put("/api/admin/places/{place_id}")
-def place_update(place_id: int, b: PlaceIn, _: str = Depends(require_admin)):
+@app.put("/api/committee/places/{place_id}")
+def place_update(place_id: int, b: PlaceIn, _: str = Depends(require_committee)):
     lat, lon = _parse_coords(b.coords)
     with db.get_conn() as conn:
         try:
@@ -713,16 +713,16 @@ def place_update(place_id: int, b: PlaceIn, _: str = Depends(require_admin)):
         return {"ok": True}
 
 
-@app.delete("/api/admin/places/{place_id}")
-def place_delete(place_id: int, _: str = Depends(require_admin)):
+@app.delete("/api/committee/places/{place_id}")
+def place_delete(place_id: int, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         conn.execute("DELETE FROM places WHERE id=?", (place_id,))
         return {"ok": True}
 
 
 # ---------------------------------------------------------- subs reminders ----
-@app.get("/api/admin/subs-reminders")
-def subs_reminders(_: str = Depends(require_admin)):
+@app.get("/api/committee/subs-reminders")
+def subs_reminders(_: str = Depends(require_committee)):
     """Unpaid active members who need reminding, most urgent first.
 
     Tiers: blocked (scheduled in sessions they can't do because subs aren't paid) ->
@@ -793,8 +793,8 @@ class TemplateIn(BaseModel):
     template: str = Field(..., max_length=2000)
 
 
-@app.put("/api/admin/subs-reminders/template")
-def subs_template(b: TemplateIn, _: str = Depends(require_admin)):
+@app.put("/api/committee/subs-reminders/template")
+def subs_template(b: TemplateIn, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         db.set_setting(conn, "subs_reminder_template", b.template.strip() or db.DEFAULT_SETTINGS["subs_reminder_template"])
         return {"ok": True}
@@ -804,8 +804,8 @@ class RemindedIn(BaseModel):
     reminded: bool = True
 
 
-@app.post("/api/admin/members/{member_id}/reminded")
-def member_reminded(member_id: int, b: RemindedIn, _: str = Depends(require_admin)):
+@app.post("/api/committee/members/{member_id}/reminded")
+def member_reminded(member_id: int, b: RemindedIn, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         conn.execute("UPDATE members SET subs_reminded_at = CASE WHEN ? THEN datetime('now') ELSE '' END WHERE id = ?",
                      (int(b.reminded), member_id))
@@ -816,8 +816,8 @@ class PaidIn(BaseModel):
     plan: str  # "Single term" (current term) | "Full year" (current academic year)
 
 
-@app.post("/api/admin/members/{member_id}/paid")
-def member_paid(member_id: int, b: PaidIn, _: str = Depends(require_admin)):
+@app.post("/api/committee/members/{member_id}/paid")
+def member_paid(member_id: int, b: PaidIn, _: str = Depends(require_committee)):
     if b.plan not in ("Single term", "Full year"):
         raise HTTPException(400, "Plan must be Single term or Full year")
     with db.get_conn() as conn:
@@ -828,9 +828,9 @@ def member_paid(member_id: int, b: PaidIn, _: str = Depends(require_admin)):
         return {"ok": True}
 
 
-@app.get("/api/admin/members/{member_id}/phone")
-def member_phone(member_id: int, _: str = Depends(require_admin)):
-    """Reveal one member's full number (admin taps "Show")."""
+@app.get("/api/committee/members/{member_id}/phone")
+def member_phone(member_id: int, _: str = Depends(require_committee)):
+    """Reveal one member's full number (committee taps "Show")."""
     with db.get_conn() as conn:
         r = conn.execute("SELECT phone FROM members WHERE id = ?", (member_id,)).fetchone()
         if not r:
@@ -841,15 +841,15 @@ def member_phone(member_id: int, _: str = Depends(require_admin)):
         return {"phone": plain}
 
 
-@app.delete("/api/admin/members/{member_id}/phone")
-def member_phone_delete(member_id: int, _: str = Depends(require_admin)):
+@app.delete("/api/committee/members/{member_id}/phone")
+def member_phone_delete(member_id: int, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         conn.execute("UPDATE members SET phone = '', phone_updated_at = '' WHERE id = ?", (member_id,))
         return {"ok": True}
 
 
-@app.get("/api/admin/members.csv")
-def members_csv(include_phone: bool = False, _: str = Depends(require_admin)):
+@app.get("/api/committee/members.csv")
+def members_csv(include_phone: bool = False, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         rules = Rules(conn)
         buf = io.StringIO()
@@ -871,14 +871,14 @@ class CoachIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
 
 
-@app.get("/api/admin/coaches")
+@app.get("/api/committee/coaches")
 def coaches_list(role: str = Depends(require_member)):
     with db.get_conn() as conn:
         return [dict(r) for r in conn.execute("SELECT id, name FROM coaches ORDER BY name")]
 
 
-@app.post("/api/admin/coaches")
-def coach_create(c: CoachIn, _: str = Depends(require_admin)):
+@app.post("/api/committee/coaches")
+def coach_create(c: CoachIn, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         try:
             cur = conn.execute("INSERT INTO coaches(name) VALUES (?)", (c.name.strip(),))
@@ -887,22 +887,22 @@ def coach_create(c: CoachIn, _: str = Depends(require_admin)):
         return {"id": cur.lastrowid}
 
 
-@app.put("/api/admin/coaches/{coach_id}")
-def coach_update(coach_id: int, c: CoachIn, _: str = Depends(require_admin)):
+@app.put("/api/committee/coaches/{coach_id}")
+def coach_update(coach_id: int, c: CoachIn, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         conn.execute("UPDATE coaches SET name=? WHERE id=?", (c.name.strip(), coach_id))
         return {"ok": True}
 
 
-@app.delete("/api/admin/coaches/{coach_id}")
-def coach_delete(coach_id: int, _: str = Depends(require_admin)):
+@app.delete("/api/committee/coaches/{coach_id}")
+def coach_delete(coach_id: int, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         conn.execute("DELETE FROM coaches WHERE id=?", (coach_id,))
         return {"ok": True}
 
 
-@app.get("/api/admin/coaching-stats")
-def coaching_stats(_: str = Depends(require_admin)):
+@app.get("/api/committee/coaching-stats")
+def coaching_stats(_: str = Depends(require_committee)):
     """Sessions per coach per month over 12 months from the season start (substring match, like the sheet)."""
     with db.get_conn() as conn:
         s = db.get_settings(conn)
@@ -1033,20 +1033,20 @@ def _save_outing(conn, rules: Rules, oid: Optional[int], b: OutingIn) -> int:
     return oid
 
 
-@app.post("/api/admin/outings")
-def outing_create(b: OutingIn, _: str = Depends(require_admin)):
+@app.post("/api/committee/outings")
+def outing_create(b: OutingIn, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         return {"id": _save_outing(conn, Rules(conn), None, b)}
 
 
-@app.put("/api/admin/outings/{oid}")
-def outing_update(oid: int, b: OutingIn, _: str = Depends(require_admin)):
+@app.put("/api/committee/outings/{oid}")
+def outing_update(oid: int, b: OutingIn, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         return {"id": _save_outing(conn, Rules(conn), oid, b)}
 
 
-@app.delete("/api/admin/outings/{oid}")
-def outing_delete(oid: int, _: str = Depends(require_admin)):
+@app.delete("/api/committee/outings/{oid}")
+def outing_delete(oid: int, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         conn.execute("DELETE FROM outings WHERE id=?", (oid,))
         return {"ok": True}
@@ -1059,8 +1059,8 @@ class CandidatesIn(BaseModel):
     outing_id: Optional[int] = None
 
 
-@app.post("/api/admin/candidates")
-def candidates(b: CandidatesIn, _: str = Depends(require_admin)):
+@app.post("/api/committee/candidates")
+def candidates(b: CandidatesIn, _: str = Depends(require_committee)):
     """Eligibility of every member for a (possibly unsaved) outing — powers the seat picker."""
     with db.get_conn() as conn:
         rules = Rules(conn)
@@ -1104,8 +1104,8 @@ class WeekIn(BaseModel):
     published: bool = True
 
 
-@app.post("/api/admin/week/publish")
-def week_publish(b: WeekIn, _: str = Depends(require_admin)):
+@app.post("/api/committee/week/publish")
+def week_publish(b: WeekIn, _: str = Depends(require_committee)):
     ws = monday_of(date.fromisoformat(b.start))
     with db.get_conn() as conn:
         conn.execute("UPDATE outings SET published=? WHERE date BETWEEN ? AND ?",
@@ -1119,8 +1119,8 @@ class CopyWeekIn(BaseModel):
     include_crews: bool = False
 
 
-@app.post("/api/admin/week/copy")
-def week_copy(b: CopyWeekIn, _: str = Depends(require_admin)):
+@app.post("/api/committee/week/copy")
+def week_copy(b: CopyWeekIn, _: str = Depends(require_committee)):
     src, dst = monday_of(date.fromisoformat(b.source)), monday_of(date.fromisoformat(b.target))
     if src == dst:
         raise HTTPException(400, "Source and target week are the same")
@@ -1169,8 +1169,8 @@ class RiverCheckIn(BaseModel):
     outing_id: Optional[int] = None
 
 
-@app.post("/api/admin/river-check")
-def river_check(b: RiverCheckIn, _: str = Depends(require_admin)):
+@app.post("/api/committee/river-check")
+def river_check(b: RiverCheckIn, _: str = Depends(require_committee)):
     """River-rule warnings for an outing being edited (not saved yet)."""
     try:
         date.fromisoformat(b.date)
@@ -1197,8 +1197,8 @@ class RiverSettingsIn(BaseModel):
     peak_crews_before_8: int = Field(1, ge=1, le=5)
 
 
-@app.put("/api/admin/river-settings")
-def river_settings(b: RiverSettingsIn, _: str = Depends(require_admin)):
+@app.put("/api/committee/river-settings")
+def river_settings(b: RiverSettingsIn, _: str = Depends(require_committee)):
     for v in (b.term_start, b.peak_end):
         if v:
             try:
@@ -1214,8 +1214,8 @@ def river_settings(b: RiverSettingsIn, _: str = Depends(require_admin)):
     return {"ok": True}
 
 
-@app.post("/api/admin/river/refresh")
-def river_refresh(_: str = Depends(require_admin)):
+@app.post("/api/committee/river/refresh")
+def river_refresh(_: str = Depends(require_committee)):
     river.refresh_now(db)
     with db.get_conn() as conn:
         return river.current_flag(db.get_settings(conn))
@@ -1237,8 +1237,8 @@ class SettingsIn(BaseModel):
     swim_test_after: Optional[int] = Field(None, ge=0, le=50)   # None = keep current
 
 
-@app.get("/api/admin/settings")
-def settings_get(_: str = Depends(require_admin)):
+@app.get("/api/committee/settings")
+def settings_get(_: str = Depends(require_committee)):
     with db.get_conn() as conn:
         s = db.get_settings(conn)
         s["member_password_custom"] = bool(s.pop("member_password_hash", ""))
@@ -1252,8 +1252,8 @@ def settings_get(_: str = Depends(require_admin)):
         return s
 
 
-@app.put("/api/admin/settings")
-def settings_put(b: SettingsIn, _: str = Depends(require_admin)):
+@app.put("/api/committee/settings")
+def settings_put(b: SettingsIn, _: str = Depends(require_committee)):
     if b.current_term not in TERMS:
         raise HTTPException(400, "Bad term")
     for v in (b.subs_cutoff, b.today_override, b.season_start):
@@ -1277,22 +1277,22 @@ def settings_put(b: SettingsIn, _: str = Depends(require_admin)):
         if b.member_password:
             if len(b.member_password) < 6:
                 raise HTTPException(400, "Member password must be at least 6 characters")
-            if hmac.compare_digest(b.member_password.encode(), ADMIN_PASSWORD.encode()):
-                raise HTTPException(400, "Member password must differ from the admin password")
+            if hmac.compare_digest(b.member_password.encode(), COMMITTEE_PASSWORD.encode()):
+                raise HTTPException(400, "Rower password must differ from the committee password")
             db.set_setting(conn, "member_password_hash", _hash_pw(b.member_password))
         return {"ok": True}
 
 
-@app.post("/api/admin/settings/reset-member-password")
-def settings_reset_pw(_: str = Depends(require_admin)):
+@app.post("/api/committee/settings/reset-member-password")
+def settings_reset_pw(_: str = Depends(require_committee)):
     with db.get_conn() as conn:
         db.set_setting(conn, "member_password_hash", "")
         return {"ok": True}
 
 
-@app.post("/api/admin/import")
+@app.post("/api/committee/import")
 async def import_xlsx(file: UploadFile = File(...), include_schedule: bool = Form(False),
-                      _: str = Depends(require_admin)):
+                      _: str = Depends(require_committee)):
     data = await file.read()
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(400, "File too large")
@@ -1303,8 +1303,8 @@ async def import_xlsx(file: UploadFile = File(...), include_schedule: bool = For
             raise HTTPException(400, f"Could not read workbook: {e}")
 
 
-@app.get("/api/admin/backup")
-def backup(_: str = Depends(require_admin)):
+@app.get("/api/committee/backup")
+def backup(_: str = Depends(require_committee)):
     """Download a consistent snapshot of the SQLite database."""
     path = os.path.join(db.DATA_DIR, "backup.db")
     src = db.connect()

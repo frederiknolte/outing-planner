@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS issue_photos (             -- files live in DATA_DIR/
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Races: admins list them, members say whether they're available
+-- Races: the committee lists them, members say whether they're available
 CREATE TABLE IF NOT EXISTS races (
     id INTEGER PRIMARY KEY,
     title TEXT NOT NULL,
@@ -202,13 +202,13 @@ MIGRATIONS = {
     "outings": {"end_time": "TEXT NOT NULL DEFAULT ''"},
     "signup_slots": {"end_time": "TEXT NOT NULL DEFAULT ''"},
     "members": {
-        "phone": "TEXT NOT NULL DEFAULT ''",          # admin-only
+        "phone": "TEXT NOT NULL DEFAULT ''",          # committee-only
         "college": "TEXT NOT NULL DEFAULT ''",
         "side": "TEXT NOT NULL DEFAULT ''",
         "needs_review": "INTEGER NOT NULL DEFAULT 0",  # created via the sign-up form
         "cal_token": "TEXT NOT NULL DEFAULT ''",       # secret for the personal calendar feed
         "phone_updated_at": "TEXT NOT NULL DEFAULT ''",  # for automatic deletion of old numbers
-        "subs_reminded_at": "TEXT NOT NULL DEFAULT ''",  # when an admin last reminded them to pay subs
+        "subs_reminded_at": "TEXT NOT NULL DEFAULT ''",  # when the committee last reminded them to pay subs
     },
 }
 

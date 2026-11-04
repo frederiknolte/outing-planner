@@ -1,7 +1,7 @@
 """Boat issue tracker with photos.
 
 Anyone signed in can report a problem with a boat, add notes and attach photos.
-Admins change the status (open → in repair → waiting on parts → fixed / closed),
+The committee changes the status (open → in repair → waiting on parts → fixed / closed),
 edit or delete issues, and remove photos.
 
 Photos are compressed in the browser (resized to ~1600 px and re-encoded as JPEG,
@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from . import db
-from .auth import require_admin, require_member
+from .auth import require_committee, require_member
 
 router = APIRouter()
 
@@ -120,7 +120,7 @@ class IssueEdit(BaseModel):
 
 class UpdateIn(BaseModel):
     note: str = Field("", max_length=4000)
-    status: str = ""          # admins only; blank = no change
+    status: str = ""          # committee only; blank = no change
     author: str = Field("", max_length=80)
 
 
@@ -174,7 +174,7 @@ def issue_create(b: IssueIn, _: str = Depends(require_member)):
 
 
 @router.put("/api/issues/{issue_id}")
-def issue_edit(issue_id: int, b: IssueEdit, _: str = Depends(require_admin)):
+def issue_edit(issue_id: int, b: IssueEdit, _: str = Depends(require_committee)):
     if b.severity not in SEVERITIES:
         raise HTTPException(400, "Unknown severity")
     if not b.title.strip():
@@ -194,8 +194,8 @@ def issue_update(issue_id: int, b: UpdateIn, role: str = Depends(require_member)
     status = b.status or ""
     if status and status not in STATUSES:
         raise HTTPException(400, "Unknown status")
-    if status and role != "admin":
-        raise HTTPException(403, "Only admins can change the status")
+    if status and role != "committee":
+        raise HTTPException(403, "Only the committee can change the status")
     with db.get_conn() as conn:
         i = _issue_or_404(conn, issue_id)
         if status == i["status"]:
@@ -215,7 +215,7 @@ def issue_update(issue_id: int, b: UpdateIn, role: str = Depends(require_member)
 
 
 @router.delete("/api/issues/{issue_id}")
-def issue_delete(issue_id: int, _: str = Depends(require_admin)):
+def issue_delete(issue_id: int, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         names = [r[0] for r in conn.execute("SELECT filename FROM issue_photos WHERE issue_id = ?", (issue_id,))]
         conn.execute("DELETE FROM boat_issues WHERE id = ?", (issue_id,))
@@ -235,7 +235,7 @@ async def photo_upload(issue_id: int, request: Request, by: str = "", _: str = D
             raise HTTPException(400, f"At most {MAX_PHOTOS_PER_ISSUE} photos per issue")
         st = _storage(conn)
     if st["used"] >= st["limit"]:
-        raise HTTPException(507, "Photo storage is full. An admin can delete old photos or raise the limit in Settings")
+        raise HTTPException(507, "Photo storage is full. The committee can delete old photos or raise the limit in Settings")
 
     os.makedirs(PHOTO_DIR, exist_ok=True)
     tmp = _photo_path(f".upload-{secrets.token_hex(8)}")
@@ -256,7 +256,7 @@ async def photo_upload(issue_id: int, request: Request, by: str = "", _: str = D
         with db.get_conn() as conn:
             st = _storage(conn)
             if st["used"] + size > st["limit"]:
-                raise HTTPException(507, "Photo storage is full. An admin can delete old photos or raise the limit in Settings")
+                raise HTTPException(507, "Photo storage is full. The committee can delete old photos or raise the limit in Settings")
             os.replace(tmp, _photo_path(name))
             try:
                 cur = conn.execute("INSERT INTO issue_photos(issue_id, filename, size, uploaded_by) VALUES (?, ?, ?, ?)",
@@ -284,7 +284,7 @@ def photo_get(photo_id: int, _: str = Depends(require_member)):
 
 
 @router.delete("/api/issues/photos/{photo_id}")
-def photo_delete(photo_id: int, _: str = Depends(require_admin)):
+def photo_delete(photo_id: int, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         r = conn.execute("SELECT filename FROM issue_photos WHERE id = ?", (photo_id,)).fetchone()
         if not r:
@@ -294,14 +294,14 @@ def photo_delete(photo_id: int, _: str = Depends(require_admin)):
     return {"ok": True}
 
 
-@router.get("/api/admin/photo-storage")
-def storage_get(_: str = Depends(require_admin)):
+@router.get("/api/committee/photo-storage")
+def storage_get(_: str = Depends(require_committee)):
     with db.get_conn() as conn:
         return _storage(conn)
 
 
-@router.put("/api/admin/photo-storage")
-def storage_set(b: StorageIn, _: str = Depends(require_admin)):
+@router.put("/api/committee/photo-storage")
+def storage_set(b: StorageIn, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         db.set_setting(conn, "photo_storage_mb", str(b.photo_storage_mb))
         return _storage(conn)

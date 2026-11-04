@@ -1,6 +1,6 @@
 """Race sign-up.
 
-Admins create races (title, date, term, city, expected time slot, who should
+The committee creates races (title, date, term, city, expected time slot, who should
 enter, race type, notes and source links). Members then mark themselves as
 available, maybe, or not available for each race they're eligible for.
 """
@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from . import db
-from .auth import require_admin, require_member
+from .auth import require_committee, require_member
 from .logic import TERMS, effective_today
 
 router = APIRouter()
@@ -96,7 +96,7 @@ def _eligible(entry: str, category: str) -> bool:
 
 @router.get("/api/races")
 def races_list(me: Optional[int] = None, role: str = Depends(require_member)):
-    admin = role == "admin"
+    committee = role == "committee"
     with db.get_conn() as conn:
         today = effective_today(db.get_settings(conn)).isoformat()
         races = [dict(r) for r in conn.execute("SELECT * FROM races ORDER BY date, id")]
@@ -114,16 +114,16 @@ def races_list(me: Optional[int] = None, role: str = Depends(require_member)):
             race["past"] = race["date"] < today
             race["links"] = links.get(race["id"], [])
             race["counts"] = {k: sum(1 for x in rows if x["status"] == k) for k in STATUSES}
-            # Comments are admin-only (except your own, so the form can be prefilled).
+            # Comments are committee-only (except your own, so the form can be prefilled).
             race["responses"] = [
                 {"member_id": x["member_id"], "name": x["name"], "category": x["category"], "status": x["status"],
-                 **({"comment": x["comment"], "updated_at": x["updated_at"]} if admin or x["member_id"] == me else {})}
+                 **({"comment": x["comment"], "updated_at": x["updated_at"]} if committee or x["member_id"] == me else {})}
                 for x in rows]
         return {"races": races, "today": today, "terms": TERMS, "entry": ENTRY, "statuses": STATUSES}
 
 
-@router.post("/api/admin/races")
-def race_create(b: RaceIn, _: str = Depends(require_admin)):
+@router.post("/api/committee/races")
+def race_create(b: RaceIn, _: str = Depends(require_committee)):
     v = _validate(b)
     with db.get_conn() as conn:
         cur = conn.execute(
@@ -134,8 +134,8 @@ def race_create(b: RaceIn, _: str = Depends(require_admin)):
         return {"id": cur.lastrowid}
 
 
-@router.put("/api/admin/races/{race_id}")
-def race_update(race_id: int, b: RaceIn, _: str = Depends(require_admin)):
+@router.put("/api/committee/races/{race_id}")
+def race_update(race_id: int, b: RaceIn, _: str = Depends(require_committee)):
     v = _validate(b)
     with db.get_conn() as conn:
         cur = conn.execute(
@@ -148,21 +148,21 @@ def race_update(race_id: int, b: RaceIn, _: str = Depends(require_admin)):
         return {"ok": True}
 
 
-@router.delete("/api/admin/races/{race_id}")
-def race_delete(race_id: int, _: str = Depends(require_admin)):
+@router.delete("/api/committee/races/{race_id}")
+def race_delete(race_id: int, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         conn.execute("DELETE FROM races WHERE id = ?", (race_id,))
         return {"ok": True}
 
 
-def _check_can_respond(conn, race_id: int, member_id: int, admin: bool):
+def _check_can_respond(conn, race_id: int, member_id: int, committee: bool):
     race = conn.execute("SELECT * FROM races WHERE id = ?", (race_id,)).fetchone()
     if not race:
         raise HTTPException(404, "Race not found")
     m = conn.execute("SELECT id, category, active FROM members WHERE id = ?", (member_id,)).fetchone()
     if not m or not m["active"]:
         raise HTTPException(404, "Member not found")
-    if not admin:
+    if not committee:
         today = effective_today(db.get_settings(conn)).isoformat()
         if race["date"] < today:
             raise HTTPException(400, "This race has already happened")
@@ -178,7 +178,7 @@ def response_set(race_id: int, b: ResponseIn, role: str = Depends(require_member
     if b.status not in STATUSES:
         raise HTTPException(400, "Choose available, maybe or not available")
     with db.get_conn() as conn:
-        _check_can_respond(conn, race_id, b.member_id, role == "admin")
+        _check_can_respond(conn, race_id, b.member_id, role == "committee")
         conn.execute(
             """INSERT INTO race_responses(race_id, member_id, status, comment) VALUES (?, ?, ?, ?)
                ON CONFLICT(race_id, member_id) DO UPDATE SET status = excluded.status, comment = excluded.comment,
@@ -190,6 +190,6 @@ def response_set(race_id: int, b: ResponseIn, role: str = Depends(require_member
 @router.delete("/api/races/{race_id}/response/{member_id}")
 def response_clear(race_id: int, member_id: int, role: str = Depends(require_member)):
     with db.get_conn() as conn:
-        _check_can_respond(conn, race_id, member_id, role == "admin")
+        _check_can_respond(conn, race_id, member_id, role == "committee")
         conn.execute("DELETE FROM race_responses WHERE race_id = ? AND member_id = ?", (race_id, member_id))
         return {"ok": True}

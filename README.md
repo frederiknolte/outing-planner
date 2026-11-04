@@ -1,11 +1,11 @@
 # Reuben Boat Club — Outing Planner
 
-A web app for planning boat-club outings. Admins look after the boat park and the squad, and build each week's water and land sessions. Rowers see the published schedule, ask for subs, and take open seats.
+A web app for planning boat-club outings. The committee looks after the boat park and the squad, and build each week's water and land sessions. Rowers see the published schedule, ask for subs, and take open seats.
 
 ## Run it
 
 ```bash
-cp .env.example .env        # then set ADMIN_PASSWORD, MEMBER_PASSWORD and SECRET_KEY
+cp .env.example .env        # then set COMMITTEE_PASSWORD, MEMBER_PASSWORD and SECRET_KEY
 docker compose up -d --build
 ```
 
@@ -13,8 +13,8 @@ Then open http://localhost:8000. All data is stored in the host folder set by `D
 
 | Variable | Purpose |
 |---|---|
-| `ADMIN_PASSWORD` | Password for admins/coaches (full access). Required. |
-| `MEMBER_PASSWORD` | Password for rowers. Required, and must differ from the admin password. Admins can override it from **Settings** without redeploying. |
+| `COMMITTEE_PASSWORD` | Password for the committee (full access). Required. |
+| `MEMBER_PASSWORD` | Password for rowers. Required, and must differ from the committee password. The committee can override it from **Settings** without redeploying. |
 | `SECRET_KEY` | Signs session cookies. If unset, a key is generated and stored in `/data`. |
 | `COOKIE_SECURE` | Set to `1` when serving over HTTPS (recommended, e.g. behind Caddy/Traefik/nginx). |
 | `PUBLIC_URL` | Optional. The site's public address (e.g. `https://outings.example.org`), used in calendar-subscription links. Set it if those links show the wrong host behind your proxy. |
@@ -26,7 +26,7 @@ Then open http://localhost:8000. All data is stored in the host folder set by `D
 | `EGRESS_EXTRA_BLOCKED` | Extra address ranges to block, e.g. if your LAN uses non-private addresses. |
 | `TZ_NAME` | Club time zone (default `Europe/London`). Used to decide "today". |
 
-**First run:** sign in as admin, go to **Settings → Import from spreadsheet**, and upload `Rowing_Outings.xlsx`. This brings in the members, coaches and term settings. Then add your fleet under **Boat park**.
+**First run:** sign in with the committee password, go to **Settings → Import from spreadsheet**, and upload `Rowing_Outings.xlsx`. This brings in the members, coaches and term settings. Then add your fleet under **Boat park**.
 
 ## Hosting on Unraid (data in one folder)
 
@@ -36,7 +36,7 @@ Everything the app stores lives in one folder inside the container, `/data`:
 |---|---|
 | `outings.db` (+ `-wal`/`-shm` while running) | The SQLite database: members, boats, sessions, sign-ups, settings |
 | `.secret_key` | Signs login cookies, so people stay signed in across restarts |
-| `backup.db` | Written when an admin downloads a backup |
+| `backup.db` | Written when a committee member downloads a backup |
 | `photos/` | Photos attached to boat issues (not included in the database backup) |
 
 Map a host folder to `/data`, e.g. `/mnt/user/appdata/outing-planner`. When the container starts, it gives that folder to `PUID:PGID` (default `99:100`, Unraid's `nobody:users`) and runs the app as that user, so you don't need to set permissions yourself.
@@ -60,7 +60,7 @@ First build the image on the server (`docker build -t outing-planner:latest .` i
 - Repository: `outing-planner:latest` (or your registry image)
 - Port: container `8000` → host port of your choice
 - Path: container `/data` → host `/mnt/user/appdata/outing-planner`
-- Variables: `ADMIN_PASSWORD`, `MEMBER_PASSWORD`, `SECRET_KEY`, `PUID=99`, `PGID=100`, and `PUBLIC_URL` / `COOKIE_SECURE=1` if it's served over HTTPS
+- Variables: `COMMITTEE_PASSWORD`, `MEMBER_PASSWORD`, `SECRET_KEY`, `PUID=99`, `PGID=100`, and `PUBLIC_URL` / `COOKIE_SECURE=1` if it's served over HTTPS
 - Extra Parameters: `--cap-add=NET_ADMIN` (needed for the built-in egress firewall; see the Tailscale Funnel section below)
 
 **Backups**: back up the whole folder (it includes `photos/`). For a copy that's safe to take while the app is running, use **Settings → Data → Download database backup** in the app. If you copy `outings.db` by hand, stop the container first (or copy the `-wal` file along with it).
@@ -82,7 +82,7 @@ The goal: the site is public through Tailscale Funnel, but the container can't r
 | Port mappings | **none.** Remove the 8000 mapping; the site is only reached through Funnel |
 | Path | container `/data` → host `/mnt/user/appdata/outing-planner` |
 | Extra Parameters | `--cap-add=NET_ADMIN` |
-| Variables | `ADMIN_PASSWORD`, `MEMBER_PASSWORD`, `SECRET_KEY`, `PUID=99`, `PGID=100`, `COOKIE_SECURE=1`, `PUBLIC_URL=https://<hostname>.<your-tailnet>.ts.net` |
+| Variables | `COMMITTEE_PASSWORD`, `MEMBER_PASSWORD`, `SECRET_KEY`, `PUID=99`, `PGID=100`, `COOKIE_SECURE=1`, `PUBLIC_URL=https://<hostname>.<your-tailnet>.ts.net` |
 | Use Tailscale | Yes, with a hostname such as `outings`. Turn on **userspace networking** if offered, and **Funnel** to port `8000`. Don't use an exit node, and don't allow LAN access |
 
 - **Network type:** `host` would put the container's firewall rules on the *host*, and it could see the host's Tailscale interface. `none` has no internet, so Tailscale can't connect. `container:` makes the isolation depend on another container. `bridge` gives the container its own namespace behind the host's NAT.
@@ -99,43 +99,43 @@ Every private, LAN and Tailscale target should show `BLOCKED`, the internet chec
 
 ## Features
 
-- **Boat park**: admins add and edit boats (type, seats, coxed, rigging, notes). Each boat is *available*, *under repair* or *retired*. Retired boats are hidden from the session editor, and the editor warns when a boat under repair is picked or a boat is booked twice at the same time.
-- **Boat issues** (Boat park → *Issues*): anyone can report a problem with a boat (what's wrong, how serious: *Minor*, *Use with care* or *Do not use*, a description and photos), and anyone can add notes and more photos later. Admins move it through *Open → In repair → Waiting on parts → Fixed / Closed*, each status change recorded with an optional note, so every issue has a timeline of progress. Boat cards show how many issues are still open. Admins can edit or delete issues and delete photos.
+- **Boat park**: the committee adds and edits boats (type, seats, coxed, rigging, notes). Each boat is *available*, *under repair* or *retired*. Retired boats are hidden from the session editor, and the editor warns when a boat under repair is picked or a boat is booked twice at the same time.
+- **Boat issues** (Boat park → *Issues*): anyone can report a problem with a boat (what's wrong, how serious: *Minor*, *Use with care* or *Do not use*, a description and photos), and anyone can add notes and more photos later. The committee moves it through *Open → In repair → Waiting on parts → Fixed / Closed*, each status change recorded with an optional note, so every issue has a timeline of progress. Boat cards show how many issues are still open. The committee can edit or delete issues and delete photos.
   - **Photos are compressed on the phone**, not the server: before uploading, the browser resizes each photo to at most 1600 px and saves it as a JPEG (typically 200–500 KB). This also removes the photo's metadata, including its GPS position. The server never opens or decodes images. It writes the upload straight to disk and rejects anything over 2 MB or that isn't a JPEG, PNG or WebP. This keeps memory use flat.
   - **Storage limit**: photos may use 300 MB in total by default (**Settings → Data**, which also shows how much is used). Once it's full, new uploads are refused until photos are deleted or the limit is raised. Deleting an issue or a boat deletes its photo files too.
-- **Weekly schedule**: admins create water outings (pick a boat, which sets the seats) and land sessions. Seats are filled with a searchable picker that shows each person's eligibility. Admins can copy the previous week (with or without crews) and keep a week as a draft until they **Publish** it to rowers.
-- **Weekly sign-up** (replaces the Google Form): under **Sign-ups**, admins list the week's water, erg and tank sessions (or copy last week's), add an optional message, and open the form. Rowers give their name (picked from the list, or typed in full to add themselves as a new member flagged *New* for an admin to check), phone number, college (Reuben, Blackfriars, St Stephen's House or other), whether they're signing up as a rower, cox, both or bankrider/coach, how many rowing and coxing outings they want, side preference, the most outings they'll do that week, which sessions they're free for, and whether they can bankride. Sending the form again updates their answers. Admins see the responses, a people × sessions availability grid and per-session counts, and can export everything as CSV. **Create session** on a slot opens the outing editor already filled in, and the seat picker lists people who are free for that time first, with their side preference and how many outings they've been given out of their weekly maximum.
+- **Weekly schedule**: the committee creates water outings (pick a boat, which sets the seats) and land sessions. Seats are filled with a searchable picker that shows each person's eligibility. The committee can copy the previous week (with or without crews) and keep a week as a draft until they **Publish** it to rowers.
+- **Weekly sign-up** (replaces the Google Form): under **Sign-ups**, the committee lists the week's water, erg and tank sessions (or copy last week's), add an optional message, and open the form. Rowers give their name (picked from the list, or typed in full to add themselves as a new member flagged *New* for the committee to check), phone number, college (Reuben, Blackfriars, St Stephen's House or other), whether they're signing up as a rower, cox, both or bankrider/coach, how many rowing and coxing outings they want, side preference, the most outings they'll do that week, which sessions they're free for, and whether they can bankride. Sending the form again updates their answers. The committee sees the responses, a people × sessions availability grid and per-session counts, and can export everything as CSV. **Create session** on a slot opens the outing editor already filled in, and the seat picker lists people who are free for that time first, with their side preference and how many outings they've been given out of their weekly maximum.
 - **Crew picking**: the session editor shows a **Signed up** panel next to the seats, listing everyone who said they're free for that session, grouped as coxes, rowers and people who can bankride. Fewest outings this week come first, and you can see side preference and how many outings each person has been given out of their weekly maximum. Click a name to put them in the boat (coxes go to the cox seat, and rowers go to their side: stroke side is the even seats, bow side the odd ones). Click it again to take them out, or click a seat's name first to choose exactly where the next person goes. People who signed up for other sessions that week are listed underneath.
 - **Times and places**:
   - Sessions and sign-up slots have a start and an optional end time, entered with time pickers and stored as 24-hour `HH:MM`, so they always sort correctly. Older free-text times such as "6:30" or "7am-8.30am" are converted automatically on start-up.
   - **Settings → Places** gives a place name (e.g. "Boathouse") a full address and, optionally, coordinates (or a pasted Google Maps link). Sessions at that place show a maps link.
   - Calendar events carry the address plus a GPS pin, so a phone can start navigation straight from the event.
 - **Calendar subscription**: **Add to calendar** (on the schedule and on My outings) gives each person a private feed link for Apple Calendar, Google Calendar, Outlook or any app that can subscribe to a calendar. It contains every published outing they're in, plus sessions where they're named as coach or bankrider, with the start and end time, the place's full address (and GPS pin), boat, coach, crew list and notes. Without an end time, water outings default to 90 minutes and land sessions to 60. Calendar apps re-check the feed by themselves, so changes, subs and new sessions flow through. Outings with no recognisable time show as all-day events. A person can get a new link to stop an old one working. Google Calendar only refreshes subscribed calendars every few hours, and it needs the site to be reachable from the internet.
-- **Subs reminders** (Rowers → *Subs reminders*, admins only): every active member who hasn't paid and needs a reminder, most urgent first. The order is: already scheduled in sessions they can't do, then must pay before their next outing (free novice outings used, or senior past the cutoff), then must pay by the cutoff, then 1 free novice outing left. Counts include outings already scheduled. Each person has **Copy message** (the reminder text, editable under **Edit message**, with placeholders `{first_name}`, `{reason}`, `{term}`, `{year}` and `{cutoff}`; `{reason}` becomes e.g. “By the end of this week you will have reached 4 water outings”), **Text** (opens your phone's messaging app with the message filled in), **Mark reminded** (Copy and Text do this automatically, so you don't chase people twice) and **Mark paid** (Single term or Full year for the current term). On the Members list, *May row next* uses the same counting, so it always matches what the schedule shows.
+- **Subs reminders** (Rowers → *Subs reminders*, committee only): every active member who hasn't paid and needs a reminder, most urgent first. The order is: already scheduled in sessions they can't do, then must pay before their next outing (free novice outings used, or senior past the cutoff), then must pay by the cutoff, then 1 free novice outing left. Counts include outings already scheduled. Each person has **Copy message** (the reminder text, editable under **Edit message**, with placeholders `{first_name}`, `{reason}`, `{term}`, `{year}` and `{cutoff}`; `{reason}` becomes e.g. “By the end of this week you will have reached 4 water outings”), **Text** (opens your phone's messaging app with the message filled in), **Mark reminded** (Copy and Text do this automatically, so you don't chase people twice) and **Mark paid** (Single term or Full year for the current term). On the Members list, *May row next* uses the same counting, so it always matches what the schedule shows.
 - **Phone numbers are protected**:
   - **Rowers can't see them:** no page or data request available to rowers ever includes them.
   - **Encrypted in the database:** encrypted with `PHONE_KEY`, so the database file, Unraid backups and "Download database backup" contain no readable numbers. Deleted or replaced values are overwritten with zeros, so old copies don't linger in the file.
-  - **Masked for admins:** admin screens show only the last 3 digits. The full number is fetched when an admin taps **Show**.
-  - **Left out of exports by default:** CSV exports include numbers only if the admin ticks the box.
-  - **Deleted automatically:** a number is removed once its owner hasn't signed up for a set number of days (default 180, in **Settings → Phone numbers**). Admins can also delete one by hand.
+  - **Masked for the committee:** committee screens show only the last 3 digits. The full number is fetched when a committee member taps **Show**.
+  - **Left out of exports by default:** CSV exports include numbers only if the committee member ticks the box.
+  - **Deleted automatically:** a number is removed once its owner hasn't signed up for a set number of days (default 180, in **Settings → Phone numbers**). The committee can also delete one by hand.
   - **Configurable:** the form can make the number required, optional, or not ask for it at all.
-- **Open land sessions**: land sessions show how many spots are open, and any rower can tap **Join** to take one, or **Leave** to give theirs up. No sub is needed, because the spot simply reopens. Joining uses the normal eligibility rules (subs, already booked at that time) and stops when the session is full. The **Open spots** filter on the schedule lists land sessions with space. Water crews are still picked by admins.
+- **Open land sessions**: land sessions show how many spots are open, and any rower can tap **Join** to take one, or **Leave** to give theirs up. No sub is needed, because the spot simply reopens. Joining uses the normal eligibility rules (subs, already booked at that time) and stops when the session is full. The **Open spots** filter on the schedule lists land sessions with space. Water crews are still picked by the committee.
 - **Subs**: a rower taps **Can't go** on their own seat to post a request to the **Sub board**. Another rower takes it with **I'll sub**, and the seat and the outing count move to them. People who aren't eligible (no swim test, unpaid after the cutoff, double-booked, not a cox for the cox seat) are blocked from taking a seat.
-- **Races**: admins add races under **Races** with a title, date, term, city, expected time slot, who should enter (everyone, novices or seniors), race type (free text, with earlier types suggested), notes, and any number of source links (web links only). Rowers mark themselves **Available**, **Maybe** or **Not available** (tap again to clear) and can add a note, which only admins see. Everyone can see who has responded. Rowers can only respond to races they're eligible for, while the race is open and hasn't happened yet. Admins can close responses, and set or change anyone's response. Past races move to the **Past** tab.
-- **Rowers database**: Novice/Senior category, swim test, subs plan, cox status (N/X/S), and water/land outing totals. Totals are worked out from the schedule plus a baseline of earlier outings, so there's no weekly roll-over to do. Admins can export members as CSV.
+- **Races**: the committee adds races under **Races** with a title, date, term, city, expected time slot, who should enter (everyone, novices or seniors), race type (free text, with earlier types suggested), notes, and any number of source links (web links only). Rowers mark themselves **Available**, **Maybe** or **Not available** (tap again to clear) and can add a note, which only the committee sees. Everyone can see who has responded. Rowers can only respond to races they're eligible for, while the race is open and hasn't happened yet. The committee can close responses, and set or change anyone's response. Past races move to the **Past** tab.
+- **Rowers database**: Novice/Senior category, swim test, subs plan, cox status (N/X/S), and water/land outing totals. Totals are worked out from the schedule plus a baseline of earlier outings, so there's no weekly roll-over to do. The committee can export members as CSV.
 - **Coaches**: sessions per coach per month, matched by the coach's name appearing in the Coach/bankrider field.
 
 ### River rules and the OURCs flag (Isis)
 
 The club boats from its own boathouse on the Isis, so water outings are checked against the [OURCs river restrictions](https://ourcs.co.uk/information/river-restrictions/) and the current [Isis flag](https://ourcs.co.uk/information/flags/isis/). The code is in `app/river.py`.
 
-- **Flag**: fetched every hour from `https://ourcs.co.uk/api/flags/status/isis/` and stored in the database. If a fetch fails, the last known flag is kept and marked *may be out of date* after 3 hours. The schedule shows the flag and its notices to everyone, and **River rules** opens the full rules plus what each flag means. Admins can also use **Settings → River rules → Check flag now**. Set `RIVER_FLAG_FETCH=off` to turn fetching off.
+- **Flag**: fetched every hour from `https://ourcs.co.uk/api/flags/status/isis/` and stored in the database. If a fetch fails, the last known flag is kept and marked *may be out of date* after 3 hours. The schedule shows the flag and its notices to everyone, and **River rules** opens the full rules plus what each flag means. The committee can also use **Settings → River rules → Check flag now**. Set `RIVER_FLAG_FETCH=off` to turn fetching off.
 - **Checks** (shown on each outing card and live in the session editor; they never block saving):
   - Daylight: not earlier than 1 hour before sunrise or later than 1 hour after sunset (calculated for Oxford). Each day on the schedule shows the allowed window.
   - Sundays 08:00–13:00 and Wednesdays after 19:00: no crews.
   - Peak term (Thursday of 0th week to the end of the major regatta): crews per club before 08:00 on weekdays (Trinity: two 4s/8s), and the Trinity 17:00–19:00 restriction.
   - Flag, for today and future outings: Red/Black means no crews. Amber requires a senior cox (status S), a senior crew (at least 4 Senior rowers and no novices) and a bankrider (the Coach/bankrider field). Dark Blue rules out novice or unregistered coxes. Light Blue rules out unregistered coxes, and novice coxes are only allowed under its conditions (sunrise to sunset, senior crew, bankrider, registered 2 hours ahead). Grey means the club must do its own risk assessment.
-  - Rowers see only the problems that break a rule. Admins also see the things to check.
+  - Rowers see only the problems that break a rule. The committee also sees the things to check.
 - **Not checked**: the weekday 08:30–13:00 rule (Reuben is exempt), Godstow and St Edward's rafts, regatta-day restrictions, and term-based experience (the app only knows Novice/Senior).
 - **Settings → River rules**: the start of Full Term (Sunday of 1st week), when the major regatta ends (blank = end of 8th week), and how many crews may be out at once before 08:00 (2 with an Extra Slot).
 
@@ -149,14 +149,14 @@ The club boats from its own boathouse on the Isis, so water outings are checked 
 
 ## Notes
 
-- **Menu**: six main pages (Schedule, Sign up, Races, My outings, Rowers, Boat park), the same for rowers and admins. Related pages are tabs under them: *Week / Sub board*, *My outings / Leaderboard*, *Members / Subs reminders / Coaches* (the last two for admins) and *Boats / Issues*. Admins open **Settings** from the gear icon next to their name (on phones, at the bottom of the menu). Old links such as `#/subs` or `#/stats` still work.
-- The shared passwords decide whether someone is an admin or a rower. Rowers pick their own name ("Who are you?"), and the app remembers it on that device. There are no individual accounts, so a rower could pick someone else's name. That's normal for a shared-password club tool.
-- Rowers never see payment or swim-test status. Only admins do.
+- **Menu**: six main pages (Schedule, Sign up, Races, My outings, Rowers, Boat park), the same for rowers and the committee. Related pages are tabs under them: *Week / Sub board*, *My outings / Leaderboard*, *Members / Subs reminders / Coaches* (the last two for the committee) and *Boats / Issues*. The committee opens **Settings** from the gear icon next to their name (on phones, at the bottom of the menu). Old links such as `#/subs` or `#/stats` still work.
+- The shared passwords decide whether someone is on the committee or a rower. Rowers pick their own name ("Who are you?"), and the app remembers it on that device. There are no individual accounts, so a rower could pick someone else's name. That's normal for a shared-password club tool.
+- Rowers never see payment or swim-test status. Only the committee does.
 - Back up the database from **Settings → Data**, or copy the volume.
 
 ## Local development
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-ADMIN_PASSWORD=admin123 MEMBER_PASSWORD=rower123 DATA_DIR=./data .venv/bin/uvicorn app.main:app --reload
+COMMITTEE_PASSWORD=committee123 MEMBER_PASSWORD=rower123 DATA_DIR=./data .venv/bin/uvicorn app.main:app --reload
 ```

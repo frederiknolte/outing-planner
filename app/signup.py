@@ -1,12 +1,12 @@
 """Weekly availability sign-up (replaces the club's old Google Form).
 
-Admins define the bookable slots for a week (water, erg or tank sessions) and
+The committee defines the bookable slots for a week (water, erg or tank sessions) and
 open the form. Rowers say who they are (an existing member, or a new name which
-creates a member flagged for admin review), plus phone, college, role, how many
+creates a member flagged for committee review), plus phone, college, role, how many
 outings they want, side preference, weekly maximum, which slots they're free
 for, and whether they can bankride.
 
-Phone numbers are admin-only: no non-admin endpoint ever returns them.
+Phone numbers are committee-only: no rower-facing endpoint ever returns them.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from . import db, privacy
-from .auth import require_admin, require_member
+from .auth import require_committee, require_member
 from .logic import effective_today, maps_url, monday_of
 from .timeutil import normalize as norm_time, to_minutes
 
@@ -178,7 +178,7 @@ def signup_submit(b: SignupIn, role: str = Depends(require_member)):
         if phone and sum(c.isdigit() for c in phone) < 7:
             raise HTTPException(400, "That phone number looks too short")
         w = _week_row(conn, ws)
-        if not w["open"] and role != "admin":
+        if not w["open"] and role != "committee":
             raise HTTPException(400, "Sign-ups for this week are closed")
         valid_slots = {s["id"] for s in _slots(conn, ws)}
         slot_ids = sorted(set(b.slot_ids))
@@ -237,9 +237,9 @@ def signup_submit(b: SignupIn, role: str = Depends(require_member)):
                 "updated": bool(existing)}
 
 
-# -------------------------------------------------------------- admin -----
-@router.get("/api/admin/signup/{week_start}")
-def signup_admin(week_start: str, _: str = Depends(require_admin)):
+# ---------------------------------------------------------- committee -----
+@router.get("/api/committee/signup/{week_start}")
+def signup_committee(week_start: str, _: str = Depends(require_committee)):
     ws = _monday(week_start)
     with db.get_conn() as conn:
         w = _week_row(conn, ws)
@@ -280,8 +280,8 @@ class WeekSettingsIn(BaseModel):
     note: str = Field("", max_length=500)
 
 
-@router.put("/api/admin/signup/{week_start}")
-def signup_week_update(week_start: str, b: WeekSettingsIn, _: str = Depends(require_admin)):
+@router.put("/api/committee/signup/{week_start}")
+def signup_week_update(week_start: str, b: WeekSettingsIn, _: str = Depends(require_committee)):
     ws = _monday(week_start)
     with db.get_conn() as conn:
         conn.execute(
@@ -312,8 +312,8 @@ def _slot_validate(b: SlotIn) -> str:
     return _monday(b.date)
 
 
-@router.post("/api/admin/signup/slots")
-def slot_create(b: SlotIn, _: str = Depends(require_admin)):
+@router.post("/api/committee/signup/slots")
+def slot_create(b: SlotIn, _: str = Depends(require_committee)):
     ws = _slot_validate(b)
     with db.get_conn() as conn:
         cur = conn.execute("INSERT INTO signup_slots(week_start, date, time, end_time, kind, location, note) VALUES (?,?,?,?,?,?,?)",
@@ -321,8 +321,8 @@ def slot_create(b: SlotIn, _: str = Depends(require_admin)):
         return {"id": cur.lastrowid}
 
 
-@router.put("/api/admin/signup/slots/{slot_id}")
-def slot_update(slot_id: int, b: SlotIn, _: str = Depends(require_admin)):
+@router.put("/api/committee/signup/slots/{slot_id}")
+def slot_update(slot_id: int, b: SlotIn, _: str = Depends(require_committee)):
     ws = _slot_validate(b)
     with db.get_conn() as conn:
         conn.execute("UPDATE signup_slots SET week_start=?, date=?, time=?, end_time=?, kind=?, location=?, note=? WHERE id=?",
@@ -330,8 +330,8 @@ def slot_update(slot_id: int, b: SlotIn, _: str = Depends(require_admin)):
         return {"ok": True}
 
 
-@router.delete("/api/admin/signup/slots/{slot_id}")
-def slot_delete(slot_id: int, _: str = Depends(require_admin)):
+@router.delete("/api/committee/signup/slots/{slot_id}")
+def slot_delete(slot_id: int, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         conn.execute("DELETE FROM signup_slots WHERE id = ?", (slot_id,))
         return {"ok": True}
@@ -341,8 +341,8 @@ class CopySlotsIn(BaseModel):
     source: str
 
 
-@router.post("/api/admin/signup/{week_start}/copy-slots")
-def slots_copy(week_start: str, b: CopySlotsIn, _: str = Depends(require_admin)):
+@router.post("/api/committee/signup/{week_start}/copy-slots")
+def slots_copy(week_start: str, b: CopySlotsIn, _: str = Depends(require_committee)):
     ws, src = _monday(week_start), _monday(b.source)
     if ws == src:
         raise HTTPException(400, "Source and target week are the same")
@@ -357,16 +357,16 @@ def slots_copy(week_start: str, b: CopySlotsIn, _: str = Depends(require_admin))
         return {"copied": n}
 
 
-@router.delete("/api/admin/signup/responses/{signup_id}")
-def response_delete(signup_id: int, _: str = Depends(require_admin)):
+@router.delete("/api/committee/signup/responses/{signup_id}")
+def response_delete(signup_id: int, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         conn.execute("DELETE FROM signups WHERE id = ?", (signup_id,))
         return {"ok": True}
 
 
-@router.get("/api/admin/signup/{week_start}/responses.csv")
-def responses_csv(week_start: str, include_phone: bool = False, _: str = Depends(require_admin)):
-    data = signup_admin(week_start)
+@router.get("/api/committee/signup/{week_start}/responses.csv")
+def responses_csv(week_start: str, include_phone: bool = False, _: str = Depends(require_committee)):
+    data = signup_committee(week_start)
     phones = {}
     if include_phone:
         with db.get_conn() as conn:

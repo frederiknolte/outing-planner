@@ -56,7 +56,7 @@ const S = {
 };
 const setMe = (id) => { S.me = id; try { id ? localStorage.setItem("op_me", String(id)) : localStorage.removeItem("op_me"); } catch {} };
 const meName = () => S.boot?.members.find((m) => m.id === S.me)?.name;
-const isAdmin = () => S.role === "admin";
+const isCommittee = () => S.role === "committee";
 
 async function api(path, opts = {}) {
   const init = { method: opts.method || "GET", headers: {}, credentials: "same-origin" };
@@ -167,7 +167,7 @@ function renderLogin() {
       <label class="field"><span>Password</span><input class="input" type="password" name="password" autocomplete="current-password" required autofocus></label>
       <div class="err" id="login-err"></div>
       <button class="btn primary" type="submit">Sign in</button>
-      <p class="faint small" style="margin:4px 0 0;text-align:center">Rowers and coaches use different passwords.</p>
+      <p class="faint small" style="margin:4px 0 0;text-align:center">Rowers and the committee use different passwords.</p>
     </form></div><div class="login-foot">Reuben College · Oxford</div></div>`;
   $("#login-form").onsubmit = async (e) => {
     e.preventDefault();
@@ -186,19 +186,19 @@ function renderLogin() {
 const ROUTES = [
   { id: "schedule", label: "Schedule", tab: "Week", icon: I.calendar },
   { id: "subs", label: "Sub board", parent: "schedule", icon: I.swap, count: "subs" },
-  { id: "signup", label: "Sign up", adminLabel: "Sign-ups", icon: I.calendar },
+  { id: "signup", label: "Sign up", committeeLabel: "Sign-ups", icon: I.calendar },
   { id: "races", label: "Races", icon: I.flag },
   { id: "me", label: "My outings", icon: I.user },
   { id: "stats", label: "Leaderboard", parent: "me", icon: I.trophy },
   { id: "rowers", label: "Rowers", tab: "Members", icon: I.user },
-  { id: "reminders", label: "Subs reminders", parent: "rowers", icon: I.user, admin: true, count: "reminders" },
-  { id: "coaches", label: "Coaches", parent: "rowers", icon: I.whistle, admin: true },
+  { id: "reminders", label: "Subs reminders", parent: "rowers", icon: I.user, committee: true, count: "reminders" },
+  { id: "coaches", label: "Coaches", parent: "rowers", icon: I.whistle, committee: true },
   { id: "boats", label: "Boat park", tab: "Boats", icon: I.boat },
   { id: "issues", label: "Issues", parent: "boats", icon: I.alert, count: "issues" },
-  { id: "settings", label: "Settings", icon: I.gear, admin: true, gear: true },
+  { id: "settings", label: "Settings", icon: I.gear, committee: true, gear: true },
 ];
 S.counts = {};
-const routeAllowed = (r) => !r.admin || isAdmin();
+const routeAllowed = (r) => !r.committee || isCommittee();
 const topOf = (r) => (r.parent ? ROUTES.find((x) => x.id === r.parent) : r);
 const countBadge = (key, cls = "count") => `<span class="${cls}" data-count="${key}"${S.counts[key] ? "" : " hidden"}>${S.counts[key] || ""}</span>`;
 /* Update a badge everywhere it appears (menu, phone menu button, tabs) without re-rendering the page. */
@@ -210,7 +210,7 @@ function setCount(key, n) {
 function go(id) { if (location.hash !== `#/${id}`) history.pushState(null, "", `#/${id}`); return route(); }
 const rerender = () => (S.page ? S.page() : route());
 
-const routeLabel = (r) => (isAdmin() && r.adminLabel) || r.label;
+const routeLabel = (r) => (isCommittee() && r.committeeLabel) || r.label;
 function setNavOpen(open) {
   const bar = $(".topbar"), t = $("#nav-toggle");
   if (!bar || !t) return;
@@ -235,10 +235,10 @@ function shell(active) {
     <a class="brand" href="#/schedule" style="color:inherit"><img class="brand-mark" src="/static/crest.png" alt=""><div>${esc(S.boot.club_name || "Reuben Boat Club")}<small>Outing planner · Oxford</small></div></a>
     <button class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="main-nav"><span class="nav-ic">${cur.icon}</span><span class="nav-cur">${esc(routeLabel(cur))}</span>${countBadge("subs")}<span class="chev">${I.down}</span></button>
     <nav class="nav" id="main-nav">${routes.map((r) => `<a href="#/${r.id}" class="${r.id === top.id ? "active" : ""}"${r.id === top.id ? ` aria-current="page"` : ""}><span class="nav-ic">${r.icon}</span><span class="nav-l">${esc(routeLabel(r))}</span>${kidCount(r)}</a>`).join("")}
-      ${isAdmin() ? `<a href="#/settings" class="nav-settings ${active === "settings" ? "active" : ""}"><span class="nav-ic">${I.gear}</span><span class="nav-l">Settings</span></a>` : ""}</nav>
+      ${isCommittee() ? `<a href="#/settings" class="nav-settings ${active === "settings" ? "active" : ""}"><span class="nav-ic">${I.gear}</span><span class="nav-l">Settings</span></a>` : ""}</nav>
     <div class="top-actions">
-      ${isAdmin() ? `<span class="role-badge">Admin</span>` : ""}
-      ${isAdmin() ? `<a class="btn ghost icon top-gear ${active === "settings" ? "on" : ""}" href="#/settings" title="Settings" aria-label="Settings">${I.gear}</a>` : ""}
+      ${isCommittee() ? `<span class="role-badge">Committee</span>` : ""}
+      ${isCommittee() ? `<a class="btn ghost icon top-gear ${active === "settings" ? "on" : ""}" href="#/settings" title="Settings" aria-label="Settings">${I.gear}</a>` : ""}
       <button class="me-chip" id="me-chip" title="Choose who you are">${name ? `<span class="avatar">${esc(initials(name))}</span><span class="n">${esc(name)}</span>` : `<span class="avatar" style="background:var(--surface-3);color:var(--text-3)">?</span><span class="n">Who are you?</span>`}</button>
       <button class="btn ghost icon" id="logout" title="Sign out">${I.logout}</button>
     </div>
@@ -264,7 +264,7 @@ function pickIdentity(after) {
         const q = $("#pi-q", m).value.trim().toLowerCase();
         $("#pi-list", m).innerHTML = members.filter((x) => !q || x.name.toLowerCase().includes(q)).map((x) =>
           `<button data-id="${x.id}"><span>${esc(x.name)}</span><span class="chip ${x.category === "Novice" ? "accent" : ""}">${esc(x.category)}</span></button>`).join("")
-          || `<div class="faint" style="padding:10px">No one found — ask an admin to add you.</div>`;
+          || `<div class="faint" style="padding:10px">No one found — ask a committee member to add you.</div>`;
         $$("#pi-list button", m).forEach((b) => b.onclick = () => { setMe(+b.dataset.id); close(); toast(`Hi, ${meName().split(" ")[0]}!`); after ? after() : route(); });
       };
       $("#pi-q", m).oninput = draw; draw();
@@ -281,7 +281,7 @@ function seatRow(o, s) {
   const mine = m && m.id === S.me;
   const cls = ["seat"];
   if (!m) cls.push("open");
-  if (m && isAdmin() && s.eligibility && !s.eligibility.ok) cls.push("bad");
+  if (m && isCommittee() && s.eligibility && !s.eligibility.ok) cls.push("bad");
   if (mine) cls.push("me");
   if (s.sub_request) cls.push("subreq");
   let tag = "";
@@ -292,7 +292,7 @@ function seatRow(o, s) {
   // Your own seat always offers "Can't go" — including a seat you took as a sub.
   else if (mine && !o.past) tag = `<span class="tags">${subTag}<button class="tag ok" data-act="reqsub" data-o="${o.id}" title="Can't make it? Request a sub">Can't go</button></span>`;
   else tag = subTag;
-  const title = m && isAdmin() && s.eligibility ? (s.eligibility.reasons.join(", ") || s.eligibility.note || "") : "";
+  const title = m && isCommittee() && s.eligibility ? (s.eligibility.reasons.join(", ") || s.eligibility.note || "") : "";
   return `<div class="${cls.join(" ")}" title="${esc(title)}"><span class="sl">${esc(({ Stroke: "S", Bow: "B", Sculler: "1x" })[s.label] || s.label)}</span><span class="sn">${m ? esc(m.name) : "Open"}</span>${tag}</div>`;
 }
 
@@ -367,13 +367,13 @@ async function riverModal() {
 }
 
 function outingCard(o) {
-  const admin = isAdmin();
+  const committee = isCommittee();
   const kindChip = o.kind === "water" ? `<span class="chip water">${I.water}Water</span>` : `<span class="chip land">${I.land}Land</span>`;
   const full = o.spots === 0;
   const coxChip = o.cox_check && o.cox_check !== o.spots_text ? `<span class="chip ${o.cox_check === "Bankrider needed" ? "bad" : o.cox_check.startsWith("Cox needed") || o.cox_check === "Cox status not set" ? "warn" : "ok"}">${esc(o.cox_check)}</span>` : "";
-  return `<article class="card outing ${o.kind} ${o.published ? "" : "draft"} ${o.past ? "past" : ""} ${admin ? "clickable" : ""}" data-oid="${o.id}">
+  return `<article class="card outing ${o.kind} ${o.published ? "" : "draft"} ${o.past ? "past" : ""} ${committee ? "clickable" : ""}" data-oid="${o.id}">
     <div class="o-top"><div>${o.time ? `<div class="o-time tnum">${esc(tRange(o))}</div><div class="o-title">${esc(o.title || (o.kind === "water" ? "Water outing" : "Land training"))}</div>` : `<div class="o-time">${esc(o.title || (o.kind === "water" ? "Water outing" : "Land training"))}</div><div class="o-title faint small">Time TBC</div>`}</div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${kindChip}${admin && !o.published ? `<span class="chip">Draft</span>` : ""}</div></div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${kindChip}${committee && !o.published ? `<span class="chip">Draft</span>` : ""}</div></div>
     <div class="o-sub">
       ${o.boat ? `<span>${I.boat}${esc(o.boat.name)} <span class="faint">${esc(o.boat.type)}</span></span>` : o.kind === "water" ? `<span class="faint">${I.boat}${o.capacity}${o.coxed ? "+" : ""} · no boat set</span>` : ""}
       ${o.location ? (o.maps_url ? `<a href="${esc(o.maps_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open in maps">${I.pin}${esc(o.location)}</a>` : `<span>${I.pin}${esc(o.location)}</span>`) : ""}
@@ -382,18 +382,18 @@ function outingCard(o) {
     ${o.kind === "land" ? landSpots(o) : `<div class="seats">${o.seats.map((s) => seatRow(o, s)).join("")}</div>
     <div class="o-foot"><span class="chip ${full ? "ok" : "warn"}">${full ? I.check : ""}${esc(o.spots_text)}</span>${coxChip}</div>`}
     ${o.notes ? `<div class="small muted" style="margin-top:6px">${esc(o.notes)}</div>` : ""}
-    ${admin && o.warnings.length ? `<div class="warnings">${o.warnings.map((w) => `<div>${I.alert}<span>${esc(w)}</span></div>`).join("")}</div>` : ""}
-    ${riverList((o.river || []).filter((r) => !o.past && (admin || r.level === "stop")))}
+    ${committee && o.warnings.length ? `<div class="warnings">${o.warnings.map((w) => `<div>${I.alert}<span>${esc(w)}</span></div>`).join("")}</div>` : ""}
+    ${riverList((o.river || []).filter((r) => !o.past && (committee || r.level === "stop")))}
   </article>`;
 }
 
 async function pageSchedule() {
-  if (!S.week) S.week = isAdmin() ? addDays(S.boot.this_week, 0) : S.boot.this_week;
+  if (!S.week) S.week = isCommittee() ? addDays(S.boot.this_week, 0) : S.boot.this_week;
   const main = $("#main");
   let data;
   try { data = await api(`/api/week?start=${S.week}`); } catch (e) { return fail(e); }
   S.weekData = data;
-  const admin = isAdmin();
+  const committee = isCommittee();
   const end = addDays(data.start, 6);
   const isThis = data.start === S.boot.this_week;
   const pubState = data.total === 0 ? "" : data.published === data.total
@@ -405,7 +405,7 @@ async function pageSchedule() {
   main.innerHTML = `
     <div class="page-head">
       <div><h1>${isThis ? "This week" : data.start > S.boot.this_week ? (addDays(S.boot.this_week, 7) === data.start ? "Next week" : "Upcoming week") : "Past week"}</h1>
-        <p>${fmtShort(data.start)} – ${fmtShort(end)} ${pd(end).getUTCFullYear()} · ${S.boot.settings.current_term} ${esc(S.boot.settings.academic_year)} ${admin && pubState ? "&nbsp;" + pubState : ""}</p></div>
+        <p>${fmtShort(data.start)} – ${fmtShort(end)} ${pd(end).getUTCFullYear()} · ${S.boot.settings.current_term} ${esc(S.boot.settings.academic_year)} ${committee && pubState ? "&nbsp;" + pubState : ""}</p></div>
       <div class="toolbar">
         <div class="weekbar">
           <button class="btn icon" id="wk-prev" title="Previous week">${I.left}</button>
@@ -413,7 +413,7 @@ async function pageSchedule() {
           <button class="btn icon" id="wk-next" title="Next week">${I.right}</button>
         </div>
         <button class="btn" id="wk-cal" title="Add your outings to your phone's calendar">${I.calendar}Add to calendar</button>
-        ${admin ? `
+        ${committee ? `
           <button class="btn" id="wk-copy">${I.copy}Copy last week</button>
           ${data.total ? (data.published === data.total ? `<button class="btn" id="wk-unpub">${I.eye}Unpublish</button>` : `<button class="btn primary" id="wk-pub">${I.send}Publish week</button>`) : ""}
         ` : ""}
@@ -424,20 +424,20 @@ async function pageSchedule() {
       <div class="seg" id="flt">
         ${[["all", "All"], ["water", "Water"], ["land", "Land"], ["open", "Open spots"], ["mine", `Mine${S.me ? ` (${myCount})` : ""}`], ["subs", "Needs sub"]].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? "on" : ""}">${l}</button>`).join("")}
       </div>
-      ${admin ? `<div style="margin-left:auto" class="toolbar"><button class="btn" data-new="land">${I.plus}Land session</button><button class="btn primary" data-new="water">${I.plus}Water outing</button></div>` : ""}
+      ${committee ? `<div style="margin-left:auto" class="toolbar"><button class="btn" data-new="land">${I.plus}Land session</button><button class="btn primary" data-new="water">${I.plus}Water outing</button></div>` : ""}
     </div>
-    ${!admin && data.outings.length === 0 ? `<div class="card empty">${I.calendar}<h3>Nothing published yet</h3><p>The schedule for this week hasn't been released. Check back soon.</p></div>` : `
+    ${!committee && data.outings.length === 0 ? `<div class="card empty">${I.calendar}<h3>Nothing published yet</h3><p>The schedule for this week hasn't been released. Check back soon.</p></div>` : `
     <div class="days">${data.days.map((d) => {
       const list = outs.filter((o) => o.date === d);
       return `<section class="day ${d === data.today ? "today" : ""}"><div class="day-head"><b>${DAY[dow(d)]}</b><span>${d === data.today ? "Today · " : ""}${fmtShort(d)}</span></div>
         ${data.river && data.river.days[d] ? (() => { const x = data.river.days[d]; return `<div class="day-sun" title="Sunrise ${x.sunrise} · sunset ${x.sunset}. Rowing allowed from 1 hour before sunrise to 1 hour after sunset.">On the water ${x.first}–${x.last}</div>`; })() : ""}
-        <div class="day-body">${list.map(outingCard).join("") || (admin ? `<div class="day-empty">No sessions<br><button class="btn sm" data-new="water" data-date="${d}">${I.plus}Add</button></div>` : `<div class="day-empty">Rest day</div>`)}</div></section>`;
+        <div class="day-body">${list.map(outingCard).join("") || (committee ? `<div class="day-empty">No sessions<br><button class="btn sm" data-new="water" data-date="${d}">${I.plus}Add</button></div>` : `<div class="day-empty">Rest day</div>`)}</div></section>`;
     }).join("")}</div>`}
     <div class="legend">
       <span><i class="sw" style="background:var(--water)"></i>Water</span><span><i class="sw" style="background:var(--land)"></i>Land</span>
       <span><i class="sw" style="background:var(--accent-soft);border:1px solid var(--accent)"></i>You</span>
       <span><i class="sw" style="background:var(--warn)"></i>Sub needed — tap to take the seat</span>
-      ${admin ? `<span><i class="sw" style="background:var(--bad)"></i>Ineligible (no subs after cutoff / no swim test)</span><span><i class="sw" style="background:repeating-linear-gradient(135deg,var(--surface),var(--surface) 3px,var(--surface-3) 3px,var(--surface-3) 6px);border:1px solid var(--border)"></i>Draft</span>` : ""}
+      ${committee ? `<span><i class="sw" style="background:var(--bad)"></i>Ineligible (no subs after cutoff / no swim test)</span><span><i class="sw" style="background:repeating-linear-gradient(135deg,var(--surface),var(--surface) 3px,var(--surface-3) 3px,var(--surface-3) 6px);border:1px solid var(--border)"></i>Draft</span>` : ""}
     </div>`;
 
   $("#wk-prev").onclick = () => { S.week = addDays(data.start, -7); pageSchedule(); };
@@ -449,14 +449,14 @@ async function pageSchedule() {
     if (b.dataset.f === "mine" && !S.me) return pickIdentity(() => { S.filter = "mine"; route(); });
     S.filter = b.dataset.f; pageSchedule();
   });
-  if (admin) {
+  if (committee) {
     $$("[data-new]").forEach((b) => b.onclick = () => editOuting(null, { kind: b.dataset.new, date: b.dataset.date || data.days.find((d) => d >= data.today) || data.start }));
     const pub = $("#wk-pub"), unpub = $("#wk-unpub");
-    if (pub) pub.onclick = async () => { if (await confirmBox("Publish this week?", "All sessions for this week become visible to rowers.", "Publish")) { await api("/api/admin/week/publish", { method: "POST", body: { start: data.start, published: true } }).catch(fail); toast("Week published"); pageSchedule(); } };
-    if (unpub) unpub.onclick = async () => { await api("/api/admin/week/publish", { method: "POST", body: { start: data.start, published: false } }).catch(fail); toast("Week set back to draft"); pageSchedule(); };
+    if (pub) pub.onclick = async () => { if (await confirmBox("Publish this week?", "All sessions for this week become visible to rowers.", "Publish")) { await api("/api/committee/week/publish", { method: "POST", body: { start: data.start, published: true } }).catch(fail); toast("Week published"); pageSchedule(); } };
+    if (unpub) unpub.onclick = async () => { await api("/api/committee/week/publish", { method: "POST", body: { start: data.start, published: false } }).catch(fail); toast("Week set back to draft"); pageSchedule(); };
     $("#wk-copy").onclick = () => copyWeek(data.start);
   }
-  if (admin && S.pendingNew) { const d = S.pendingNew; S.pendingNew = null; editOuting(null, d); }
+  if (committee && S.pendingNew) { const d = S.pendingNew; S.pendingNew = null; editOuting(null, d); }
   $$(".outing").forEach((card) => card.addEventListener("click", (e) => {
     const t = e.target.closest("[data-act]");
     const o = data.outings.find((x) => x.id === +card.dataset.oid);
@@ -467,7 +467,7 @@ async function pageSchedule() {
       if (t.dataset.act === "join") return joinLand(o);
       if (t.dataset.act === "leave") return leaveLand(o);
     }
-    if (admin) editOuting(o);
+    if (committee) editOuting(o);
   }));
 }
 
@@ -481,7 +481,7 @@ function copyWeek(target) {
     onMount: (m, close) => {
       $("#cw-go", m).onclick = async () => {
         try {
-          const r = await api("/api/admin/week/copy", { method: "POST", body: { source: src, target, include_crews: $("#cw-crews", m).checked } });
+          const r = await api("/api/committee/week/copy", { method: "POST", body: { source: src, target, include_crews: $("#cw-crews", m).checked } });
           close(); toast(`Copied ${r.copied} session${r.copied === 1 ? "" : "s"}`); pageSchedule();
         } catch (e) { fail(e); }
       };
@@ -491,7 +491,7 @@ function copyWeek(target) {
 
 // ------------------------------------------------------- outing editor ----
 async function editOuting(o, defaults = {}) {
-  const [boatsRes, coaches] = await Promise.all([api("/api/admin/boats"), api("/api/admin/coaches"), loadPlaces(true)]).catch((e) => { fail(e); return [null, null]; });
+  const [boatsRes, coaches] = await Promise.all([api("/api/committee/boats"), api("/api/committee/coaches"), loadPlaces(true)]).catch((e) => { fail(e); return [null, null]; });
   if (!boatsRes) return;
   const boats = boatsRes.boats.filter((b) => b.status !== "retired" || (o && o.boat && o.boat.id === b.id));
   const st = {
@@ -559,7 +559,7 @@ async function editOuting(o, defaults = {}) {
           if (st.kind !== "water") { el.innerHTML = ""; return; }
           const seq = ++rcSeq;
           try {
-            const r = await api("/api/admin/river-check", { method: "POST", body: {
+            const r = await api("/api/committee/river-check", { method: "POST", body: {
               date: st.date, time: $("#oe-time", m).value.trim(), end_time: $("#oe-end", m).value.trim(), coach: $("#oe-coach", m).value,
               boat_id: st.boat_id, capacity: st.capacity, coxed: !!st.coxed, outing_id: o?.id || null,
               seats: Object.fromEntries(Object.entries(st.seats).map(([k, v]) => [String(k), v])) } });
@@ -574,7 +574,7 @@ async function editOuting(o, defaults = {}) {
       };
       const loadCand = async () => {
         try {
-          const r = await api("/api/admin/candidates", { method: "POST", body: { kind: st.kind, date: st.date, time: st.time, outing_id: o?.id || null } });
+          const r = await api("/api/committee/candidates", { method: "POST", body: { kind: st.kind, date: st.date, time: st.time, outing_id: o?.id || null } });
           cand = r.members; hasSlots = r.has_slots; loaded = true;
         } catch (e) { fail(e); }
         drawSeats();
@@ -832,7 +832,7 @@ async function editOuting(o, defaults = {}) {
           notes: $("#oe-notes", m).value, published, seats: Object.fromEntries(Object.entries(st.seats).map(([k, v]) => [String(k), v])),
         };
         try {
-          await api(o ? `/api/admin/outings/${o.id}` : "/api/admin/outings", { method: o ? "PUT" : "POST", body });
+          await api(o ? `/api/committee/outings/${o.id}` : "/api/committee/outings", { method: o ? "PUT" : "POST", body });
           close(); toast(o ? "Session saved" : "Session created"); pageSchedule();
         } catch (e) { fail(e); }
       };
@@ -841,14 +841,14 @@ async function editOuting(o, defaults = {}) {
       const del = $("#oe-del", m);
       if (del) del.onclick = async () => {
         if (!await confirmBox("Delete this session?", "Crew assignments and sub requests for it will be removed. Outing counts update automatically.", "Delete", true)) return;
-        try { await api(`/api/admin/outings/${o.id}`, { method: "DELETE" }); toast("Session deleted"); pageSchedule(); } catch (e) { fail(e); }
+        try { await api(`/api/committee/outings/${o.id}`, { method: "DELETE" }); toast("Session deleted"); pageSchedule(); } catch (e) { fail(e); }
       };
       syncKind(); drawSeats(); loadCand();
     },
   });
 }
 
-// ---------------------------------------------------- phone privacy (admin) --
+// ---------------------------------------------------- phone privacy (committee) --
 const telHref = (p) => "tel:" + String(p).replace(/[^\d+]/g, "");
 /* Masked number with a "Show" button; the full number is only fetched when asked for. */
 function phoneCell(memberId, masked, hasPhone) {
@@ -859,7 +859,7 @@ function wireReveal(root) {
   $$("[data-reveal]", root).forEach((b) => b.onclick = async (e) => {
     e.stopPropagation();
     try {
-      const { phone } = await api(`/api/admin/members/${b.dataset.reveal}/phone`);
+      const { phone } = await api(`/api/committee/members/${b.dataset.reveal}/phone`);
       b.closest("[data-phone]").innerHTML = phone ? `<a class="tnum" href="${telHref(phone)}" onclick="event.stopPropagation()">${esc(phone)}</a>` : "—";
     } catch (err) { fail(err); }
   });
@@ -939,7 +939,7 @@ function requestSub(o) {
 }
 
 async function fillSub(subId) {
-  const admin = isAdmin();
+  const committee = isCommittee();
   let subs;
   try { subs = await api("/api/subs"); } catch (e) { return fail(e); }
   const sr = subs.open.find((x) => x.id === subId);
@@ -955,10 +955,10 @@ async function fillSub(subId) {
       <dt>Seat</dt><dd>${esc(sr.seat_label)} (for ${esc(sr.requester.name)})</dd></div>
       ${sr.reason ? `<div class="reason" style="background:var(--surface-2);padding:8px 10px;border-radius:10px;font-style:italic" class="muted">“${esc(sr.reason)}”</div>` : ""}`;
     let body, foot;
-    if (mine && !admin) {
+    if (mine && !committee) {
       body = summary + `<div class="callout">${I.info}<div>This is your own request. Cancel it if you can make it after all.</div></div>`;
       foot = `<div class="r"><button class="btn" data-close>Close</button><button class="btn danger" id="fs-cancel">Cancel my request</button></div>`;
-    } else if (admin) {
+    } else if (committee) {
       body = summary + `<label class="field"><span>Who's taking the seat?</span><div id="fs-who"></div></label><div id="fs-st"></div>`;
       foot = `<button class="btn danger" id="fs-cancel">Cancel request</button><div class="r"><button class="btn" data-close>Close</button><button class="btn primary" id="fs-go">Assign sub</button></div>`;
     } else {
@@ -971,7 +971,7 @@ async function fillSub(subId) {
       title: "Sub needed", body, foot,
       onMount: (m, close) => {
         let ctl = null;
-        if (admin) {
+        if (committee) {
           ctl = combo($("#fs-who", m), {
             items: () => S.boot.members.filter((x) => x.id !== sr.requester.id).map((x) => { const c = cands[x.id] || { ok: false, problems: [] }; return { id: x.id, label: x.name, c, dim: !c.ok, cls: c.ok ? "" : "bad", rank: c.ok ? 0 : 1 }; }),
             renderWhy: (i) => i.c.ok ? `<span class="chip ok">OK</span>` : `<span class="chip bad">${esc(i.c.problems.join(" · "))}</span>`,
@@ -980,7 +980,7 @@ async function fillSub(subId) {
         }
         const g = $("#fs-go", m);
         if (g) g.onclick = async () => {
-          const who = admin ? ctl.get() : S.me;
+          const who = committee ? ctl.get() : S.me;
           if (!who) return toast("Pick someone first", true);
           try { await api(`/api/subs/${subId}/fill`, { method: "POST", body: { member_id: who } }); close(); toast("Seat taken — thanks!"); refreshSubsCount(); route(); }
           catch (e) { fail(e); }
@@ -993,14 +993,14 @@ async function fillSub(subId) {
       },
     });
   };
-  if (admin) go(); else requireMe(go);
+  if (committee) go(); else requireMe(go);
 }
 
 async function refreshCounts() {
   const get = async (key, path, n) => { try { setCount(key, n(await api(path))); } catch {} };
   get("subs", "/api/subs", (d) => d.open.length);
   get("issues", "/api/issues", (d) => d.issues.filter((i) => d.active.includes(i.status)).length);
-  if (isAdmin()) get("reminders", "/api/admin/subs-reminders", (d) => d.members.length);
+  if (isCommittee()) get("reminders", "/api/committee/subs-reminders", (d) => d.members.length);
 }
 const refreshSubsCount = refreshCounts;
 
@@ -1017,7 +1017,7 @@ async function pageSubs() {
         <span class="chip ${s.outing.kind}">${s.outing.kind === "water" ? I.water : I.land}${esc(s.seat_label)}</span></div>
       <div class="small">${filled ? `<b>${esc(s.sub?.name)}</b> is subbing for ${esc(s.requester.name)}` : `<b>${esc(s.requester.name)}</b> needs a sub${s.requester.id === S.me ? ` <span class="chip accent">you</span>` : ""}`}</div>
       ${s.reason && !filled ? `<div class="reason">“${esc(s.reason)}”</div>` : ""}
-      ${filled ? "" : `<div style="display:flex;gap:8px">${s.requester.id === S.me && !isAdmin() ? `<button class="btn" data-fill="${s.id}" style="flex:1">Manage request</button>` : `<button class="btn primary" data-fill="${s.id}" style="flex:1">${I.check}${isAdmin() ? "Assign a sub" : "I'll sub"}</button>`}</div>`}
+      ${filled ? "" : `<div style="display:flex;gap:8px">${s.requester.id === S.me && !isCommittee() ? `<button class="btn" data-fill="${s.id}" style="flex:1">Manage request</button>` : `<button class="btn primary" data-fill="${s.id}" style="flex:1">${I.check}${isCommittee() ? "Assign a sub" : "I'll sub"}</button>`}</div>`}
     </article>`;
   };
   $("#main").innerHTML = `
@@ -1055,7 +1055,7 @@ async function pageMe() {
       <span class="chip ${st.land_ok ? "ok" : "bad"}">${st.land_ok ? I.check : I.x}Land${st.land_reasons.length ? ": " + esc(st.land_reasons.join(", ")) : ""}</span>
       <span class="chip ${st.subs_valid ? "ok" : "warn"}">Subs ${st.subs_valid ? "paid" : "not paid for this term"}</span>
       <span class="chip ${st.swim_test ? "ok" : "warn"}">Swim test ${st.swim_test ? "passed" : "not recorded"}</span>
-    </div><p class="small faint" style="margin:10px 0 0">Something wrong? Speak to a club admin.</p></div>
+    </div><p class="small faint" style="margin:10px 0 0">Something wrong? Speak to a committee member.</p></div>
     <div class="section-title">Upcoming sessions</div>
     ${d.upcoming.length ? `<div class="days" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">${d.upcoming.map((o) => `<div><div class="day-head"><b>${DAY[dow(o.date)]}</b><span>${fmtShort(o.date)}</span></div>${outingCard(o)}</div>`).join("")}</div>`
       : `<div class="card empty">${I.calendar}<h3>Nothing scheduled</h3><p>You're not in any published upcoming sessions. Check the sub board for open seats.</p></div>`}`;
@@ -1132,29 +1132,29 @@ async function pageStats() {
 let rowerSort = { k: "name", dir: 1 }, rowerQ = "", rowerCat = "all";
 
 async function pageRowers() {
-  const admin = isAdmin();
+  const committee = isCommittee();
   let rows, meta = {}, nRem = 0;
   try {
-    if (admin) {
-      const [r, rem] = await Promise.all([api("/api/admin/members"), api("/api/admin/subs-reminders")]);
+    if (committee) {
+      const [r, rem] = await Promise.all([api("/api/committee/members"), api("/api/committee/subs-reminders")]);
       rows = r.members.map((m) => ({ ...m, ...m.totals })); meta = r; nRem = rem.members.length; setCount("reminders", nRem);
     }
     else rows = await api("/api/rowers");
   } catch (e) { return fail(e); }
   const draw = () => {
     let list = rows.filter((r) => (!rowerQ || r.name.toLowerCase().includes(rowerQ)) && (rowerCat === "all" || (rowerCat === "inactive" ? !r.active : rowerCat === "issues" ? (r.active !== false && (!r.water_ok || !r.land_ok)) : r.category === rowerCat && r.active !== false)));
-    if (rowerCat !== "inactive" && admin) list = list.filter((r) => rowerCat === "all" || r.active);
+    if (rowerCat !== "inactive" && committee) list = list.filter((r) => rowerCat === "all" || r.active);
     const k = rowerSort.k;
     list.sort((a, b) => (typeof a[k] === "string" ? a[k].localeCompare(b[k]) : (a[k] ?? -1) - (b[k] ?? -1)) * rowerSort.dir || a.name.localeCompare(b.name));
     const max = Math.max(1, ...rows.map((r) => r.total));
     const th = (key, l, cls = "") => `<th class="sort ${cls}" data-k="${key}">${l}${rowerSort.k === key ? (rowerSort.dir > 0 ? " ↑" : " ↓") : ""}</th>`;
     $("#rw-table").innerHTML = `<table class="t"><thead><tr>${th("name", "Name")}${th("category", "Category")}
-      ${admin ? `<th>Swim</th><th>Subs</th>${th("cox_status", "Cox")}<th title="At their next new outing, counting everything already scheduled">May row next</th>` : `${th("cox_status", "Cox")}`}
+      ${committee ? `<th>Swim</th><th>Subs</th>${th("cox_status", "Cox")}<th title="At their next new outing, counting everything already scheduled">May row next</th>` : `${th("cox_status", "Cox")}`}
       ${th("water", "Water", "num")}${th("land", "Land", "num")}${th("total", "Total", "num")}<th style="width:120px"></th>${th("novice_free_left", "Free left", "num")}</tr></thead>
-      <tbody>${list.map((r) => `<tr class="${admin ? "clickable" : ""}" data-id="${r.id}">
-        <td><b>${esc(r.name)}</b>${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${admin && !r.active ? ` <span class="chip">inactive</span>` : ""}${admin && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
+      <tbody>${list.map((r) => `<tr class="${committee ? "clickable" : ""}" data-id="${r.id}">
+        <td><b>${esc(r.name)}</b>${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${committee && !r.active ? ` <span class="chip">inactive</span>` : ""}${committee && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
         <td><span class="chip ${r.category === "Novice" ? "accent" : ""}">${esc(r.category)}</span></td>
-        ${admin ? `<td>${r.swim_test ? `<span class="chip ok">${I.check}Yes</span>` : `<span class="chip warn">No</span>`}</td>
+        ${committee ? `<td>${r.swim_test ? `<span class="chip ok">${I.check}Yes</span>` : `<span class="chip warn">No</span>`}</td>
           <td>${r.subs_valid ? `<span class="chip ok">${esc(r.subs_plan === "Full year" ? "Full year" : r.subs_term)}</span>` : `<span class="chip ${r.subs_plan === "Unpaid" ? "warn" : "bad"}" title="${esc(r.subs_plan)} ${esc(r.subs_term)} ${esc(r.subs_year)}">${r.subs_plan === "Unpaid" ? "Unpaid" : "Expired"}</span>`}</td>
           <td>${r.cox_status ? `<span class="chip violet">${esc(r.cox_status)}</span>` : ""}</td>
           <td>${r.water_ok && r.land_ok ? `<span class="chip ok">${I.check}Yes</span>` : `<span class="chip bad" title="${esc([...r.water_reasons.map((x) => "Water: " + x), ...r.land_reasons.map((x) => "Land: " + x)].join("\n"))}">${!r.water_ok && !r.land_ok ? "No" : r.water_ok ? "Water only" : "Land only"}</span>`}</td>`
@@ -1163,30 +1163,30 @@ async function pageRowers() {
         <td><div class="bar"><i style="width:${(r.total / max) * 100}%"></i></div></td>
         <td class="num">${r.novice_free_left ?? ""}</td></tr>`).join("") || `<tr><td colspan="12" class="faint" style="text-align:center;padding:30px">No one matches.</td></tr>`}</tbody></table>`;
     $$("#rw-table th.sort").forEach((t) => t.onclick = () => { rowerSort = { k: t.dataset.k, dir: rowerSort.k === t.dataset.k ? -rowerSort.dir : (t.dataset.k === "name" || t.dataset.k === "category" ? 1 : -1) }; draw(); });
-    if (admin) $$("#rw-table tr[data-id]").forEach((tr) => tr.onclick = () => editMember(rows.find((r) => r.id === +tr.dataset.id), meta));
+    if (committee) $$("#rw-table tr[data-id]").forEach((tr) => tr.onclick = () => editMember(rows.find((r) => r.id === +tr.dataset.id), meta));
     $("#rw-count").textContent = `${list.length} shown`;
   };
   const novices = rows.filter((r) => r.category === "Novice" && r.active !== false).length;
-  const issues = admin ? rows.filter((r) => r.active && (!r.water_ok || !r.land_ok)).length : 0;
+  const issues = committee ? rows.filter((r) => r.active && (!r.water_ok || !r.land_ok)).length : 0;
   const allOut = rows.reduce((a, r) => a + r.total, 0);
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>${admin ? "Members" : "Rowers"}</h1><p>${admin ? "Manage the squad, subs and swim tests. Outing counts update automatically from the schedule." : "Outing counts across the squad."}</p></div>
-      ${admin ? `<div class="toolbar"><button class="btn" id="rw-export">${I.download}Export CSV</button><button class="btn primary" id="rw-add">${I.plus}Add member</button></div>` : ""}</div>
+    <div class="page-head"><div><h1>${committee ? "Members" : "Rowers"}</h1><p>${committee ? "Manage the squad, subs and swim tests. Outing counts update automatically from the schedule." : "Outing counts across the squad."}</p></div>
+      ${committee ? `<div class="toolbar"><button class="btn" id="rw-export">${I.download}Export CSV</button><button class="btn primary" id="rw-add">${I.plus}Add member</button></div>` : ""}</div>
     <div class="stats" style="margin-bottom:16px">
       <div class="card stat"><div class="k">Members</div><div class="v">${rows.filter((r) => r.active !== false).length}</div><div class="s">${novices} novice · ${rows.filter((r) => r.active !== false).length - novices} senior</div></div>
       <div class="card stat"><div class="k">Coxes</div><div class="v">${rows.filter((r) => r.cox_status && r.active !== false).length}</div><div class="s">with a cox status</div></div>
       <div class="card stat"><div class="k">Outings logged</div><div class="v">${allOut}</div><div class="s">seat-sessions, all time</div></div>
-      ${admin ? `<div class="card stat"><div class="k">Can't row next outing</div><div class="v" style="color:${issues ? "var(--bad)" : "var(--ok)"}">${issues}</div><div class="s">subs or swim test missing</div></div>` : ""}
+      ${committee ? `<div class="card stat"><div class="k">Can't row next outing</div><div class="v" style="color:${issues ? "var(--bad)" : "var(--ok)"}">${issues}</div><div class="s">subs or swim test missing</div></div>` : ""}
     </div>
     <div class="filters">
       <input class="input" id="rw-q" placeholder="Search names…" style="max-width:260px" value="${esc(rowerQ)}">
-      <div class="seg" id="rw-cat">${[["all", "All"], ["Novice", "Novice"], ["Senior", "Senior"], ...(admin ? [["issues", "Can't row"], ["inactive", "Inactive"]] : [])].map(([k, l]) => `<button data-c="${k}" class="${rowerCat === k ? "on" : ""}">${l}</button>`).join("")}</div>
+      <div class="seg" id="rw-cat">${[["all", "All"], ["Novice", "Novice"], ["Senior", "Senior"], ...(committee ? [["issues", "Can't row"], ["inactive", "Inactive"]] : [])].map(([k, l]) => `<button data-c="${k}" class="${rowerCat === k ? "on" : ""}">${l}</button>`).join("")}</div>
       <span class="faint small" id="rw-count" style="margin-left:auto"></span>
     </div>
     <div class="card table-wrap" id="rw-table"></div>`;
   $("#rw-q").oninput = (e) => { rowerQ = e.target.value.trim().toLowerCase(); draw(); };
   $$("#rw-cat button").forEach((b) => b.onclick = () => { rowerCat = b.dataset.c; $$("#rw-cat button").forEach((x) => x.classList.toggle("on", x === b)); draw(); });
-  if (admin) { $("#rw-add").onclick = () => editMember(null, meta); $("#rw-export").onclick = () => exportModal("/api/admin/members.csv", "all members"); }
+  if (committee) { $("#rw-add").onclick = () => editMember(null, meta); $("#rw-export").onclick = () => exportModal("/api/committee/members.csv", "all members"); }
   draw();
 }
 
@@ -1201,7 +1201,7 @@ function editMember(m, meta) {
         <label class="field"><span>Category</span><select class="input" id="me-cat"><option ${v.category === "Novice" ? "selected" : ""}>Novice</option><option ${v.category === "Senior" ? "selected" : ""}>Senior</option></select></label>
       </div>
       <div class="grid-3">
-        <label class="field"><span>Phone <span class="faint">(admins only · encrypted)</span></span>
+        <label class="field"><span>Phone <span class="faint">(committee only · encrypted)</span></span>
           <div style="display:flex;gap:6px"><input class="input tnum" id="me-phone" type="tel" placeholder="${m && m.has_phone ? esc(m.phone_masked) : "Not on file"}">
           ${m && m.has_phone ? `<button type="button" class="btn sm" id="me-phone-show" title="Show the full number">Show</button><button type="button" class="btn sm danger" id="me-phone-del" title="Delete this number">Delete</button>` : ""}</div></label>
         <label class="field"><span>College</span><input class="input" id="me-college" list="me-colleges" value="${esc(v.college || "")}"><datalist id="me-colleges"><option value="Reuben"><option value="Blackfriars"><option value="St Stephen's House"></datalist></label>
@@ -1221,7 +1221,7 @@ function editMember(m, meta) {
         <label class="field"><span>Earlier land sessions</span><input class="input" type="number" min="0" id="me-pl" value="${v.past_land}"></label>
         <div class="field"><span>&nbsp;</span><label class="check"><input type="checkbox" id="me-active" ${v.active ? "checked" : ""}> Active member</label></div>
       </div>
-      <label class="field"><span>Admin notes</span><textarea class="input" id="me-notes" rows="2">${esc(v.notes)}</textarea></label>
+      <label class="field"><span>Committee notes</span><textarea class="input" id="me-notes" rows="2">${esc(v.notes)}</textarea></label>
       ${m && m.needs_review ? `<div class="callout warn">${I.alert}<div>Added through the sign-up form. Check category, cox status, swim test and subs, then save to mark as reviewed.</div></div>` : ""}
       ${m ? `<div class="callout">${I.info}<div>Totals: <b>${m.water}</b> water · <b>${m.land}</b> land (${m.upcoming} upcoming)${m.novice_free_left != null ? ` · <b>${m.novice_free_left}</b> free novice outings left` : ""}</div></div>` : ""}`,
     foot: `${m ? `<button class="btn danger" id="me-del">Delete</button>` : ""}<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="me-save">Save</button></div>`,
@@ -1233,7 +1233,7 @@ function editMember(m, meta) {
       const ph = $("#me-phone", el);
       ph.oninput = () => { phoneTouched = true; };
       const show = $("#me-phone-show", el), delp = $("#me-phone-del", el);
-      if (show) show.onclick = async () => { try { ph.value = (await api(`/api/admin/members/${m.id}/phone`)).phone; phoneTouched = false; } catch (e) { fail(e); } };
+      if (show) show.onclick = async () => { try { ph.value = (await api(`/api/committee/members/${m.id}/phone`)).phone; phoneTouched = false; } catch (e) { fail(e); } };
       if (delp) delp.onclick = () => { ph.value = ""; ph.placeholder = "Will be deleted when you save"; phoneTouched = true; };
       $("#me-save", el).onclick = async () => {
         const body = { name: $("#me-name", el).value.trim(), category: $("#me-cat", el).value, subs_plan: $("#me-plan", el).value,
@@ -1242,13 +1242,13 @@ function editMember(m, meta) {
           active: $("#me-active", el).checked, notes: $("#me-notes", el).value,
           phone: phoneTouched ? $("#me-phone", el).value.trim() : (m ? null : ($("#me-phone", el).value.trim() || null)), college: $("#me-college", el).value.trim(), side: $("#me-side", el).value };
         if (!body.name) return toast("Name is required", true);
-        try { await api(m ? `/api/admin/members/${m.id}` : "/api/admin/members", { method: m ? "PUT" : "POST", body }); close(); toast("Saved"); await reboot(); pageRowers(); }
+        try { await api(m ? `/api/committee/members/${m.id}` : "/api/committee/members", { method: m ? "PUT" : "POST", body }); close(); toast("Saved"); await reboot(); pageRowers(); }
         catch (e) { fail(e); }
       };
       const d = $("#me-del", el);
       if (d) d.onclick = async () => {
         if (!await confirmBox(`Delete ${esc(m.name)}?`, "They'll be removed from every session they're in. To keep their history, untick “Active member” instead.", "Delete", true)) return;
-        try { await api(`/api/admin/members/${m.id}`, { method: "DELETE" }); toast("Member deleted"); await reboot(); pageRowers(); } catch (e) { fail(e); }
+        try { await api(`/api/committee/members/${m.id}`, { method: "DELETE" }); toast("Member deleted"); await reboot(); pageRowers(); } catch (e) { fail(e); }
       };
     },
   });
@@ -1291,7 +1291,7 @@ function editReminderTemplate(d) {
       ta.oninput = prev; prev();
       $("#tpl-reset", m).onclick = () => { ta.value = d.default_template; prev(); };
       $("#tpl-save", m).onclick = async () => {
-        try { await api("/api/admin/subs-reminders/template", { method: "PUT", body: { template: ta.value } }); close(); toast("Reminder message saved"); pageSubsReminders(); } catch (e) { fail(e); }
+        try { await api("/api/committee/subs-reminders/template", { method: "PUT", body: { template: ta.value } }); close(); toast("Reminder message saved"); pageSubsReminders(); } catch (e) { fail(e); }
       };
     },
   });
@@ -1299,7 +1299,7 @@ function editReminderTemplate(d) {
 
 async function pageSubsReminders() {
   let d;
-  try { d = await api("/api/admin/subs-reminders"); } catch (e) { return fail(e); }
+  try { d = await api("/api/committee/subs-reminders"); } catch (e) { return fail(e); }
   const hideReminded = !!S.remHide;
   const list = d.members.filter((x) => !hideReminded || !x.reminded_at);
   const row = (x) => {
@@ -1341,7 +1341,7 @@ async function pageSubsReminders() {
       : `<div class="card empty">${I.check}<h3>No one to remind</h3><p>${hideReminded && d.members.length ? "Everyone on the list has already been reminded." : "Every active member who needs subs has paid, or still has free novice outings left."}</p></div>`}`;
   setCount("reminders", d.members.length); wireReveal($("#main"));
   const byId = (id) => d.members.find((x) => x.id === +id);
-  const markReminded = async (id, on = true) => { try { await api(`/api/admin/members/${id}/reminded`, { method: "POST", body: { reminded: on } }); } catch (e) { fail(e); } };
+  const markReminded = async (id, on = true) => { try { await api(`/api/committee/members/${id}/reminded`, { method: "POST", body: { reminded: on } }); } catch (e) { fail(e); } };
   const copy = async (text) => { try { await navigator.clipboard.writeText(text); return true; } catch { const t = document.createElement("textarea"); t.value = text; document.body.appendChild(t); t.select(); const ok = document.execCommand("copy"); t.remove(); return ok; } };
   $("#rem-tpl").onclick = () => editReminderTemplate(d);
   $("#rem-hide").onchange = (e) => { S.remHide = e.target.checked; pageSubsReminders(); };
@@ -1350,7 +1350,7 @@ async function pageSubsReminders() {
   $$("[data-text]").forEach((b) => b.onclick = async () => {
     const x = byId(b.dataset.text);
     try {
-      const { phone } = await api(`/api/admin/members/${x.id}/phone`);
+      const { phone } = await api(`/api/committee/members/${x.id}/phone`);
       if (!phone) return toast("No phone number on file", true);
       await markReminded(x.id);
       location.href = `sms:${phone.replace(/[^\d+]/g, "")}?&body=${encodeURIComponent(remMessage(x, d))}`;
@@ -1368,7 +1368,7 @@ async function pageSubsReminders() {
           <button type="button" class="role-card" data-plan="Single term"><b>Single term</b><span>${esc(d.term)} ${esc(d.year)}</span></button>
           <button type="button" class="role-card" data-plan="Full year"><b>Full year</b><span>${esc(d.year)}</span></button></div>`,
       onMount: (m, close) => $$("[data-plan]", m).forEach((p) => p.onclick = async () => {
-        try { await api(`/api/admin/members/${x.id}/paid`, { method: "POST", body: { plan: p.dataset.plan } }); close(); toast(`${x.name}: ${p.dataset.plan} recorded`); pageSubsReminders(); } catch (e) { fail(e); }
+        try { await api(`/api/committee/members/${x.id}/paid`, { method: "POST", body: { plan: p.dataset.plan } }); close(); toast(`${x.name}: ${p.dataset.plan} recorded`); pageSubsReminders(); } catch (e) { fail(e); }
       }),
     });
   });
@@ -1385,14 +1385,14 @@ const boatSvg = (seats, coxed) => {
 
 async function pageBoats() {
   let data;
-  try { data = await api("/api/admin/boats"); } catch (e) { return fail(e); }
-  const admin = isAdmin();
+  try { data = await api("/api/committee/boats"); } catch (e) { return fail(e); }
+  const committee = isCommittee();
   const avail = data.boats.filter((b) => b.status === "available").length;
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>Boat park</h1><p>${data.boats.length} boats · ${avail} available${data.boats.length - avail ? ` · ${data.boats.length - avail} out of service` : ""}</p></div>
-      <div class="toolbar"><button class="btn" id="bt-report">${I.alert}Report an issue</button>${admin ? `<button class="btn primary" id="bt-add">${I.plus}Add boat</button>` : ""}</div></div>
+      <div class="toolbar"><button class="btn" id="bt-report">${I.alert}Report an issue</button>${committee ? `<button class="btn primary" id="bt-add">${I.plus}Add boat</button>` : ""}</div></div>
     ${data.boats.length ? `<div class="boats">${data.boats.map((b) => `
-      <article class="card boat ${b.status} ${admin ? "clickable" : ""}" data-id="${b.id}">
+      <article class="card boat ${b.status} ${committee ? "clickable" : ""}" data-id="${b.id}">
         <div class="boat-head"><div><div class="boat-name">${esc(b.name)}</div><div class="muted small">${esc(b.boat_type)} · ${b.seats} seat${b.seats > 1 ? "s" : ""}${b.coxed ? " + cox" : ""}</div></div>
           <span class="chip ${b.status === "available" ? "ok" : b.status === "repair" ? "warn" : ""}">${b.status === "available" ? "Available" : b.status === "repair" ? "Under repair" : "Retired"}</span></div>
         ${boatSvg(b.seats, b.coxed)}
@@ -1400,10 +1400,10 @@ async function pageBoats() {
         ${b.notes ? `<div class="small muted">${esc(b.notes)}</div>` : ""}
         ${b.open_issues ? `<button class="chip ${ISSUE_SEV[b.worst_issue]?.[1] || "warn"} chip-btn" data-boat-issues="${b.id}">${I.alert}${b.open_issues} open issue${b.open_issues === 1 ? "" : "s"}</button>` : ""}
       </article>`).join("")}</div>`
-      : `<div class="card empty">${I.boat}<h3>No boats yet</h3><p>${admin ? "Add the club's fleet so outings can be assigned to specific boats." : "An admin hasn't added the fleet yet."}</p>${admin ? `<button class="btn primary" id="bt-add2">${I.plus}Add first boat</button>` : ""}</div>`}`;
+      : `<div class="card empty">${I.boat}<h3>No boats yet</h3><p>${committee ? "Add the club's fleet so outings can be assigned to specific boats." : "The committee hasn't added the fleet yet."}</p>${committee ? `<button class="btn primary" id="bt-add2">${I.plus}Add first boat</button>` : ""}</div>`}`;
   $("#bt-report").onclick = () => reportIssue(data.boats);
   $$("[data-boat-issues]").forEach((b) => b.onclick = (e) => { e.stopPropagation(); S.issueBoat = +b.dataset.boatIssues; S.issueFilter = "active"; go("issues"); });
-  if (admin) {
+  if (committee) {
     const add = () => editBoat(null, data.types);
     $("#bt-add").onclick = add; const a2 = $("#bt-add2"); if (a2) a2.onclick = add;
     $$(".boat[data-id]").forEach((c) => c.onclick = () => editBoat(data.boats.find((b) => b.id === +c.dataset.id), data.types));
@@ -1427,12 +1427,12 @@ function editBoat(b, types) {
       $("#b-save", m).onclick = async () => {
         const body = { name: $("#b-name", m).value.trim(), boat_type: $("#b-type", m).value, seats: Math.max(1, Math.min(8, +$("#b-seats", m).value || 1)), coxed: $("#b-cox", m).checked, status: $("#b-status", m).value, rigging: $("#b-rig", m).value, notes: $("#b-notes", m).value };
         if (!body.name) return toast("Name is required", true);
-        try { await api(b ? `/api/admin/boats/${b.id}` : "/api/admin/boats", { method: b ? "PUT" : "POST", body }); close(); toast("Boat saved"); pageBoats(); } catch (e) { fail(e); }
+        try { await api(b ? `/api/committee/boats/${b.id}` : "/api/committee/boats", { method: b ? "PUT" : "POST", body }); close(); toast("Boat saved"); pageBoats(); } catch (e) { fail(e); }
       };
       const d = $("#b-del", m);
       if (d) d.onclick = async () => {
         if (!await confirmBox(`Delete ${esc(b.name)}?`, "Sessions using this boat keep their crews but lose the boat. Mark it “Retired” instead to keep history.", "Delete", true)) return;
-        try { await api(`/api/admin/boats/${b.id}`, { method: "DELETE" }); toast("Boat deleted"); pageBoats(); } catch (e) { fail(e); }
+        try { await api(`/api/committee/boats/${b.id}`, { method: "DELETE" }); toast("Boat deleted"); pageBoats(); } catch (e) { fail(e); }
       };
     },
   });
@@ -1524,7 +1524,7 @@ function reportIssue(boats, boatId) {
 
 async function pageIssues() {
   let data, iss;
-  try { [data, iss] = await Promise.all([api("/api/admin/boats"), api("/api/issues")]); } catch (e) { return fail(e); }
+  try { [data, iss] = await Promise.all([api("/api/committee/boats"), api("/api/issues")]); } catch (e) { return fail(e); }
   setCount("issues", iss.issues.filter((i) => iss.active.includes(i.status)).length);
   S.issueFilter = S.issueFilter || "active";
   let shown = iss.issues.filter((i) => S.issueFilter === "all" || (S.issueFilter === "active") === iss.active.includes(i.status));
@@ -1550,7 +1550,7 @@ async function pageIssues() {
 async function openIssue(id, boats) {
   let i, meta;
   try { [i, meta] = await Promise.all([api(`/api/issues/${id}`), api("/api/issues")]); } catch (e) { return fail(e); }
-  const admin = isAdmin(), st = meta.statuses;
+  const committee = isCommittee(), st = meta.statuses;
   const timeline = i.updates.map((u) => `<div class="tl-item"><div class="tl-dot ${u.status ? ISSUE_ST[u.status] || "" : ""}"></div><div>
       <div class="small"><b>${esc(u.author || "Someone")}</b> ${u.status ? (u === i.updates[0] ? "reported this" : `set the status to <span class="chip ${ISSUE_ST[u.status]}">${esc(st[u.status])}</span>`) : "added a note"} <span class="faint">· ${esc(utcStamp(u.created_at))}</span></div>
       ${u.note ? `<div class="tl-note">${esc(u.note)}</div>` : ""}</div></div>`).join("");
@@ -1558,20 +1558,20 @@ async function openIssue(id, boats) {
     title: esc(i.title), wide: true,
     body: `<div class="issue-chips"><span class="chip">${I.boat}${esc(i.boat_name)}</span><span class="chip ${ISSUE_SEV[i.severity][1]}">${esc(ISSUE_SEV[i.severity][0])}</span><span class="chip ${ISSUE_ST[i.status]}">${esc(st[i.status])}</span></div>
       ${i.description ? `<div class="issue-desc">${esc(i.description)}</div>` : `<div class="faint small">No description.</div>`}
-      ${i.photos.length ? `<div class="photo-grid">${i.photos.map((p) => `<div class="photo"><a href="/api/issues/photos/${p.id}" target="_blank" rel="noopener"><img src="/api/issues/photos/${p.id}" loading="lazy" alt="Photo${p.uploaded_by ? ` from ${esc(p.uploaded_by)}` : ""}"></a>${admin ? `<button class="btn icon sm photo-del" data-del-photo="${p.id}" title="Delete photo" aria-label="Delete photo">${I.x}</button>` : ""}</div>`).join("")}</div>` : ""}
+      ${i.photos.length ? `<div class="photo-grid">${i.photos.map((p) => `<div class="photo"><a href="/api/issues/photos/${p.id}" target="_blank" rel="noopener"><img src="/api/issues/photos/${p.id}" loading="lazy" alt="Photo${p.uploaded_by ? ` from ${esc(p.uploaded_by)}` : ""}"></a>${committee ? `<button class="btn icon sm photo-del" data-del-photo="${p.id}" title="Delete photo" aria-label="Delete photo">${I.x}</button>` : ""}</div>`).join("")}</div>` : ""}
       <div class="section-title" style="margin-top:6px">Progress</div>
       <div class="timeline">${timeline}</div>
       <div class="card-pad issue-add">
-        ${admin ? `<label class="field"><span>Status</span><select class="input" id="iu-st">${Object.entries(st).map(([k, l]) => `<option value="${k}" ${k === i.status ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` : ""}
-        <label class="field"><span>Add a note</span><textarea class="input" id="iu-note" rows="2" maxlength="4000" placeholder="${admin ? "e.g. Ordered a new gate, arriving Friday" : "e.g. Still loose after Tuesday's outing"}"></textarea></label>
+        ${committee ? `<label class="field"><span>Status</span><select class="input" id="iu-st">${Object.entries(st).map(([k, l]) => `<option value="${k}" ${k === i.status ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` : ""}
+        <label class="field"><span>Add a note</span><textarea class="input" id="iu-note" rows="2" maxlength="4000" placeholder="${committee ? "e.g. Ordered a new gate, arriving Friday" : "e.g. Still loose after Tuesday's outing"}"></textarea></label>
         <div class="grid-2"><label class="field"><span>Your name</span><input class="input" id="iu-who" value="${esc(meName() || "")}"></label>${photoPicker("iu-photos")}</div>
         <div class="small muted" id="iu-prog"></div>
       </div>`,
-    foot: `${admin ? `<button class="btn danger" id="iu-del">Delete</button><button class="btn" id="iu-edit">Edit</button>` : ""}<div class="r"><button class="btn" data-close>Close</button><button class="btn primary" id="iu-save">Save update</button></div>`,
+    foot: `${committee ? `<button class="btn danger" id="iu-del">Delete</button><button class="btn" id="iu-edit">Edit</button>` : ""}<div class="r"><button class="btn" data-close>Close</button><button class="btn primary" id="iu-save">Save update</button></div>`,
     onMount: (m, close) => {
       const reload = async () => { close(); await rerender(); openIssue(id, boats); };
       $("#iu-save", m).onclick = async () => {
-        const note = $("#iu-note", m).value.trim(), status = admin ? $("#iu-st", m).value : "", who = $("#iu-who", m).value.trim();
+        const note = $("#iu-note", m).value.trim(), status = committee ? $("#iu-st", m).value : "", who = $("#iu-who", m).value.trim();
         const files = [...$("#iu-photos", m).files];
         const changed = status && status !== i.status;
         if (!note && !changed && !files.length) return toast("Write a note, change the status or add a photo", true);
@@ -1623,7 +1623,7 @@ function editIssue(i, boats) {
 // ---------------------------------------------------------------- coaches --
 async function pageCoaches() {
   let coaches, stats;
-  try { [coaches, stats] = await Promise.all([api("/api/admin/coaches"), api("/api/admin/coaching-stats")]); } catch (e) { return fail(e); }
+  try { [coaches, stats] = await Promise.all([api("/api/committee/coaches"), api("/api/committee/coaching-stats")]); } catch (e) { return fail(e); }
   const mlabel = (m) => { const [y, mo] = m.split("-").map(Number); return `${MON[mo - 1]} ${String(y).slice(2)}`; };
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>Coaches</h1><p>Sessions per coach per month, counted from the Coach / bankrider field on every session.</p></div>
@@ -1639,9 +1639,9 @@ async function pageCoaches() {
       $("#c-save", m).onclick = async () => {
         const body = { name: $("#c-name", m).value.trim() };
         if (!body.name) return toast("Name is required", true);
-        try { await api(c ? `/api/admin/coaches/${c.id}` : "/api/admin/coaches", { method: c ? "PUT" : "POST", body }); close(); pageCoaches(); } catch (e) { fail(e); }
+        try { await api(c ? `/api/committee/coaches/${c.id}` : "/api/committee/coaches", { method: c ? "PUT" : "POST", body }); close(); pageCoaches(); } catch (e) { fail(e); }
       };
-      const d = $("#c-del", m); if (d) d.onclick = async () => { await api(`/api/admin/coaches/${c.id}`, { method: "DELETE" }).catch(fail); close(); pageCoaches(); };
+      const d = $("#c-del", m); if (d) d.onclick = async () => { await api(`/api/committee/coaches/${c.id}`, { method: "DELETE" }).catch(fail); close(); pageCoaches(); };
     },
   });
   $("#c-add").onclick = () => edit(null);
@@ -1651,7 +1651,7 @@ async function pageCoaches() {
 // --------------------------------------------------------------- settings --
 async function pageSettings() {
   let s;
-  try { s = await api("/api/admin/settings"); } catch (e) { return fail(e); }
+  try { s = await api("/api/committee/settings"); } catch (e) { return fail(e); }
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>Settings</h1><p>Review these at the start of each term.</p></div></div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;align-items:start">
@@ -1720,7 +1720,7 @@ async function pageSettings() {
         </div>
         <div class="card card-pad" style="display:flex;flex-direction:column;gap:12px">
           <h3 style="margin:0">Data</h3>
-          <div class="toolbar"><a class="btn" href="/api/admin/backup">${I.download}Download database backup</a><button class="btn" id="s-csv">${I.download}Members CSV</button></div>
+          <div class="toolbar"><a class="btn" href="/api/committee/backup">${I.download}Download database backup</a><button class="btn" id="s-csv">${I.download}Members CSV</button></div>
           <p class="muted small" style="margin:0">Phone numbers in the backup stay encrypted. They can only be read with this server's <code>PHONE_KEY</code>. Boat-issue photos aren't in the database backup: they're in the <code>photos</code> folder next to it.</p>
           <div class="field"><span>Boat-issue photos</span><div class="meter"><div id="s-ph-bar"></div></div><span class="hint" id="s-ph-used">…</span></div>
           <div style="display:flex;gap:8px;align-items:flex-end"><label class="field" style="flex:1"><span>Storage limit for photos (MB)</span><input class="input" type="number" min="10" max="100000" id="s-ph-limit"></label><button class="btn" id="s-ph-save">Save</button></div>
@@ -1728,16 +1728,16 @@ async function pageSettings() {
       </div>
     </div>`;
   const phoneFields = () => ({ phone_mode: $("#s-phone-mode").value, phone_retention_days: Math.max(0, Math.min(3650, +$("#s-phone-days").value || 0)) });
-  $("#s-csv").onclick = () => exportModal("/api/admin/members.csv", "all members");
+  $("#s-csv").onclick = () => exportModal("/api/committee/members.csv", "all members");
   const drawStorage = (ps) => {
     const pct = Math.min(100, (ps.used / ps.limit) * 100);
     $("#s-ph-bar").style.width = `${pct}%`; $("#s-ph-bar").className = pct > 90 ? "bad" : pct > 70 ? "warn" : "";
     $("#s-ph-used").textContent = `${ps.count} photo${ps.count === 1 ? "" : "s"} · ${fmtBytes(ps.used)} of ${ps.limit_mb} MB used. When it's full, new uploads are refused.`;
     $("#s-ph-limit").value = ps.limit_mb;
   };
-  api("/api/admin/photo-storage").then(drawStorage).catch(() => {});
+  api("/api/committee/photo-storage").then(drawStorage).catch(() => {});
   $("#s-ph-save").onclick = async () => {
-    try { drawStorage(await api("/api/admin/photo-storage", { method: "PUT", body: { photo_storage_mb: Math.max(10, +$("#s-ph-limit").value || 300) } })); toast("Photo limit saved"); } catch (e) { fail(e); }
+    try { drawStorage(await api("/api/committee/photo-storage", { method: "PUT", body: { photo_storage_mb: Math.max(10, +$("#s-ph-limit").value || 300) } })); toast("Photo limit saved"); } catch (e) { fail(e); }
   };
   const drawFlag = (f) => { $("#s-river-flag").innerHTML = `<span class="flag-dot" style="background:${esc(f.colour)}"></span> Isis: <b>${esc(f.name)}</b> · checked ${esc(fmtStamp(f.checked_at) || "never")}${f.error ? ` · <span style="color:var(--bad)">last check failed: ${esc(f.error)}</span>` : ""}`; };
   api("/api/river").then((rv) => {
@@ -1746,9 +1746,9 @@ async function pageSettings() {
   }).catch(() => {});
   $("#s-river-save").onclick = async () => {
     const body = { term_start: $("#s-term-start").value, peak_end: $("#s-peak-end").value, peak_crews_before_8: Math.max(1, Math.min(5, +$("#s-peak8").value || 1)) };
-    try { await api("/api/admin/river-settings", { method: "PUT", body }); toast("River settings saved"); } catch (e) { fail(e); }
+    try { await api("/api/committee/river-settings", { method: "PUT", body }); toast("River settings saved"); } catch (e) { fail(e); }
   };
-  $("#s-river-refresh").onclick = async () => { try { drawFlag(await api("/api/admin/river/refresh", { method: "POST" })); toast("Flag checked"); } catch (e) { fail(e); } };
+  $("#s-river-refresh").onclick = async () => { try { drawFlag(await api("/api/committee/river/refresh", { method: "POST" })); toast("Flag checked"); } catch (e) { fail(e); } };
   $("#s-river-rules").onclick = () => riverModal();
   const drawPlaces = async () => {
     const ps = await loadPlaces(true);
@@ -1763,27 +1763,27 @@ async function pageSettings() {
   $("#s-phone-save").onclick = async () => {
     const body = { club_name: s.club_name, academic_year: s.academic_year, current_term: s.current_term, subs_cutoff: s.subs_cutoff, novice_free_outings: s.novice_free_outings,
       novice_land_free: s.novice_land_free, season_start: s.season_start, today_override: s.today_override, ...phoneFields() };
-    try { await api("/api/admin/settings", { method: "PUT", body }); toast("Phone settings saved"); pageSettings(); } catch (e) { fail(e); }
+    try { await api("/api/committee/settings", { method: "PUT", body }); toast("Phone settings saved"); pageSettings(); } catch (e) { fail(e); }
   };
   $("#s-save").onclick = async () => {
     const body = { club_name: $("#s-club").value.trim() || "Reuben Boat Club", academic_year: $("#s-ay").value.trim(), current_term: $("#s-term").value, subs_cutoff: $("#s-cut").value,
       novice_free_outings: +$("#s-free").value || 0, novice_land_free: $("#s-land").checked, season_start: $("#s-season").value, today_override: $("#s-today").value, swim_test_after: Math.max(0, +$("#s-swim").value || 0), ...phoneFields() };
-    try { await api("/api/admin/settings", { method: "PUT", body }); toast("Settings saved"); await reboot(); shell("settings"); pageSettings(); } catch (e) { fail(e); }
+    try { await api("/api/committee/settings", { method: "PUT", body }); toast("Settings saved"); await reboot(); shell("settings"); pageSettings(); } catch (e) { fail(e); }
   };
   $("#s-mpw-save").onclick = async () => {
     const pw = $("#s-mpw").value;
     if (!pw) return toast("Type a password first", true);
     const body = { club_name: s.club_name, academic_year: s.academic_year, current_term: s.current_term, subs_cutoff: s.subs_cutoff, novice_free_outings: s.novice_free_outings,
       novice_land_free: s.novice_land_free, season_start: s.season_start, today_override: s.today_override, member_password: pw, ...phoneFields() };
-    try { await api("/api/admin/settings", { method: "PUT", body }); toast("Rower password updated"); pageSettings(); } catch (e) { fail(e); }
+    try { await api("/api/committee/settings", { method: "PUT", body }); toast("Rower password updated"); pageSettings(); } catch (e) { fail(e); }
   };
-  const r = $("#s-mpw-reset"); if (r) r.onclick = async () => { await api("/api/admin/settings/reset-member-password", { method: "POST" }).catch(fail); toast("Using server password"); pageSettings(); };
+  const r = $("#s-mpw-reset"); if (r) r.onclick = async () => { await api("/api/committee/settings/reset-member-password", { method: "POST" }).catch(fail); toast("Using server password"); pageSettings(); };
   $("#s-import").onclick = async () => {
     const f = $("#s-file").files[0];
     if (!f) return toast("Choose a file first", true);
     const fd = new FormData(); fd.append("file", f); fd.append("include_schedule", $("#s-sched").checked ? "true" : "false");
     try {
-      const res = await api("/api/admin/import", { method: "POST", body: fd });
+      const res = await api("/api/committee/import", { method: "POST", body: fd });
       $("#s-import-res").innerHTML = `<div class="callout">${I.check}<div>Imported: <b>${res.members_added}</b> new members, <b>${res.members_updated}</b> updated, <b>${res.coaches}</b> coaches${res.outings ? `, <b>${res.outings}</b> sessions` : ""}.</div></div>`;
       await reboot();
     } catch (e) { fail(e); }
@@ -1795,7 +1795,7 @@ const SLOT_ICON = { water: () => I.water, erg: () => I.land, tank: () => I.land 
 const slotChip = (k) => `<span class="chip ${k === "water" ? "water" : k === "erg" ? "land" : "ok"}">${({ water: "Water", erg: "Erg", tank: "Tank" })[k] || k}</span>`;
 
 async function pageSignup() {
-  if (isAdmin() && !(location.hash.includes("form=1"))) return pageSignupAdmin();
+  if (isCommittee() && !(location.hash.includes("form=1"))) return pageSignupCommittee();
   let meta;
   try { meta = await api("/api/signup"); } catch (e) { return fail(e); }
   const main = $("#main");
@@ -1836,14 +1836,14 @@ async function pageSignup() {
     <div class="page-head"><div><h1>Weekly sign-up</h1><p>Week of ${fmtLong(wk.week_start)} · tell the coaches when you're free and they'll build the crews.</p></div>
       ${meta.weeks.length > 1 ? `<div class="seg" id="su-weeks">${meta.weeks.map((w) => `<button data-w="${w.week_start}" class="${w.week_start === wk.week_start ? "on" : ""}">w/c ${fmtShort(w.week_start)}</button>`).join("")}</div>` : ""}</div>
     ${wk.note ? `<div class="callout" style="margin-bottom:16px">${I.info}<div>${esc(wk.note)}</div></div>` : ""}
-    ${isAdmin() ? `<div class="callout warn" style="margin-bottom:16px">${I.info}<div>You're filling in the form as an admin (e.g. on someone's behalf). <a href="#/signup">Back to sign-up management</a></div></div>` : ""}
+    ${isCommittee() ? `<div class="callout warn" style="margin-bottom:16px">${I.info}<div>You're filling in the form as a committee member (e.g. on someone's behalf). <a href="#/signup">Back to sign-up management</a></div></div>` : ""}
     <form id="su-form" class="su-form" novalidate>
       <section class="card card-pad su-sec"><div class="su-num">1</div><div class="su-body">
         <h3>About you</h3>
         <label class="field"><span>Your name</span><div id="su-name"></div><span class="hint">Pick your name, or type it in full if you're new to the club.</span></label>
         <div class="grid-2">
           ${meta.phone_mode === "off" ? "" : `<label class="field"><span>Phone number${meta.phone_mode === "optional" ? ` <span class="faint">(optional)</span>` : ""}</span><input class="input" id="su-phone" type="tel" autocomplete="tel" placeholder="${st.has_phone ? "We have your number. Leave blank to keep it" : "e.g. 07700 900123"}" value="${esc(st.phone)}">
-            <span class="hint">🔒 Only club admins can see it. Stored encrypted${meta.phone_retention_days ? ` and deleted after ${meta.phone_retention_days >= 60 ? Math.round(meta.phone_retention_days / 30) + " months" : meta.phone_retention_days + " days"} without a sign-up` : ""}.</span></label>`}
+            <span class="hint">🔒 Only the committee can see it. Stored encrypted${meta.phone_retention_days ? ` and deleted after ${meta.phone_retention_days >= 60 ? Math.round(meta.phone_retention_days / 30) + " months" : meta.phone_retention_days + " days"} without a sign-up` : ""}.</span></label>`}
           <div class="field"><span>College</span>${pills("college", meta.colleges.map((c) => [c, c]), st.college)}
             <input class="input ${st.college === "Other" ? "" : "hidden"}" id="su-college-other" placeholder="Which college?" value="${esc(st.college_other)}" style="margin-top:6px"></div>
         </div>
@@ -1916,12 +1916,12 @@ async function pageSignup() {
     const btn = $("#su-go"); btn.disabled = true;
     try {
       const r = await api("/api/signup", { method: "POST", body });
-      if (!isAdmin()) setMe(r.member_id);
+      if (!isCommittee()) setMe(r.member_id);
       if (r.created) await reboot();
       const slots = wk.slots.filter((x) => st.slot_ids.has(x.id));
       main.innerHTML = `<div class="card su-done"><div class="su-done-icon">${I.check}</div>
-        <h2>${r.updated ? "Sign-up updated" : "You're signed up"}${isAdmin() ? "" : `, ${esc(r.member_name.split(" ")[0])}`}!</h2>
-        <p class="muted">${isAdmin() ? `Saved for ${esc(r.member_name)}.` : "The crews will appear on the schedule once they're published."}${r.created ? " Your name has been added to the club list." : ""}</p>
+        <h2>${r.updated ? "Sign-up updated" : "You're signed up"}${isCommittee() ? "" : `, ${esc(r.member_name.split(" ")[0])}`}!</h2>
+        <p class="muted">${isCommittee() ? `Saved for ${esc(r.member_name)}.` : "The crews will appear on the schedule once they're published."}${r.created ? " Your name has been added to the club list." : ""}</p>
         ${slots.length ? `<div class="su-done-list">${slots.map((x) => `<div><b>${DAY[dow(x.date)]} ${fmtShort(x.date)}</b> <span class="tnum">${esc(tRange(x))}</span> ${slotChip(x.kind)}</div>`).join("")}</div>` : ""}
         <div class="toolbar" style="justify-content:center"><button class="btn" id="su-edit">Edit my answers</button><a class="btn primary" href="#/schedule">Go to schedule</a></div></div>`;
       $("#su-edit").onclick = () => { st.member_id = r.member_id; st.new_name = ""; pageSignup(); };
@@ -1978,12 +1978,12 @@ function nameField(container, st, onPick) {
   sync();
 }
 
-// ---- admin: manage sessions & responses ----
-async function pageSignupAdmin() {
+// ---- committee: manage sessions & responses ----
+async function pageSignupCommittee() {
   if (!S.suWeek) S.suWeek = addDays(S.boot.this_week, 7);
   if (!S.suTab) S.suTab = "responses";
   let d;
-  try { d = await api(`/api/admin/signup/${S.suWeek}`); } catch (e) { return fail(e); }
+  try { d = await api(`/api/committee/signup/${S.suWeek}`); } catch (e) { return fail(e); }
   const ws = d.week.week_start, main = $("#main");
   const R = d.responses;
   const nRow = R.filter((r) => ["rower", "both"].includes(r.role)).length, nCox = R.filter((r) => ["cox", "both"].includes(r.role)).length;
@@ -2018,14 +2018,14 @@ async function pageSignupAdmin() {
       <div class="card card-pad" style="margin-bottom:14px"><label class="field"><span>Message shown at the top of the form (optional)</span>
         <div style="display:flex;gap:8px"><input class="input" id="sw-note" value="${esc(d.week.note)}" placeholder="e.g. Please sign up by Friday 6pm. Ergs are in the college gym."><button class="btn" id="sw-note-save">Save</button></div></label></div>
       ${d.slots.length ? Object.entries(byDay).map(([day, list]) => `<div class="section-title" style="margin-top:14px">${DAYL[dow(day)]} · ${fmtShort(day)}</div>
-        <div class="slot-admin">${list.map((sl) => `<div class="card slot-row" data-id="${sl.id}">
+        <div class="slot-committee">${list.map((sl) => `<div class="card slot-row" data-id="${sl.id}">
           <div class="slot-time tnum">${esc(tRange(sl) || "TBC")}</div>${slotChip(sl.kind)}
           <div class="slot-meta" style="flex:1">${esc([sl.location, sl.note].filter(Boolean).join(" · "))}</div>
           <div class="slot-counts"><span title="Free in total"><b>${sl.count}</b> free</span><span title="Rowers">${sl.rowers} row</span><span title="Coxes">${sl.coxes} cox</span><span title="Can bankride">${sl.bankriders} BR</span></div>
           <button class="btn sm" data-mk="${sl.id}">${I.plus}Create session</button>
           <button class="btn sm ghost" data-ed="${sl.id}">Edit</button></div>`).join("")}</div>`).join("")
         : `<div class="card empty">${I.calendar}<h3>No sessions listed</h3><p>Add the water, erg and tank sessions people can sign up for, or copy last week's.</p></div>`}`;
-    $("#sw-note-save").onclick = async () => { await api(`/api/admin/signup/${ws}`, { method: "PUT", body: { open: d.week.open, note: $("#sw-note").value } }).catch(fail); toast("Message saved"); };
+    $("#sw-note-save").onclick = async () => { await api(`/api/committee/signup/${ws}`, { method: "PUT", body: { open: d.week.open, note: $("#sw-note").value } }).catch(fail); toast("Message saved"); };
     $$("[data-ed]").forEach((b) => b.onclick = () => editSlot(d.slots.find((x) => x.id === +b.dataset.ed), ws));
     $$("[data-mk]").forEach((b) => b.onclick = () => {
       const sl = d.slots.find((x) => x.id === +b.dataset.mk);
@@ -2034,7 +2034,7 @@ async function pageSignupAdmin() {
     });
     $("#sw-add").onclick = () => editSlot(null, ws);
     $("#sw-copy").onclick = async () => {
-      try { const r = await api(`/api/admin/signup/${ws}/copy-slots`, { method: "POST", body: { source: addDays(ws, -7) } }); toast(`Copied ${r.copied} session${r.copied === 1 ? "" : "s"}`); pageSignupAdmin(); } catch (e) { fail(e); }
+      try { const r = await api(`/api/committee/signup/${ws}/copy-slots`, { method: "POST", body: { source: addDays(ws, -7) } }); toast(`Copied ${r.copied} session${r.copied === 1 ? "" : "s"}`); pageSignupCommittee(); } catch (e) { fail(e); }
     };
   } else if (S.suTab === "grid") {
     body.innerHTML = !R.length || !d.slots.length ? `<div class="card empty">${I.user}<h3>Nothing to show yet</h3><p>Responses will appear here as people sign up.</p></div>` :
@@ -2055,17 +2055,17 @@ async function pageSignupAdmin() {
     $$("tr[data-id]", body).forEach((tr) => tr.onclick = () => responseDetail(R.find((x) => x.id === +tr.dataset.id), d, roleShort));
     wireReveal(body);
   }
-  $$("#sw-tabs button").forEach((b) => b.onclick = () => { S.suTab = b.dataset.t; pageSignupAdmin(); });
-  const swx = $("#sw-export"); if (swx) swx.onclick = () => exportModal(`/api/admin/signup/${ws}/responses.csv`, `sign-ups for the week of ${fmtShort(ws)}`);
-  $("#sw-prev").onclick = () => { S.suWeek = addDays(ws, -7); pageSignupAdmin(); };
-  $("#sw-next").onclick = () => { S.suWeek = addDays(ws, 7); pageSignupAdmin(); };
+  $$("#sw-tabs button").forEach((b) => b.onclick = () => { S.suTab = b.dataset.t; pageSignupCommittee(); });
+  const swx = $("#sw-export"); if (swx) swx.onclick = () => exportModal(`/api/committee/signup/${ws}/responses.csv`, `sign-ups for the week of ${fmtShort(ws)}`);
+  $("#sw-prev").onclick = () => { S.suWeek = addDays(ws, -7); pageSignupCommittee(); };
+  $("#sw-next").onclick = () => { S.suWeek = addDays(ws, 7); pageSignupCommittee(); };
   const goSessions = $("#sw-go-sessions");
-  if (goSessions) goSessions.onclick = (e) => { e.preventDefault(); S.suTab = "sessions"; pageSignupAdmin().then(() => $("#sw-add")?.click()); };
+  if (goSessions) goSessions.onclick = (e) => { e.preventDefault(); S.suTab = "sessions"; pageSignupCommittee().then(() => $("#sw-add")?.click()); };
   const copyTop = $("#sw-copy-top");
   if (copyTop) copyTop.onclick = async (e) => {
     e.preventDefault();
-    try { const r = await api(`/api/admin/signup/${ws}/copy-slots`, { method: "POST", body: { source: addDays(ws, -7) } });
-      toast(r.copied ? `Copied ${r.copied} session${r.copied === 1 ? "" : "s"}` : "Last week had no sessions to copy", !r.copied); S.suTab = "sessions"; pageSignupAdmin(); } catch (err) { fail(err); }
+    try { const r = await api(`/api/committee/signup/${ws}/copy-slots`, { method: "POST", body: { source: addDays(ws, -7) } });
+      toast(r.copied ? `Copied ${r.copied} session${r.copied === 1 ? "" : "s"}` : "Last week had no sessions to copy", !r.copied); S.suTab = "sessions"; pageSignupCommittee(); } catch (err) { fail(err); }
   };
   $("#sw-toggle").onclick = async () => {
     if (!d.week.open && !d.slots.length) {
@@ -2079,10 +2079,10 @@ async function pageSignupAdmin() {
           $$("[data-close]", m).forEach((b) => b.addEventListener("click", () => res(null)));
         },
       }));
-      if (go === "add") { S.suTab = "sessions"; await pageSignupAdmin(); $("#sw-add")?.click(); return; }
+      if (go === "add") { S.suTab = "sessions"; await pageSignupCommittee(); $("#sw-add")?.click(); return; }
       if (go !== "open") return;
     }
-    try { await api(`/api/admin/signup/${ws}`, { method: "PUT", body: { open: !d.week.open, note: d.week.note } }); toast(d.week.open ? "Sign-ups closed" : "Sign-ups are open"); pageSignupAdmin(); } catch (e) { fail(e); }
+    try { await api(`/api/committee/signup/${ws}`, { method: "PUT", body: { open: !d.week.open, note: d.week.note } }); toast(d.week.open ? "Sign-ups closed" : "Sign-ups are open"); pageSignupCommittee(); } catch (e) { fail(e); }
   };
 }
 
@@ -2105,11 +2105,11 @@ function responseDetail(r, d, roleShort) {
       const dp = $("#rd-delphone", m);
       if (dp) dp.onclick = async () => {
         if (!await confirmBox(`Delete ${esc(r.name)}'s phone number?`, "It's removed from the club's records. They'll be asked for it again next time they sign up.", "Delete number", true)) return;
-        try { await api(`/api/admin/members/${r.member_id}/phone`, { method: "DELETE" }); toast("Phone number deleted"); pageSignupAdmin(); } catch (e) { fail(e); }
+        try { await api(`/api/committee/members/${r.member_id}/phone`, { method: "DELETE" }); toast("Phone number deleted"); pageSignupCommittee(); } catch (e) { fail(e); }
       };
       $("#rd-del", m).onclick = async () => {
         if (!await confirmBox("Delete this response?", `${esc(r.name)}'s sign-up for this week will be removed. Their member record stays.`, "Delete", true)) return;
-        try { await api(`/api/admin/signup/responses/${r.id}`, { method: "DELETE" }); toast("Response deleted"); pageSignupAdmin(); } catch (e) { fail(e); }
+        try { await api(`/api/committee/signup/responses/${r.id}`, { method: "DELETE" }); toast("Response deleted"); pageSignupCommittee(); } catch (e) { fail(e); }
       };
     },
   });
@@ -2134,15 +2134,15 @@ async function editSlot(sl, ws, tpl) {
       $("#sl-save", m).onclick = async () => {
         const body = { date: $("#sl-date", m).value, time: $("#sl-time", m).value.trim(), end_time: $("#sl-end", m).value.trim(), kind, location: $("#sl-loc", m).value, note: $("#sl-note", m).value };
         try {
-          await api(sl ? `/api/admin/signup/slots/${sl.id}` : "/api/admin/signup/slots", { method: sl ? "PUT" : "POST", body });
-          const more = $("#sl-more", m)?.checked; close(); toast("Session saved"); await pageSignupAdmin();
+          await api(sl ? `/api/committee/signup/slots/${sl.id}` : "/api/committee/signup/slots", { method: sl ? "PUT" : "POST", body });
+          const more = $("#sl-more", m)?.checked; close(); toast("Session saved"); await pageSignupCommittee();
           if (more) editSlot(null, ws, { ...body, time: "", end_time: "" });
         } catch (e) { fail(e); }
       };
       const del = $("#sl-del", m);
       if (del) del.onclick = async () => {
         if (!await confirmBox("Delete this session?", "Anyone who ticked it loses that availability.", "Delete", true)) return;
-        try { await api(`/api/admin/signup/slots/${sl.id}`, { method: "DELETE" }); toast("Session deleted"); pageSignupAdmin(); } catch (e) { fail(e); }
+        try { await api(`/api/committee/signup/slots/${sl.id}`, { method: "DELETE" }); toast("Session deleted"); pageSignupCommittee(); } catch (e) { fail(e); }
       };
     },
   });
@@ -2160,10 +2160,10 @@ function editPlace(p, after) {
       $("#pl-save", m).onclick = async () => {
         const body = { name: $("#pl-name", m).value.trim(), address: $("#pl-addr", m).value.trim(), coords: $("#pl-coords", m).value.trim() };
         if (!body.name) return toast("Give the place a name", true);
-        try { await api(p ? `/api/admin/places/${p.id}` : "/api/admin/places", { method: p ? "PUT" : "POST", body }); close(); toast("Place saved"); after && after(); } catch (e) { fail(e); }
+        try { await api(p ? `/api/committee/places/${p.id}` : "/api/committee/places", { method: p ? "PUT" : "POST", body }); close(); toast("Place saved"); after && after(); } catch (e) { fail(e); }
       };
       const d = $("#pl-del", m);
-      if (d) d.onclick = async () => { try { await api(`/api/admin/places/${p.id}`, { method: "DELETE" }); close(); toast("Place deleted"); after && after(); } catch (e) { fail(e); } };
+      if (d) d.onclick = async () => { try { await api(`/api/committee/places/${p.id}`, { method: "DELETE" }); close(); toast("Place deleted"); after && after(); } catch (e) { fail(e); } };
     },
   });
 }
@@ -2177,7 +2177,7 @@ function raceCard(r, data) {
   const mine = r.responses.find((x) => x.member_id === S.me);
   const eligible = raceEligible(r, me);
   const locked = r.past || !r.open;
-  const canRespond = isAdmin() || (!locked && (!me || eligible));
+  const canRespond = isCommittee() || (!locked && (!me || eligible));
   const groups = ["yes", "maybe", "no"].map((k) => [k, r.responses.filter((x) => x.status === k)]);
   let respond;
   if (!canRespond) respond = `<div class="small muted">${r.past ? "This race has happened." : !r.open ? "Sign-up is closed." : `For ${esc(data.entry[r.entry].toLowerCase())} only.`}${mine ? ` You said <b>${esc(RACE_ST[mine.status][0].toLowerCase())}</b>.` : ""}</div>`;
@@ -2189,16 +2189,16 @@ function raceCard(r, data) {
     <div class="race-head"><div class="datebox"><span>${DAY[dow(r.date)]}</span><b>${d.getUTCDate()}</b><span>${MON[d.getUTCMonth()]}</span></div>
       <div style="flex:1;min-width:0"><div class="race-title">${esc(r.title)}</div>
         <div class="o-sub">${r.city ? `<span>${I.pin}${esc(r.city)}</span>` : ""}${r.time_slot ? `<span>${esc(r.time_slot)}</span>` : ""}${r.term ? `<span>${esc(r.term)}</span>` : ""}</div></div>
-      ${isAdmin() ? `<button class="btn sm" data-race-edit>Edit</button>` : ""}</div>
+      ${isCommittee() ? `<button class="btn sm" data-race-edit>Edit</button>` : ""}</div>
     <div class="race-chips"><span class="chip ${r.entry === "novice" ? "accent" : r.entry === "senior" ? "violet" : ""}">${esc(data.entry[r.entry])}</span>${r.race_type ? `<span class="chip">${esc(r.race_type)}</span>` : ""}${!r.open && !r.past ? `<span class="chip warn">Sign-up closed</span>` : ""}</div>
     ${r.notes ? `<div class="race-notes small">${esc(r.notes)}</div>` : ""}
     ${r.links.length ? `<div class="race-links">${r.links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${I.link}${esc(l.label || l.url.replace(/^https?:\/\//, "").replace(/\/$/, ""))}</a>`).join("")}</div>` : ""}
     ${respond}
-    <details class="race-who"${isAdmin() ? " open" : ""}><summary><span class="chip ok">${r.counts.yes} available</span><span class="chip warn">${r.counts.maybe} maybe</span><span class="chip bad">${r.counts.no} not</span></summary>
+    <details class="race-who"${isCommittee() ? " open" : ""}><summary><span class="chip ok">${r.counts.yes} available</span><span class="chip warn">${r.counts.maybe} maybe</span><span class="chip bad">${r.counts.no} not</span></summary>
       ${r.responses.length ? groups.filter(([, l]) => l.length).map(([k, l]) => `<div class="race-group"><div class="faint small">${RACE_ST[k][0]}</div>${l.map((x) => `<div class="race-person ${x.member_id === S.me ? "me" : ""}">
-        <span>${esc(x.name)} <span class="faint small">${esc(x.category)}</span>${x.comment && isAdmin() ? ` <span class="small muted">“${esc(x.comment)}”</span>` : ""}</span>
-        ${isAdmin() ? `<button class="btn ghost sm" data-race-set="${x.member_id}">Change</button>` : ""}</div>`).join("")}</div>`).join("") : `<div class="faint small">No responses yet.</div>`}
-      ${isAdmin() ? `<button class="btn sm" data-race-set="">${I.plus}Add response for someone</button>` : ""}
+        <span>${esc(x.name)} <span class="faint small">${esc(x.category)}</span>${x.comment && isCommittee() ? ` <span class="small muted">“${esc(x.comment)}”</span>` : ""}</span>
+        ${isCommittee() ? `<button class="btn ghost sm" data-race-set="${x.member_id}">Change</button>` : ""}</div>`).join("")}</div>`).join("") : `<div class="faint small">No responses yet.</div>`}
+      ${isCommittee() ? `<button class="btn sm" data-race-set="">${I.plus}Add response for someone</button>` : ""}
     </details>
   </article>`;
 }
@@ -2209,21 +2209,21 @@ async function pageRaces() {
   S.raceTab = S.raceTab || "upcoming";
   const shown = data.races.filter((r) => (S.raceTab === "past") === r.past);
   if (S.raceTab === "past") shown.reverse();
-  const admin = isAdmin();
+  const committee = isCommittee();
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>Races</h1><p>Upcoming regattas and head races. Say whether you can race so the coaches can put crews together.</p></div>
       <div class="toolbar"><div class="seg" id="rc-tab"><button data-t="upcoming" class="${S.raceTab === "upcoming" ? "on" : ""}">Upcoming</button><button data-t="past" class="${S.raceTab === "past" ? "on" : ""}">Past</button></div>
-      ${admin ? `<button class="btn primary" id="rc-add">${I.plus}Add race</button>` : ""}</div></div>
+      ${committee ? `<button class="btn primary" id="rc-add">${I.plus}Add race</button>` : ""}</div></div>
     ${shown.length ? `<div class="race-list">${shown.map((r) => raceCard(r, data)).join("")}</div>`
-      : `<div class="card empty">${I.flag}<h3>${S.raceTab === "past" ? "No past races" : "No races planned yet"}</h3><p>${admin && S.raceTab === "upcoming" ? "Add a race so rowers can say whether they're available." : "Races will show up here once a coach adds them."}</p></div>`}`;
+      : `<div class="card empty">${I.flag}<h3>${S.raceTab === "past" ? "No past races" : "No races planned yet"}</h3><p>${committee && S.raceTab === "upcoming" ? "Add a race so rowers can say whether they're available." : "Races will show up here once a coach adds them."}</p></div>`}`;
   $$("#rc-tab button").forEach((b) => b.onclick = () => { S.raceTab = b.dataset.t; pageRaces(); });
-  if (admin) $("#rc-add").onclick = () => editRace(null, data);
+  if (committee) $("#rc-add").onclick = () => editRace(null, data);
   $$(".race[data-race]").forEach((card) => {
     const r = data.races.find((x) => x.id === +card.dataset.race);
     const e = $("[data-race-edit]", card); if (e) e.onclick = () => editRace(r, data);
     $$("[data-race-st]", card).forEach((b) => b.onclick = () => requireMe(async () => {
       const me = S.boot.members.find((m) => m.id === S.me);
-      if (!admin && !raceEligible(r, me)) return toast(`This race is for ${data.entry[r.entry].toLowerCase()} only`, true);
+      if (!committee && !raceEligible(r, me)) return toast(`This race is for ${data.entry[r.entry].toLowerCase()} only`, true);
       const mine = r.responses.find((x) => x.member_id === S.me);
       try {
         if (mine?.status === b.dataset.raceSt) await api(`/api/races/${r.id}/response/${S.me}`, { method: "DELETE" });
@@ -2242,9 +2242,9 @@ function raceResponseModal(r, memberId) {
   const who = memberId != null ? S.boot.members.find((m) => m.id === memberId)?.name || cur?.name : null;
   modal({
     title: esc(r.title),
-    body: `${isAdmin() && memberId == null ? `<label class="field"><span>Rower</span><div id="rr-who"></div></label>` : `<div><b>${esc(who || "")}</b></div>`}
+    body: `${isCommittee() && memberId == null ? `<label class="field"><span>Rower</span><div id="rr-who"></div></label>` : `<div><b>${esc(who || "")}</b></div>`}
       <div class="field"><span>Can they race?</span><div class="seg" id="rr-st">${Object.entries(RACE_ST).map(([k, [l]]) => `<button type="button" data-v="${k}" class="${status === k ? "on " + k : ""}">${esc(l)}</button>`).join("")}</div></div>
-      <label class="field"><span>Note (optional)</span><textarea class="input" id="rr-c" rows="2" maxlength="500" placeholder="e.g. Can only do the morning division">${esc(cur?.comment || "")}</textarea><span class="hint">Only coaches see notes.</span></label>`,
+      <label class="field"><span>Note (optional)</span><textarea class="input" id="rr-c" rows="2" maxlength="500" placeholder="e.g. Can only do the morning division">${esc(cur?.comment || "")}</textarea><span class="hint">Only the committee sees notes.</span></label>`,
     foot: `${cur ? `<button class="btn danger" id="rr-del">Remove response</button>` : ""}<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="rr-save">Save</button></div>`,
     onMount: (m, close) => {
       const box = $("#rr-who", m);
@@ -2292,12 +2292,12 @@ function editRace(r, data) {
           links: links.filter((l) => l.url.trim()) };
         if (!body.title) return toast("Title is required", true);
         if (!body.date) return toast("Pick a date", true);
-        try { await api(r ? `/api/admin/races/${r.id}` : "/api/admin/races", { method: r ? "PUT" : "POST", body }); close(); toast("Race saved"); pageRaces(); } catch (e) { fail(e); }
+        try { await api(r ? `/api/committee/races/${r.id}` : "/api/committee/races", { method: r ? "PUT" : "POST", body }); close(); toast("Race saved"); pageRaces(); } catch (e) { fail(e); }
       };
       const d = $("#r-del", m);
       if (d) d.onclick = async () => {
         if (!await confirmBox(`Delete ${esc(r.title)}?`, "This also removes everyone's responses for it.", "Delete", true)) return;
-        try { await api(`/api/admin/races/${r.id}`, { method: "DELETE" }); toast("Race deleted"); pageRaces(); } catch (e) { fail(e); }
+        try { await api(`/api/committee/races/${r.id}`, { method: "DELETE" }); toast("Race deleted"); pageRaces(); } catch (e) { fail(e); }
       };
     },
   });
