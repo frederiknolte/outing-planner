@@ -12,7 +12,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -22,7 +22,6 @@ from . import db
 from .auth import require_committee, require_member, role_of
 from . import privacy
 from . import river
-from .importer import import_workbook
 from .timeutil import normalize as norm_time, to_minutes
 from .calendar import router as calendar_router
 from .signup import availability_for_outing, router as signup_router
@@ -1290,19 +1289,6 @@ def settings_reset_pw(_: str = Depends(require_committee)):
     with db.get_conn() as conn:
         db.set_setting(conn, "member_password_hash", "")
         return {"ok": True}
-
-
-@app.post("/api/committee/import")
-async def import_xlsx(file: UploadFile = File(...), include_schedule: bool = Form(False),
-                      _: str = Depends(require_committee)):
-    data = await file.read()
-    if len(data) > 10 * 1024 * 1024:
-        raise HTTPException(400, "File too large")
-    with db.get_conn() as conn:
-        try:
-            return import_workbook(conn, data, include_schedule)
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(400, f"Could not read workbook: {e}")
 
 
 @app.get("/api/committee/backup")

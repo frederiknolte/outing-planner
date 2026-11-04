@@ -1,6 +1,6 @@
 """Committee to-do list and handbook (committee only).
 
-Replaces the committee's Word to-do table. Each task has a title, priority, plan
+The committee's to-do list. Each task has a title, priority, plan
 of action, who is doing it, an optional due date, a status, and a timeline of
 updates (the old "Completion/update" column, but with history). Yearly tasks
 (insurance, BR affiliation, safety audit, ...) come back with next year's due date
@@ -9,20 +9,12 @@ to the boat issue tracker.
 
 The handbook is free text for standing information (contacts, how-tos) that the
 committee hands over each year.
-
-The Word import reads the first table whose header row looks like a to-do list,
-plus the paragraphs after it (for the handbook), using only the standard library.
 """
 from __future__ import annotations
 
-import io
-import re
-import zipfile
 from datetime import date
-from typing import Optional
-from xml.etree import ElementTree as ET
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from . import db
@@ -34,8 +26,6 @@ router = APIRouter()
 STATUSES = {"open": "To do", "in_progress": "In progress", "waiting": "Waiting", "done": "Done"}
 PRIORITIES = {"high": "High", "medium": "Medium", "low": "Low", "": "No priority"}
 PRIORITY_RANK = {"high": 3, "medium": 2, "low": 1, "": 0}
-MAX_DOCX = 5 * 1024 * 1024
-MAX_XML = 20 * 1024 * 1024
 
 
 class TaskIn(BaseModel):
@@ -217,117 +207,3 @@ def handbook_set(b: HandbookIn, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         db.set_setting(conn, "committee_handbook", b.text.strip())
         return {"ok": True}
-
-
-# --------------------------------------------------------- Word import ----
-W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-COLUMNS = {  # field -> header keywords
-    "title": ("issue", "task", "item", "what"),
-    "priority": ("priority",),
-    "plan": ("plan", "action", "description", "detail"),
-    "owner": ("person", "who", "owner", "responsible", "lead"),
-    "update": ("update", "completion", "progress", "status"),
-}
-
-
-def _para_text(p) -> str:
-    out = []
-    for el in p.iter():
-        if el.tag == W + "t":
-            out.append(el.text or "")
-        elif el.tag in (W + "tab",):
-            out.append(" ")
-        elif el.tag in (W + "br", W + "cr"):
-            out.append("\n")
-    return " ".join("".join(out).split(" ")).strip()
-
-
-def _cell_text(tc) -> str:
-    return "\n".join(t for t in (_para_text(p) for p in tc.iter(W + "p")) if t)
-
-
-def _priority(text: str) -> tuple[str, str]:
-    """('high'|'medium'|'low'|'', note): the highest level mentioned, plus the original text if it says more."""
-    t = text.lower()
-    found = [k for k in ("high", "medium", "low") if re.search(rf"\b{k}", t)]
-    level = max(found, key=PRIORITY_RANK.get) if found else ""
-    extra = text.strip() if text.strip() and text.strip().lower() != level else ""
-    return level, ("" if re.fullmatch(r"[?\s]*", extra) else extra)
-
-
-def parse_docx(data: bytes) -> dict:
-    try:
-        z = zipfile.ZipFile(io.BytesIO(data))
-        info = z.getinfo("word/document.xml")
-    except (zipfile.BadZipFile, KeyError):
-        raise HTTPException(400, "That isn't a Word (.docx) document")
-    if info.file_size > MAX_XML:
-        raise HTTPException(400, "The document is too large")
-    try:
-        root = ET.fromstring(z.read(info))
-    except ET.ParseError:
-        raise HTTPException(400, "Could not read the document")
-    body = root.find(W + "body")
-    rows, notes, cols, in_table_done = [], [], None, False
-    for el in body:
-        if el.tag == W + "tbl" and cols is None:
-            trs = el.findall(W + "tr")
-            if not trs:
-                continue
-            header = [_cell_text(tc).lower() for tc in trs[0].findall(W + "tc")]
-            found = {}
-            for field, keys in COLUMNS.items():
-                for i, h in enumerate(header):
-                    if i not in found.values() and any(k in h for k in keys):
-                        found[field] = i
-                        break
-            if "title" not in found:
-                continue
-            cols = found
-            for tr in trs[1:]:
-                cells = [_cell_text(tc) for tc in tr.findall(W + "tc")]
-                get = lambda f: cells[cols[f]] if f in cols and cols[f] < len(cells) else ""  # noqa: E731
-                title = " ".join(get("title").split())
-                if title:
-                    rows.append({k: get(k) for k in COLUMNS} | {"title": title})
-            in_table_done = True
-        elif el.tag == W + "p" and in_table_done:
-            t = _para_text(el)
-            if t:
-                is_list = el.find(f"{W}pPr/{W}numPr") is not None
-                notes.append(("• " if is_list else "") + t)
-    if cols is None:
-        raise HTTPException(400, "No to-do table found. The first row needs a heading such as “Issue” or “Task”")
-    return {"rows": rows, "notes": "\n".join(notes)}
-
-
-@router.post("/api/committee/tasks/import")
-async def tasks_import(file: UploadFile = File(...), notes_to_handbook: bool = Form(True), _: str = Depends(require_committee)):
-    data = await file.read(MAX_DOCX + 1)
-    if len(data) > MAX_DOCX:
-        raise HTTPException(400, "File too large")
-    parsed = parse_docx(data)
-    who = "Word to-do list"     # the updates were written in the document, not by whoever imports it
-    added = skipped = 0
-    with db.get_conn() as conn:
-        # skip tasks already on the list, and ones that were moved to the boat issue tracker
-        have = {r[0].lower() for r in conn.execute("SELECT title FROM tasks UNION SELECT title FROM boat_issues")}
-        for r in parsed["rows"]:
-            title = r["title"][:300]
-            if title.lower() in have:
-                skipped += 1
-                continue
-            level, pnote = _priority(r["priority"])
-            plan = "\n".join(x for x in [r["plan"], f"Priority: {pnote}" if pnote else ""] if x)
-            v = {"title": title, "priority": level, "plan": plan[:8000], "owner": " ".join(r["owner"].split())[:200],
-                 "due": "", "repeat_yearly": 0}
-            _insert(conn, v, who, r["update"][:4000])
-            have.add(title.lower())
-            added += 1
-        notes_added = False
-        if notes_to_handbook and parsed["notes"]:
-            cur = db.get_settings(conn).get("committee_handbook", "")
-            if parsed["notes"] not in cur:
-                db.set_setting(conn, "committee_handbook", (cur + "\n\n" if cur else "") + parsed["notes"])
-                notes_added = True
-        return {"added": added, "skipped": skipped, "notes_added": notes_added}

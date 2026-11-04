@@ -1718,7 +1718,7 @@ async function pageTasks() {
   const nOpen = d.tasks.filter((t) => t.status !== "done").length;
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>Committee to-do</h1><p>${nOpen} open task${nOpen === 1 ? "" : "s"}. Only the committee can see this list.</p></div>
-      <div class="toolbar"><button class="btn" id="tk-import">${I.upload}Import from Word</button><button class="btn primary" id="tk-new">${I.plus}New task</button></div></div>
+      <div class="toolbar"><button class="btn primary" id="tk-new">${I.plus}New task</button></div></div>
     ${d.open_boat_issues ? `<div class="callout" style="margin-bottom:14px">${I.boat}<div>Problems with a specific boat are tracked under <a href="#/issues">Boat park → Issues</a> (${d.open_boat_issues} open). Use <b>Move to boat issues</b> on a task that's really about one boat.</div></div>` : ""}
     <div class="filters">
       <input class="input" id="tk-q" placeholder="Search tasks…" style="max-width:240px" value="${esc(S.taskQ || "")}">
@@ -1731,9 +1731,9 @@ async function pageTasks() {
           ${t.latest ? `<div class="task-latest small"><b>${esc(t.latest.author || "Update")}:</b> ${esc(t.latest.note)}</div>` : ""}</div>
         <div class="issue-chips">${t.priority ? `<span class="chip ${TASK_PRI[t.priority]}">${esc(d.priorities[t.priority])}</span>` : ""}${dueChip(t)}<span class="chip ${TASK_ST[t.status]}">${esc(d.statuses[t.status])}</span></div>
       </button>`).join("")}</div>`
-      : `<div class="card empty">${I.todo}<h3>${d.tasks.length ? "Nothing here" : "No tasks yet"}</h3><p>${d.tasks.length ? "No tasks match these filters." : "Add the committee's to-do list, or import it from the Word document."}</p>${d.tasks.length ? "" : `<button class="btn primary" id="tk-import2">${I.upload}Import from Word</button>`}</div>`}`;
+      : `<div class="card empty">${I.todo}<h3>${d.tasks.length ? "Nothing here" : "No tasks yet"}</h3><p>${d.tasks.length ? "No tasks match these filters." : "Add the first task on the committee's to-do list."}</p>${d.tasks.length ? "" : `<button class="btn primary" id="tk-new2">${I.plus}New task</button>`}</div>`}`;
   $("#tk-new").onclick = () => editTask(null, d);
-  $("#tk-import").onclick = importTasks; const i2 = $("#tk-import2"); if (i2) i2.onclick = importTasks;
+  const n2 = $("#tk-new2"); if (n2) n2.onclick = () => editTask(null, d);
   $$("#tk-f button").forEach((b) => b.onclick = () => { S.taskFilter = b.dataset.f; pageTasks(); });
   const ow = $("#tk-owner"); if (ow) ow.onchange = (e) => { S.taskOwner = e.target.value; pageTasks(); };
   let tq; $("#tk-q").oninput = (e) => { clearTimeout(tq); tq = setTimeout(() => { S.taskQ = e.target.value; pageTasks().then(() => { const i = $("#tk-q"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 250); };
@@ -1835,35 +1835,13 @@ async function moveTaskToBoat(t) {
   });
 }
 
-function importTasks() {
-  modal({
-    title: "Import to-do list from Word",
-    body: `<p class="muted" style="margin:0">Choose the committee's .docx to-do list. Each row of its table becomes a task: the first column is the task, and columns headed <i>Priority</i>, <i>Plan of action</i>, <i>Person</i> and <i>Update</i> fill in the rest. Tasks already on the list, or already moved to boat issues, are skipped (same title), so importing again is safe.</p>
-      <input class="input" type="file" id="im-file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
-      <label class="check"><input type="checkbox" id="im-notes" checked> Add the notes below the table to the Handbook</label>`,
-    foot: `<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="im-go">${I.upload}Import</button></div>`,
-    onMount: (m, close) => {
-      $("#im-go", m).onclick = async () => {
-        const f = $("#im-file", m).files[0];
-        if (!f) return toast("Choose a .docx file", true);
-        const fd = new FormData(); fd.append("file", f); fd.append("notes_to_handbook", $("#im-notes", m).checked ? "true" : "false");
-        const btn = $("#im-go", m); btn.disabled = true;
-        try {
-          const r = await api("/api/committee/tasks/import", { method: "POST", body: fd });
-          close(); toast(`Imported ${r.added} task${r.added === 1 ? "" : "s"}${r.skipped ? ` · ${r.skipped} already on the list` : ""}${r.notes_added ? " · notes added to the Handbook" : ""}`); rerender();
-        } catch (e) { fail(e); btn.disabled = false; }
-      };
-    },
-  });
-}
-
 async function pageHandbook() {
   let h;
   try { h = await api("/api/committee/handbook"); } catch (e) { return fail(e); }
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>Committee handbook</h1><p>Standing information to hand over each year: contacts, how-tos and reminders. Only the committee can see this.</p></div>
       <div class="toolbar"><button class="btn primary" id="hb-edit">Edit</button></div></div>
-    <div class="card card-pad handbook">${h.text ? richText(h.text) : `<span class="faint">Nothing written yet. Add contacts, procedures and reminders, or import them with the to-do list.</span>`}</div>`;
+    <div class="card card-pad handbook">${h.text ? richText(h.text) : `<span class="faint">Nothing written yet. Add contacts, procedures and reminders.</span>`}</div>`;
   $("#hb-edit").onclick = () => modal({
     title: "Edit handbook", wide: "xl",
     body: `<textarea class="input" id="hb-text" rows="20" maxlength="50000" placeholder="e.g. If there are any significant safety incidents, report them to British Rowing at incidentreporting.britishrowing.org">${esc(h.text)}</textarea>
@@ -1951,14 +1929,6 @@ async function pageSettings() {
           <div class="toolbar"><button class="btn" id="s-river-save">Save river settings</button><button class="btn ghost" id="s-river-refresh">Check flag now</button><button class="btn ghost" id="s-river-rules">View rules</button></div>
         </div>
         <div class="card card-pad" style="display:flex;flex-direction:column;gap:12px">
-          <h3 style="margin:0">Import from spreadsheet</h3>
-          <p class="muted small" style="margin:0">Upload the club's <b>Rowing_Outings.xlsx</b> to import members (swim tests, subs, category, cox status, past outing counts), coaches and term settings. Existing members are matched by name and updated.</p>
-          <input type="file" id="s-file" accept=".xlsx" class="input">
-          <label class="check small"><input type="checkbox" id="s-sched"> Also import that sheet's weekly schedule as sessions</label>
-          <div><button class="btn" id="s-import">${I.upload}Import</button></div>
-          <div id="s-import-res"></div>
-        </div>
-        <div class="card card-pad" style="display:flex;flex-direction:column;gap:12px">
           <h3 style="margin:0">Places</h3>
           <p class="muted small" style="margin:0">Give the places you use (e.g. “Boathouse”) a full address. Sessions at that place then get a maps link, and calendar events carry the address so phones can navigate there. Add coordinates for an exact pin.</p>
           <div id="s-places" class="places-list"></div>
@@ -2035,16 +2005,6 @@ async function pageSettings() {
     try { await api("/api/committee/settings", { method: "PUT", body }); toast("Rower password updated"); pageSettings(); } catch (e) { fail(e); }
   };
   const r = $("#s-mpw-reset"); if (r) r.onclick = async () => { await api("/api/committee/settings/reset-member-password", { method: "POST" }).catch(fail); toast("Using server password"); pageSettings(); };
-  $("#s-import").onclick = async () => {
-    const f = $("#s-file").files[0];
-    if (!f) return toast("Choose a file first", true);
-    const fd = new FormData(); fd.append("file", f); fd.append("include_schedule", $("#s-sched").checked ? "true" : "false");
-    try {
-      const res = await api("/api/committee/import", { method: "POST", body: fd });
-      $("#s-import-res").innerHTML = `<div class="callout">${I.check}<div>Imported: <b>${res.members_added}</b> new members, <b>${res.members_updated}</b> updated, <b>${res.coaches}</b> coaches${res.outings ? `, <b>${res.outings}</b> sessions` : ""}.</div></div>`;
-      await reboot();
-    } catch (e) { fail(e); }
-  };
 }
 
 // ---------------------------------------------------------------- sign-up --
