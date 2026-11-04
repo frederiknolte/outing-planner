@@ -37,6 +37,7 @@ Everything the app stores lives in one folder inside the container, `/data`:
 | `outings.db` (+ `-wal`/`-shm` while running) | The SQLite database: members, boats, sessions, sign-ups, settings |
 | `.secret_key` | Signs login cookies, so people stay signed in across restarts |
 | `backup.db` | Written when an admin downloads a backup |
+| `photos/` | Photos attached to boat issues (not included in the database backup) |
 
 Map a host folder to `/data`, e.g. `/mnt/user/appdata/outing-planner`. When the container starts, it gives that folder to `PUID:PGID` (default `99:100`, Unraid's `nobody:users`) and runs the app as that user, so you don't need to set permissions yourself.
 
@@ -62,7 +63,7 @@ First build the image on the server (`docker build -t outing-planner:latest .` i
 - Variables: `ADMIN_PASSWORD`, `MEMBER_PASSWORD`, `SECRET_KEY`, `PUID=99`, `PGID=100`, and `PUBLIC_URL` / `COOKIE_SECURE=1` if it's served over HTTPS
 - Extra Parameters: `--cap-add=NET_ADMIN` (needed for the built-in egress firewall; see the Tailscale Funnel section below)
 
-**Backups**: back up the whole folder. For a copy that's safe to take while the app is running, use **Settings → Data → Download database backup** in the app. If you copy `outings.db` by hand, stop the container first (or copy the `-wal` file along with it).
+**Backups**: back up the whole folder (it includes `photos/`). For a copy that's safe to take while the app is running, use **Settings → Data → Download database backup** in the app. If you copy `outings.db` by hand, stop the container first (or copy the `-wal` file along with it).
 
 ## Public access with Tailscale Funnel on Unraid, isolated from your network
 
@@ -99,6 +100,9 @@ Every private, LAN and Tailscale target should show `BLOCKED`, the internet chec
 ## Features
 
 - **Boat park**: admins add and edit boats (type, seats, coxed, rigging, notes). Each boat is *available*, *under repair* or *retired*. Retired boats are hidden from the session editor, and the editor warns when a boat under repair is picked or a boat is booked twice at the same time.
+- **Boat issues** (Boat park → *Issues*): anyone can report a problem with a boat (what's wrong, how serious: *Minor*, *Use with care* or *Do not use*, a description and photos), and anyone can add notes and more photos later. Admins move it through *Open → In repair → Waiting on parts → Fixed / Closed*, each status change recorded with an optional note, so every issue has a timeline of progress. Boat cards show how many issues are still open. Admins can edit or delete issues and delete photos.
+  - **Photos are compressed on the phone**, not the server: before uploading, the browser resizes each photo to at most 1600 px and saves it as a JPEG (typically 200–500 KB). This also removes the photo's metadata, including its GPS position. The server never opens or decodes images. It writes the upload straight to disk and rejects anything over 2 MB or that isn't a JPEG, PNG or WebP. This keeps memory use flat.
+  - **Storage limit**: photos may use 300 MB in total by default (**Settings → Data**, which also shows how much is used). Once it's full, new uploads are refused until photos are deleted or the limit is raised. Deleting an issue or a boat deletes its photo files too.
 - **Weekly schedule**: admins create water outings (pick a boat, which sets the seats) and land sessions. Seats are filled with a searchable picker that shows each person's eligibility. Admins can copy the previous week (with or without crews) and keep a week as a draft until they **Publish** it to rowers.
 - **Weekly sign-up** (replaces the Google Form): under **Sign-ups**, admins list the week's water, erg and tank sessions (or copy last week's), add an optional message, and open the form. Rowers give their name (picked from the list, or typed in full to add themselves as a new member flagged *New* for an admin to check), phone number, college (Reuben, Blackfriars, St Stephen's House or other), whether they're signing up as a rower, cox, both or bankrider/coach, how many rowing and coxing outings they want, side preference, the most outings they'll do that week, which sessions they're free for, and whether they can bankride. Sending the form again updates their answers. Admins see the responses, a people × sessions availability grid and per-session counts, and can export everything as CSV. **Create session** on a slot opens the outing editor already filled in, and the seat picker lists people who are free for that time first, with their side preference and how many outings they've been given out of their weekly maximum.
 - **Crew picking**: the session editor shows a **Signed up** panel next to the seats, listing everyone who said they're free for that session, grouped as coxes, rowers and people who can bankride. Fewest outings this week come first, and you can see side preference and how many outings each person has been given out of their weekly maximum. Click a name to put them in the boat (coxes go to the cox seat, and rowers go to their side: stroke side is the even seats, bow side the odd ones). Click it again to take them out, or click a seat's name first to choose exactly where the next person goes. People who signed up for other sessions that week are listed underneath.

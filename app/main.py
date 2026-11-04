@@ -28,6 +28,7 @@ from .calendar import router as calendar_router
 from .signup import availability_for_outing, router as signup_router
 from .stats import router as stats_router
 from .races import router as races_router
+from . import issues
 from .logic import (BOAT_TYPES, SUBS_PLANS, TERMS, TZ, Rules, monday_of, outing_payload,
                     seat_label, seat_list)
 
@@ -41,6 +42,8 @@ if ADMIN_PASSWORD == MEMBER_PASSWORD:
     raise SystemExit("ADMIN_PASSWORD and MEMBER_PASSWORD must be different.")
 
 db.init_db()
+if _n := issues.sweep_orphans():
+    print(f"[issues] removed {_n} photo file(s) with no matching issue", flush=True)
 with db.get_conn() as _c:
     _r = privacy.migrate(_c)
     if _r["encrypted"]:
@@ -505,7 +508,14 @@ def boats_list(role: str = Depends(require_member)):
             "SELECT boat_id, COUNT(*) n FROM outings WHERE boat_id IS NOT NULL GROUP BY boat_id")}
         nxt = {r["boat_id"]: r["d"] for r in conn.execute(
             "SELECT boat_id, MIN(date) d FROM outings WHERE boat_id IS NOT NULL AND date >= ? GROUP BY boat_id", (today,))}
+        open_issues = {}
+        for r in conn.execute("SELECT boat_id, severity FROM boat_issues WHERE status IN ('open', 'in_progress', 'waiting')"):
+            n, worst = open_issues.get(r["boat_id"], (0, ""))
+            if issues.SEVERITY_RANK[r["severity"]] > issues.SEVERITY_RANK.get(worst, 0):
+                worst = r["severity"]
+            open_issues[r["boat_id"]] = (n + 1, worst)
         for r in rows:
+            r["open_issues"], r["worst_issue"] = open_issues.get(r["id"], (0, ""))
             r["outings"] = usage.get(r["id"], 0)
             r["next_outing"] = nxt.get(r["id"])
         return {"boats": rows, "types": {k: {"seats": v[0], "coxed": bool(v[1])} for k, v in BOAT_TYPES.items()}}
@@ -545,6 +555,7 @@ def boat_update(boat_id: int, b: BoatIn, _: str = Depends(require_admin)):
 @app.delete("/api/admin/boats/{boat_id}")
 def boat_delete(boat_id: int, _: str = Depends(require_admin)):
     with db.get_conn() as conn:
+        issues.delete_boat_photos(conn, boat_id)
         conn.execute("DELETE FROM boats WHERE id=?", (boat_id,))
         return {"ok": True}
 
@@ -1322,6 +1333,7 @@ app.include_router(signup_router)
 app.include_router(calendar_router)
 app.include_router(stats_router)
 app.include_router(races_router)
+app.include_router(issues.router)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 

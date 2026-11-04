@@ -60,6 +60,7 @@ const isAdmin = () => S.role === "admin";
 async function api(path, opts = {}) {
   const init = { method: opts.method || "GET", headers: {}, credentials: "same-origin" };
   if (opts.body instanceof FormData) init.body = opts.body;
+  else if (opts.body instanceof Blob) { init.body = opts.body; init.headers["Content-Type"] = opts.body.type || "application/octet-stream"; }
   else if (opts.body !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(opts.body); }
   const r = await fetch(path, init);
   if (r.status === 401 && path !== "/api/login") { S.role = null; renderLogin(); throw new Error("Signed out"); }
@@ -1360,13 +1361,18 @@ const boatSvg = (seats, coxed) => {
 };
 
 async function pageBoats() {
-  let data;
-  try { data = await api("/api/admin/boats"); } catch (e) { return fail(e); }
+  let data, iss;
+  try { [data, iss] = await Promise.all([api("/api/admin/boats"), api("/api/issues")]); } catch (e) { return fail(e); }
   const admin = isAdmin();
   const avail = data.boats.filter((b) => b.status === "available").length;
+  const nActive = iss.issues.filter((i) => iss.active.includes(i.status)).length;
+  S.boatTab = S.boatTab || "boats";
+  const tabs = `<div class="seg" id="bt-tab"><button data-t="boats" class="${S.boatTab === "boats" ? "on" : ""}">Boats</button><button data-t="issues" class="${S.boatTab === "issues" ? "on" : ""}">Issues${nActive ? `<span class="count-pill">${nActive}</span>` : ""}</button></div>`;
+  const wireTabs = () => $$("#bt-tab button").forEach((b) => b.onclick = () => { S.boatTab = b.dataset.t; pageBoats(); });
+  if (S.boatTab === "issues") { pageIssues(data, iss, tabs); wireTabs(); return; }
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>Boat park</h1><p>${data.boats.length} boats · ${avail} available${data.boats.length - avail ? ` · ${data.boats.length - avail} out of service` : ""}</p></div>
-      ${admin ? `<div class="toolbar"><button class="btn primary" id="bt-add">${I.plus}Add boat</button></div>` : ""}</div>
+      <div class="toolbar">${tabs}<button class="btn" id="bt-report">${I.alert}Report an issue</button>${admin ? `<button class="btn primary" id="bt-add">${I.plus}Add boat</button>` : ""}</div></div>
     ${data.boats.length ? `<div class="boats">${data.boats.map((b) => `
       <article class="card boat ${b.status} ${admin ? "clickable" : ""}" data-id="${b.id}">
         <div class="boat-head"><div><div class="boat-name">${esc(b.name)}</div><div class="muted small">${esc(b.boat_type)} · ${b.seats} seat${b.seats > 1 ? "s" : ""}${b.coxed ? " + cox" : ""}</div></div>
@@ -1374,8 +1380,12 @@ async function pageBoats() {
         ${boatSvg(b.seats, b.coxed)}
         <div class="o-sub">${b.rigging ? `<span>${esc(b.rigging)}</span>` : ""}<span>${b.outings} outing${b.outings === 1 ? "" : "s"}</span>${b.next_outing ? `<span>Next: ${fmtShort(b.next_outing)}</span>` : ""}</div>
         ${b.notes ? `<div class="small muted">${esc(b.notes)}</div>` : ""}
+        ${b.open_issues ? `<button class="chip ${ISSUE_SEV[b.worst_issue]?.[1] || "warn"} chip-btn" data-boat-issues="${b.id}">${I.alert}${b.open_issues} open issue${b.open_issues === 1 ? "" : "s"}</button>` : ""}
       </article>`).join("")}</div>`
       : `<div class="card empty">${I.boat}<h3>No boats yet</h3><p>${admin ? "Add the club's fleet so outings can be assigned to specific boats." : "An admin hasn't added the fleet yet."}</p>${admin ? `<button class="btn primary" id="bt-add2">${I.plus}Add first boat</button>` : ""}</div>`}`;
+  wireTabs();
+  $("#bt-report").onclick = () => reportIssue(data.boats);
+  $$("[data-boat-issues]").forEach((b) => b.onclick = (e) => { e.stopPropagation(); S.issueBoat = +b.dataset.boatIssues; S.issueFilter = "active"; S.boatTab = "issues"; pageBoats(); });
   if (admin) {
     const add = () => editBoat(null, data.types);
     $("#bt-add").onclick = add; const a2 = $("#bt-add2"); if (a2) a2.onclick = add;
@@ -1406,6 +1416,185 @@ function editBoat(b, types) {
       if (d) d.onclick = async () => {
         if (!await confirmBox(`Delete ${esc(b.name)}?`, "Sessions using this boat keep their crews but lose the boat. Mark it “Retired” instead to keep history.", "Delete", true)) return;
         try { await api(`/api/admin/boats/${b.id}`, { method: "DELETE" }); toast("Boat deleted"); pageBoats(); } catch (e) { fail(e); }
+      };
+    },
+  });
+}
+
+// ------------------------------------------------------------ boat issues --
+const ISSUE_SEV = { minor: ["Minor", ""], caution: ["Use with care", "warn"], unusable: ["Do not use", "bad"] };
+const ISSUE_ST = { open: "bad", in_progress: "accent", waiting: "warn", fixed: "ok", closed: "" };
+const utcStamp = (s) => (s ? fmtStamp(s.replace(" ", "T") + "Z") : "");
+const fmtBytes = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+const PHOTO_EDGE = 1600, PHOTO_Q = 0.8, PHOTO_MAX = 2 * 1024 * 1024;
+
+/* Resize and re-encode a photo in the browser, so the server never has to decode it.
+   Re-encoding also drops EXIF metadata (e.g. the GPS position phones embed). */
+async function compressImage(file) {
+  let src, w, h, cleanup = () => {};
+  try {
+    src = await createImageBitmap(file, { imageOrientation: "from-image" });
+    w = src.width; h = src.height; cleanup = () => src.close();
+  } catch {
+    const url = URL.createObjectURL(file);
+    src = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error(`Can't read ${file.name}. Try a JPEG or PNG photo`)); im.src = url; });
+    w = src.naturalWidth; h = src.naturalHeight; cleanup = () => URL.revokeObjectURL(url);
+  }
+  try {
+    for (const [edge, q] of [[PHOTO_EDGE, PHOTO_Q], [1200, 0.7], [900, 0.6]]) {
+      const k = Math.min(1, edge / Math.max(w, h));
+      const c = document.createElement("canvas");
+      c.width = Math.round(w * k); c.height = Math.round(h * k);
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);   // transparent PNGs become white, not black
+      ctx.drawImage(src, 0, 0, c.width, c.height);
+      const blob = await new Promise((res) => c.toBlob(res, "image/jpeg", q));
+      c.width = c.height = 0;   // free the canvas memory straight away
+      if (blob && blob.size <= PHOTO_MAX) return blob;
+    }
+    throw new Error(`${file.name} is too large even after compressing`);
+  } finally { cleanup(); }
+}
+
+async function uploadPhotos(issueId, files, onProgress) {
+  let done = 0, saved = 0;
+  for (const f of files) {          // one at a time keeps memory low on phones
+    onProgress && onProgress(`Compressing photo ${done + 1} of ${files.length}…`);
+    try {
+      const blob = await compressImage(f);
+      onProgress && onProgress(`Uploading photo ${done + 1} of ${files.length} (${fmtBytes(blob.size)})…`);
+      await api(`/api/issues/${issueId}/photos?by=${encodeURIComponent(meName() || "")}`, { method: "POST", body: blob });
+      saved++;
+    } catch (e) { fail(e); }
+    done++;
+  }
+  return saved;
+}
+
+const photoPicker = (id) => `<div class="field"><span>Photos (optional)</span><input class="input" type="file" id="${id}" accept="image/*" multiple><span class="hint">Resized on your device before uploading, so big photos are fine.</span></div>`;
+
+function reportIssue(boats, boatId) {
+  const list = boats.filter((b) => b.status !== "retired" || b.id === boatId);
+  let sev = "minor";
+  modal({
+    title: "Report a boat issue",
+    body: `<div class="grid-2"><label class="field"><span>Boat</span><select class="input" id="ri-boat"><option value="">Choose a boat…</option>${list.map((b) => `<option value="${b.id}" ${b.id === boatId ? "selected" : ""}>${esc(b.name)}</option>`).join("")}</select></label>
+        <label class="field"><span>Your name</span><input class="input" id="ri-who" value="${esc(meName() || "")}" autocomplete="name"></label></div>
+      <label class="field"><span>What's wrong?</span><input class="input" id="ri-title" maxlength="150" placeholder="e.g. 3 seat rigger loose"></label>
+      <div class="field"><span>How serious?</span><div class="seg" id="ri-sev">${Object.entries(ISSUE_SEV).map(([k, [l]]) => `<button type="button" data-v="${k}" class="${k === sev ? "on" : ""}">${esc(l)}</button>`).join("")}</div></div>
+      <label class="field"><span>Description</span><textarea class="input" id="ri-desc" rows="4" maxlength="4000" placeholder="Where exactly, what happened, anything you already tried"></textarea></label>
+      ${photoPicker("ri-photos")}
+      <div class="small muted" id="ri-prog"></div>`,
+    foot: `<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="ri-save">${I.send}Report issue</button></div>`,
+    onMount: (m, close) => {
+      $$("#ri-sev button", m).forEach((b) => b.onclick = () => { sev = b.dataset.v; $$("#ri-sev button", m).forEach((x) => x.classList.toggle("on", x === b)); });
+      $("#ri-save", m).onclick = async () => {
+        const body = { boat_id: +$("#ri-boat", m).value, title: $("#ri-title", m).value.trim(), severity: sev, description: $("#ri-desc", m).value, reported_by: $("#ri-who", m).value.trim() };
+        if (!body.boat_id) return toast("Pick a boat", true);
+        if (!body.title) return toast("Say what's wrong", true);
+        if (!body.reported_by) return toast("Add your name", true);
+        const btn = $("#ri-save", m); btn.disabled = true;
+        try {
+          const r = await api("/api/issues", { method: "POST", body });
+          const files = [...$("#ri-photos", m).files];
+          if (files.length) await uploadPhotos(r.id, files, (t) => ($("#ri-prog", m).textContent = t));
+          close(); toast("Issue reported"); S.boatTab = "issues"; await pageBoats(); openIssue(r.id, boats);
+        } catch (e) { fail(e); btn.disabled = false; }
+      };
+    },
+  });
+}
+
+function pageIssues(data, iss, tabs) {
+  S.issueFilter = S.issueFilter || "active";
+  let shown = iss.issues.filter((i) => S.issueFilter === "all" || (S.issueFilter === "active") === iss.active.includes(i.status));
+  if (S.issueBoat) shown = shown.filter((i) => i.boat_id === S.issueBoat);
+  $("#main").innerHTML = `
+    <div class="page-head"><div><h1>Boat park</h1><p>Problems with the boats and how their repairs are going.</p></div>
+      <div class="toolbar">${tabs}<button class="btn primary" id="is-new">${I.plus}Report an issue</button></div></div>
+    <div class="toolbar" style="margin-bottom:14px">
+      <div class="seg" id="is-f">${[["active", "Open"], ["done", "Fixed & closed"], ["all", "All"]].map(([k, l]) => `<button data-f="${k}" class="${S.issueFilter === k ? "on" : ""}">${l}</button>`).join("")}</div>
+      <select class="input" id="is-boat" style="width:auto"><option value="">All boats</option>${data.boats.map((b) => `<option value="${b.id}" ${S.issueBoat === b.id ? "selected" : ""}>${esc(b.name)}</option>`).join("")}</select></div>
+    ${shown.length ? `<div class="issue-list">${shown.map((i) => `<button class="card issue-row" data-issue="${i.id}">
+        <div class="issue-main"><div class="issue-title">${esc(i.title)}</div>
+          <div class="o-sub"><span>${I.boat}${esc(i.boat_name)}</span><span>Reported by ${esc(i.reported_by)} · ${esc(utcStamp(i.created_at))}</span>${i.photos ? `<span>${i.photos} photo${i.photos === 1 ? "" : "s"}</span>` : ""}${i.notes ? `<span>${i.notes} note${i.notes === 1 ? "" : "s"}</span>` : ""}</div></div>
+        <div class="issue-chips"><span class="chip ${ISSUE_SEV[i.severity][1]}">${esc(ISSUE_SEV[i.severity][0])}</span><span class="chip ${ISSUE_ST[i.status]}">${esc(iss.statuses[i.status])}</span></div>
+      </button>`).join("")}</div>`
+      : `<div class="card empty">${I.check}<h3>${S.issueFilter === "active" ? "No open issues" : "Nothing here"}</h3><p>${S.issueFilter === "active" ? "All boats are in good shape. Spotted a problem? Report it so it can be fixed." : "No issues match these filters."}</p></div>`}`;
+  $("#is-new").onclick = () => reportIssue(data.boats, S.issueBoat || undefined);
+  $$("#is-f button").forEach((b) => b.onclick = () => { S.issueFilter = b.dataset.f; pageBoats(); });
+  $("#is-boat").onchange = (e) => { S.issueBoat = +e.target.value || null; pageBoats(); };
+  $$("[data-issue]").forEach((b) => b.onclick = () => openIssue(+b.dataset.issue, data.boats));
+}
+
+async function openIssue(id, boats) {
+  let i, meta;
+  try { [i, meta] = await Promise.all([api(`/api/issues/${id}`), api("/api/issues")]); } catch (e) { return fail(e); }
+  const admin = isAdmin(), st = meta.statuses;
+  const timeline = i.updates.map((u) => `<div class="tl-item"><div class="tl-dot ${u.status ? ISSUE_ST[u.status] || "" : ""}"></div><div>
+      <div class="small"><b>${esc(u.author || "Someone")}</b> ${u.status ? (u === i.updates[0] ? "reported this" : `set the status to <span class="chip ${ISSUE_ST[u.status]}">${esc(st[u.status])}</span>`) : "added a note"} <span class="faint">· ${esc(utcStamp(u.created_at))}</span></div>
+      ${u.note ? `<div class="tl-note">${esc(u.note)}</div>` : ""}</div></div>`).join("");
+  modal({
+    title: esc(i.title), wide: true,
+    body: `<div class="issue-chips"><span class="chip">${I.boat}${esc(i.boat_name)}</span><span class="chip ${ISSUE_SEV[i.severity][1]}">${esc(ISSUE_SEV[i.severity][0])}</span><span class="chip ${ISSUE_ST[i.status]}">${esc(st[i.status])}</span></div>
+      ${i.description ? `<div class="issue-desc">${esc(i.description)}</div>` : `<div class="faint small">No description.</div>`}
+      ${i.photos.length ? `<div class="photo-grid">${i.photos.map((p) => `<div class="photo"><a href="/api/issues/photos/${p.id}" target="_blank" rel="noopener"><img src="/api/issues/photos/${p.id}" loading="lazy" alt="Photo${p.uploaded_by ? ` from ${esc(p.uploaded_by)}` : ""}"></a>${admin ? `<button class="btn icon sm photo-del" data-del-photo="${p.id}" title="Delete photo" aria-label="Delete photo">${I.x}</button>` : ""}</div>`).join("")}</div>` : ""}
+      <div class="section-title" style="margin-top:6px">Progress</div>
+      <div class="timeline">${timeline}</div>
+      <div class="card-pad issue-add">
+        ${admin ? `<label class="field"><span>Status</span><select class="input" id="iu-st">${Object.entries(st).map(([k, l]) => `<option value="${k}" ${k === i.status ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` : ""}
+        <label class="field"><span>Add a note</span><textarea class="input" id="iu-note" rows="2" maxlength="4000" placeholder="${admin ? "e.g. Ordered a new gate, arriving Friday" : "e.g. Still loose after Tuesday's outing"}"></textarea></label>
+        <div class="grid-2"><label class="field"><span>Your name</span><input class="input" id="iu-who" value="${esc(meName() || "")}"></label>${photoPicker("iu-photos")}</div>
+        <div class="small muted" id="iu-prog"></div>
+      </div>`,
+    foot: `${admin ? `<button class="btn danger" id="iu-del">Delete</button><button class="btn" id="iu-edit">Edit</button>` : ""}<div class="r"><button class="btn" data-close>Close</button><button class="btn primary" id="iu-save">Save update</button></div>`,
+    onMount: (m, close) => {
+      const reload = async () => { close(); await pageBoats(); openIssue(id, boats); };
+      $("#iu-save", m).onclick = async () => {
+        const note = $("#iu-note", m).value.trim(), status = admin ? $("#iu-st", m).value : "", who = $("#iu-who", m).value.trim();
+        const files = [...$("#iu-photos", m).files];
+        const changed = status && status !== i.status;
+        if (!note && !changed && !files.length) return toast("Write a note, change the status or add a photo", true);
+        if (!who) return toast("Add your name", true);
+        const btn = $("#iu-save", m); btn.disabled = true;
+        try {
+          if (note || changed) await api(`/api/issues/${id}/updates`, { method: "POST", body: { note, status: changed ? status : "", author: who } });
+          if (files.length) await uploadPhotos(id, files, (t) => ($("#iu-prog", m).textContent = t));
+          toast("Update saved"); reload();
+        } catch (e) { fail(e); btn.disabled = false; }
+      };
+      $$("[data-del-photo]", m).forEach((b) => b.onclick = async () => {
+        if (!await confirmBox("Delete this photo?", "It's removed from the server straight away.", "Delete", true)) return openIssue(id, boats);
+        try { await api(`/api/issues/photos/${b.dataset.delPhoto}`, { method: "DELETE" }); } catch (e) { fail(e); }
+        openIssue(id, boats);
+      });
+      const d = $("#iu-del", m);
+      if (d) d.onclick = async () => {
+        if (!await confirmBox("Delete this issue?", "Its notes and photos are deleted too. To keep the history, set it to Fixed or Closed instead.", "Delete", true)) return openIssue(id, boats);
+        try { await api(`/api/issues/${id}`, { method: "DELETE" }); toast("Issue deleted"); pageBoats(); } catch (e) { fail(e); }
+      };
+      const ed = $("#iu-edit", m);
+      if (ed) ed.onclick = () => editIssue(i, boats);
+    },
+  });
+}
+
+function editIssue(i, boats) {
+  let sev = i.severity;
+  modal({
+    title: "Edit issue",
+    body: `<label class="field"><span>Boat</span><select class="input" id="ei-boat">${boats.map((b) => `<option value="${b.id}" ${b.id === i.boat_id ? "selected" : ""}>${esc(b.name)}</option>`).join("")}</select></label>
+      <label class="field"><span>Title</span><input class="input" id="ei-title" maxlength="150" value="${esc(i.title)}"></label>
+      <div class="field"><span>How serious?</span><div class="seg" id="ei-sev">${Object.entries(ISSUE_SEV).map(([k, [l]]) => `<button type="button" data-v="${k}" class="${k === sev ? "on" : ""}">${esc(l)}</button>`).join("")}</div></div>
+      <label class="field"><span>Description</span><textarea class="input" id="ei-desc" rows="5" maxlength="4000">${esc(i.description)}</textarea></label>`,
+    foot: `<div class="r"><button class="btn" id="ei-cancel">Cancel</button><button class="btn primary" id="ei-save">Save</button></div>`,
+    onMount: (m) => {
+      $$("#ei-sev button", m).forEach((b) => b.onclick = () => { sev = b.dataset.v; $$("#ei-sev button", m).forEach((x) => x.classList.toggle("on", x === b)); });
+      $("#ei-cancel", m).onclick = () => openIssue(i.id, boats);
+      $("#ei-save", m).onclick = async () => {
+        const body = { boat_id: +$("#ei-boat", m).value, title: $("#ei-title", m).value.trim(), severity: sev, description: $("#ei-desc", m).value };
+        if (!body.title) return toast("Title is required", true);
+        try { await api(`/api/issues/${i.id}`, { method: "PUT", body }); await pageBoats(); openIssue(i.id, boats); } catch (e) { fail(e); }
       };
     },
   });
@@ -1512,12 +1701,24 @@ async function pageSettings() {
         <div class="card card-pad" style="display:flex;flex-direction:column;gap:12px">
           <h3 style="margin:0">Data</h3>
           <div class="toolbar"><a class="btn" href="/api/admin/backup">${I.download}Download database backup</a><button class="btn" id="s-csv">${I.download}Members CSV</button></div>
-          <p class="muted small" style="margin:0">Phone numbers in the backup stay encrypted. They can only be read with this server's <code>PHONE_KEY</code>.</p>
+          <p class="muted small" style="margin:0">Phone numbers in the backup stay encrypted. They can only be read with this server's <code>PHONE_KEY</code>. Boat-issue photos aren't in the database backup: they're in the <code>photos</code> folder next to it.</p>
+          <div class="field"><span>Boat-issue photos</span><div class="meter"><div id="s-ph-bar"></div></div><span class="hint" id="s-ph-used">…</span></div>
+          <div style="display:flex;gap:8px;align-items:flex-end"><label class="field" style="flex:1"><span>Storage limit for photos (MB)</span><input class="input" type="number" min="10" max="100000" id="s-ph-limit"></label><button class="btn" id="s-ph-save">Save</button></div>
         </div>
       </div>
     </div>`;
   const phoneFields = () => ({ phone_mode: $("#s-phone-mode").value, phone_retention_days: Math.max(0, Math.min(3650, +$("#s-phone-days").value || 0)) });
   $("#s-csv").onclick = () => exportModal("/api/admin/members.csv", "all members");
+  const drawStorage = (ps) => {
+    const pct = Math.min(100, (ps.used / ps.limit) * 100);
+    $("#s-ph-bar").style.width = `${pct}%`; $("#s-ph-bar").className = pct > 90 ? "bad" : pct > 70 ? "warn" : "";
+    $("#s-ph-used").textContent = `${ps.count} photo${ps.count === 1 ? "" : "s"} · ${fmtBytes(ps.used)} of ${ps.limit_mb} MB used. When it's full, new uploads are refused.`;
+    $("#s-ph-limit").value = ps.limit_mb;
+  };
+  api("/api/admin/photo-storage").then(drawStorage).catch(() => {});
+  $("#s-ph-save").onclick = async () => {
+    try { drawStorage(await api("/api/admin/photo-storage", { method: "PUT", body: { photo_storage_mb: Math.max(10, +$("#s-ph-limit").value || 300) } })); toast("Photo limit saved"); } catch (e) { fail(e); }
+  };
   const drawFlag = (f) => { $("#s-river-flag").innerHTML = `<span class="flag-dot" style="background:${esc(f.colour)}"></span> Isis: <b>${esc(f.name)}</b> · checked ${esc(fmtStamp(f.checked_at) || "never")}${f.error ? ` · <span style="color:var(--bad)">last check failed: ${esc(f.error)}</span>` : ""}`; };
   api("/api/river").then((rv) => {
     drawFlag(rv.flag);

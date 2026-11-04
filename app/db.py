@@ -123,6 +123,40 @@ CREATE TABLE IF NOT EXISTS places (
     lon REAL
 );
 
+-- Boat issue tracker
+CREATE TABLE IF NOT EXISTS boat_issues (
+    id INTEGER PRIMARY KEY,
+    boat_id INTEGER NOT NULL REFERENCES boats(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    severity TEXT NOT NULL DEFAULT 'minor',        -- minor | caution | unusable
+    status TEXT NOT NULL DEFAULT 'open',           -- open | in_progress | waiting | fixed | closed
+    reported_by TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_issues_boat ON boat_issues(boat_id);
+
+CREATE TABLE IF NOT EXISTS issue_updates (            -- timeline: status changes and notes
+    id INTEGER PRIMARY KEY,
+    issue_id INTEGER NOT NULL REFERENCES boat_issues(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT '',               -- new status, or '' for a plain note
+    note TEXT NOT NULL DEFAULT '',
+    author TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_issue_updates ON issue_updates(issue_id);
+
+CREATE TABLE IF NOT EXISTS issue_photos (             -- files live in DATA_DIR/photos
+    id INTEGER PRIMARY KEY,
+    issue_id INTEGER NOT NULL REFERENCES boat_issues(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL UNIQUE,
+    size INTEGER NOT NULL DEFAULT 0,
+    uploaded_by TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Races: admins list them, members say whether they're available
 CREATE TABLE IF NOT EXISTS races (
     id INTEGER PRIMARY KEY,
@@ -196,7 +230,8 @@ DEFAULT_SETTINGS = {
     # River rules (see river.py)
     "term_start": "2026-10-11",        # Sunday of 1st week of Full Term
     "peak_end": "",                    # last day of the term's major regatta; blank = end of 8th week
-    "peak_crews_before_8": "1",        # crews allowed on the water at once before 08:00 in peak term (Extra Slot = 2)
+    "peak_crews_before_8": "1",
+    "photo_storage_mb": "300",         # total space boat-issue photos may use        # crews allowed on the water at once before 08:00 in peak term (Extra Slot = 2)
 }
 
 

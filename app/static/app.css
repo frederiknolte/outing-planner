@@ -661,3 +661,30 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
   .race-link-row { grid-template-columns: 1fr auto; }
   .race-link-row input[data-k=url] { grid-column: 1; grid-row: 2; }
 }
+
+/* ----------------------------------------------------------- boat issues -- */
+.chip-btn { border: 0; cursor: pointer; align-self: flex-start; font: inherit; font-size: 12px; font-weight: 600; }
+.issue-list { display: flex; flex-direction: column; gap: 10px; }
+.issue-row { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 14px 16px; text-align: left; font: inherit; color: inherit; cursor: pointer; width: 100%; flex-wrap: wrap; }
+.issue-row:hover { box-shadow: var(--shadow-lg); }
+.issue-main { min-width: 0; flex: 1 1 260px; }
+.issue-title { font-weight: 700; overflow-wrap: anywhere; margin-bottom: 2px; }
+.issue-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.issue-desc { white-space: pre-wrap; overflow-wrap: anywhere; }
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.photo { position: relative; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); overflow: hidden; background: var(--surface-3); }
+.photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-del { position: absolute; top: 4px; right: 4px; background: var(--surface); }
+.timeline { display: flex; flex-direction: column; gap: 10px; }
+.tl-item { display: flex; gap: 10px; }
+.tl-dot { width: 10px; height: 10px; border-radius: 99px; background: var(--border-strong); margin-top: 5px; flex: none; }
+.tl-dot.bad { background: var(--bad); }
+.tl-dot.warn { background: var(--warn); }
+.tl-dot.ok { background: var(--ok); }
+.tl-dot.accent { background: var(--accent); }
+.tl-note { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); margin-top: 2px; font-size: 13.5px; }
+.issue-add { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 10px; }
+.meter { height: 8px; border-radius: 99px; background: var(--surface-3); overflow: hidden; }
+.meter > div { height: 100%; background: var(--accent); transition: width .3s; }
+.meter > div.warn { background: var(--warn); }
+.meter > div.bad { background: var(--bad); }
