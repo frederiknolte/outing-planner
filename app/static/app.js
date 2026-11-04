@@ -8,6 +8,7 @@ const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const tRange = (o) => (o && o.time ? (o.end_time ? `${o.time}–${o.end_time}` : o.time) : "");
 async function loadPlaces(force = false) { if (!S.places || force) { try { S.places = await api("/api/places"); } catch { S.places = []; } } return S.places; }
 const placesDatalist = (id) => `<datalist id="${id}">${(S.places || []).map((p) => `<option value="${esc(p.name)}">${esc(p.address)}</option>`).join("")}</datalist>`;
+const SQUAD_SHORT = { open: "Open", women: "Women's" };
 const SIDE_SHORT = { "Bow side only": "Bow only", "Bow side preferred": "Bow pref", "Equally happy": "Either side", "Stroke side preferred": "Stroke pref", "Stroke side only": "Stroke only" };
 const DAY = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAYL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -70,7 +71,12 @@ async function api(path, opts = {}) {
   if (r.status === 401 && path !== "/api/login") { S.role = null; renderLogin(); throw new Error("Signed out"); }
   const ct = r.headers.get("content-type") || "";
   const data = ct.includes("json") ? await r.json() : await r.text();
-  if (!r.ok) throw new Error((data && data.detail) || `Error ${r.status}`);
+  if (!r.ok) {
+    const d = data && data.detail;
+    const err = new Error(typeof d === "string" ? d : d?.problems ? d.problems.join(". ") : `Error ${r.status}`);
+    err.status = r.status; err.detail = d;
+    throw err;
+  }
   return data;
 }
 
@@ -605,7 +611,8 @@ async function editOuting(o, defaults = {}) {
         if (!i.c.ok) return `<span class="chip bad">${esc(i.c.reasons.join(" · "))}</span>`;
         const bits = [];
         if (i.free) bits.push(`<span class="chip ok">${I.check}Free</span>`);
-        if (i.su && i.su.side) bits.push(`<span class="chip" title="${esc(i.su.side)}">${esc(SIDE_SHORT[i.su.side] || i.su.side)}</span>`);
+        if (i.su && i.su.squad) bits.push(`<span class="chip ${i.su.squad === "women" ? "violet" : "accent"}">${esc(SQUAD_SHORT[i.su.squad])}</span>`);
+      if (i.su && i.su.side) bits.push(`<span class="chip" title="${esc(i.su.side)}">${esc(SIDE_SHORT[i.su.side] || i.su.side)}</span>`);
         if (i.su && i.su.max_outings) bits.push(`<span class="chip ${i.overMax ? "warn" : ""}" title="Scheduled this week / max wanted">${i.c.week_count}/${i.su.max_outings} wk</span>`);
         if (i.mm.cox_status) bits.push(`<span class="chip violet">Cox ${esc(i.mm.cox_status)}</span>`);
         if (i.notCox) bits.push(`<span class="chip warn">not a cox</span>`);
@@ -729,7 +736,7 @@ async function editOuting(o, defaults = {}) {
           const cap = seatList().filter((q) => q !== 0).length;
           return `<button type="button" class="pool-item ${inBoat ? "in" : ""} ${x.c.busy || x.c.ok === false ? "bad" : ""}" data-pick="${x.mm.id}" data-intent="${intent}" title="${inBoat ? "Click to take out of the boat" : "Click to put in the boat"}">
             <span class="pi-main"><span class="pi-name">${esc(x.mm.name)}</span>
-              <span class="pi-meta">${intent !== "cox" && x.su.side ? `<span class="chip">${esc(SIDE_SHORT[x.su.side] || x.su.side)}</span>` : ""}${intent === "cox" && x.mm.cox_status ? `<span class="chip violet">Cox ${esc(x.mm.cox_status)}</span>` : ""}${x.su.role === "both" ? `<span class="chip accent">${roleTag.both}</span>` : ""}
+              <span class="pi-meta">${intent !== "cox" && x.su.squad ? `<span class="chip ${x.su.squad === "women" ? "violet" : "accent"}">${esc(SQUAD_SHORT[x.su.squad])}</span>` : ""}${intent !== "cox" && x.su.side ? `<span class="chip">${esc(SIDE_SHORT[x.su.side] || x.su.side)}</span>` : ""}${intent === "cox" && x.mm.cox_status ? `<span class="chip violet">Cox ${esc(x.mm.cox_status)}</span>` : ""}${x.su.role === "both" ? `<span class="chip accent">${roleTag.both}</span>` : ""}
               ${x.su.max_outings ? `<span class="chip ${over ? "warn" : ""}" title="Outings given this week / most they want">${x.c.week_count}/${x.su.max_outings} wk</span>` : ""}${probs.join("")}</span></span>
             <span class="pi-state">${inBoat ? `<span class="pi-seat">${esc(label(seat, cap))}</span>` : I.plus}</span></button>`;
         };
@@ -1214,6 +1221,7 @@ function editMember(m, meta) {
           ${m && m.has_phone ? `<button type="button" class="btn sm" id="me-phone-show" title="Show the full number">Show</button><button type="button" class="btn sm danger" id="me-phone-del" title="Delete this number">Delete</button>` : ""}</div></label>
         <label class="field"><span>College</span><input class="input" id="me-college" list="me-colleges" value="${esc(v.college || "")}"><datalist id="me-colleges"><option value="Reuben"><option value="Blackfriars"><option value="St Stephen's House"></datalist></label>
         <label class="field"><span>Side preference</span><select class="input" id="me-side">${["", ...Object.keys(SIDE_SHORT)].map((x) => `<option value="${esc(x)}" ${(v.side || "") === x ? "selected" : ""}>${x || "—"}</option>`).join("")}</select></label>
+        <label class="field"><span>Squad</span><select class="input" id="me-squad">${[["", "—"], ["open", "Open"], ["women", "Women's"]].map(([k, l]) => `<option value="${k}" ${(v.squad || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select><span class="hint">Used to check race entries.</span></label>
       </div>
       <div class="grid-3">
         <label class="field"><span>Subs plan</span><select class="input" id="me-plan">${(meta.plans || ["Unpaid", "Single term", "Full year"]).map((p) => `<option ${v.subs_plan === p ? "selected" : ""}>${p}</option>`).join("")}</select></label>
@@ -1248,7 +1256,7 @@ function editMember(m, meta) {
           subs_term: $("#me-plan", el).value === "Single term" ? $("#me-term", el).value : "", subs_year: $("#me-plan", el).value === "Unpaid" ? "" : $("#me-year", el).value.trim(),
           cox_status: $("#me-cox", el).value, swim_test: $("#me-swim", el).checked, past_water: +$("#me-pw", el).value || 0, past_land: +$("#me-pl", el).value || 0,
           active: $("#me-active", el).checked, notes: $("#me-notes", el).value,
-          phone: phoneTouched ? $("#me-phone", el).value.trim() : (m ? null : ($("#me-phone", el).value.trim() || null)), college: $("#me-college", el).value.trim(), side: $("#me-side", el).value };
+          phone: phoneTouched ? $("#me-phone", el).value.trim() : (m ? null : ($("#me-phone", el).value.trim() || null)), college: $("#me-college", el).value.trim(), side: $("#me-side", el).value, squad: $("#me-squad", el).value };
         if (!body.name) return toast("Name is required", true);
         try { await api(m ? `/api/committee/members/${m.id}` : "/api/committee/members", { method: m ? "PUT" : "POST", body }); close(); toast("Saved"); await reboot(); pageRowers(); }
         catch (e) { fail(e); }
@@ -2027,7 +2035,7 @@ async function pageSignup() {
   if (!S.suFormWeek || !meta.weeks.some((w) => w.week_start === S.suFormWeek)) S.suFormWeek = meta.weeks[0].week_start;
   const wk = meta.weeks.find((w) => w.week_start === S.suFormWeek);
   const st = { member_id: S.me && meName() ? S.me : null, new_name: "", phone: "", has_phone: false, college: "", college_other: "",
-    role: "", want_row: 2, want_cox: 1, side: "", max_outings: 3, can_bankride: false, slot_ids: new Set(), comments: "", existing: false };
+    role: "", want_row: 2, want_cox: 1, side: "", squad: "", max_outings: 3, can_bankride: false, slot_ids: new Set(), comments: "", existing: false };
 
   const prefill = async () => {
     if (!st.member_id) return;
@@ -2035,7 +2043,7 @@ async function pageSignup() {
       const p = await api(`/api/signup/${wk.week_start}/member/${st.member_id}`);
       st.has_phone = p.has_phone; st.existing = p.existing;
       if (p.college) { if (meta.colleges.includes(p.college)) st.college = p.college; else { st.college = "Other"; st.college_other = p.college; } }
-      st.side = p.side || st.side; st.role = p.role || st.role;
+      st.side = p.side || st.side; st.squad = p.squad || st.squad; st.role = p.role || st.role;
       if (p.want_row != null) st.want_row = p.want_row || st.want_row;
       if (p.want_cox != null) st.want_cox = p.want_cox || st.want_cox;
       if (p.max_outings) st.max_outings = p.max_outings;
@@ -2079,7 +2087,8 @@ async function pageSignup() {
           ${coxes ? stepper("su-wc", st.want_cox, "Coxing outings wanted") : ""}
           ${st.role !== "bankrider" ? stepper("su-max", st.max_outings, "Max outings this week", "Including erg and tank sessions") : ""}
         </div>
-        ${rows ? `<div class="field"><span>Side preference</span>${pills("side", meta.sides.map((x) => [x, x]), st.side)}</div>` : ""}
+        ${rows ? `<div class="field"><span>Squad</span>${pills("squad", Object.entries(meta.squads), st.squad)}<span class="hint">Which crews you row in, so the captains know how many people there are for each.</span></div>
+        <div class="field"><span>Side preference</span>${pills("side", meta.sides.map((x) => [x, x]), st.side)}</div>` : ""}
         <div class="field"><span>Can you bankride this week?</span>${pills("bankride", [["yes", "Yes"], ["no", "No"]], st.role === "bankrider" || st.can_bankride ? "yes" : "no")}</div>` : ""}
       </div></section>
 
@@ -2104,6 +2113,7 @@ async function pageSignup() {
       const v = b.dataset.v;
       if (g.dataset.name === "college") { st.college = v; $("#su-college-other").classList.toggle("hidden", v !== "Other"); if (v === "Other") $("#su-college-other").focus(); }
       if (g.dataset.name === "side") st.side = v;
+      if (g.dataset.name === "squad") st.squad = v;
       if (g.dataset.name === "bankride") st.can_bankride = v === "yes";
     }));
     $$(".role-card").forEach((b) => b.onclick = () => { capture(); st.role = b.dataset.role; draw(); });
@@ -2129,9 +2139,10 @@ async function pageSignup() {
     if (!st.college) return toast("Pick your college", true);
     if (st.college === "Other" && !st.college_other.trim()) return toast("Type the name of your college", true);
     if (!st.role) return toast("Choose what you're signing up as", true);
+    if (["rower", "both"].includes(st.role) && !st.squad) return toast("Choose your squad (Open or Women's)", true);
     const body = { week_start: wk.week_start, member_id: st.member_id, new_name: st.member_id ? "" : st.new_name, phone: st.phone,
       college: st.college === "Other" ? st.college_other.trim() : st.college, role: st.role, want_row: st.want_row, want_cox: st.want_cox,
-      side: st.side, max_outings: st.role === "bankrider" ? 0 : st.max_outings, can_bankride: st.role === "bankrider" || st.can_bankride,
+      side: st.side, squad: ["rower", "both"].includes(st.role) ? st.squad : "", max_outings: st.role === "bankrider" ? 0 : st.max_outings, can_bankride: st.role === "bankrider" || st.can_bankride,
       slot_ids: [...st.slot_ids], comments: st.comments };
     const btn = $("#su-go"); btn.disabled = true;
     try {
@@ -2200,6 +2211,9 @@ function nameField(container, st, onPick, opts = {}) {
 }
 
 // ---- committee: manage sessions & responses ----
+/* "4 Open · 3 Women's" rowers for a session (plus anyone without a squad yet) */
+const squadCounts = (sl) => `<span title="Open-squad rowers"><b>${sl.rowers_open}</b> Open</span><span title="Women's-squad rowers"><b>${sl.rowers_women}</b> Women's</span>${sl.rowers_unknown ? `<span title="Rowers who signed up before the squad question and have no squad on their profile">${sl.rowers_unknown} squad not set</span>` : ""}`;
+
 async function pageSignupCommittee() {
   if (!S.suWeek) S.suWeek = addDays(S.boot.this_week, 7);
   if (!S.suTab) S.suTab = "responses";
@@ -2221,7 +2235,7 @@ async function pageSignupCommittee() {
     ${!d.week.open && !d.slots.length ? `<div class="callout warn" style="margin-bottom:16px">${I.info}<div><b>Next step:</b> add this week's water, erg and tank sessions so rowers can tick when they're free, then open sign-ups. <a href="#" id="sw-go-sessions">Add sessions</a> or <a href="#" id="sw-copy-top">copy last week's</a>.</div></div>` : ""}
     <div class="stats" style="margin-bottom:16px">
       <div class="card stat"><div class="k">Responses</div><div class="v">${R.length}</div><div class="s">${nNew ? `${nNew} new name${nNew === 1 ? "" : "s"} to review` : "for this week"}</div></div>
-      <div class="card stat"><div class="k">Rowers</div><div class="v">${nRow}</div><div class="s">${R.reduce((a, r) => a + (r.want_row || 0), 0)} outings wanted</div></div>
+      <div class="card stat"><div class="k">Rowers</div><div class="v">${nRow}</div><div class="s">${(() => { const rw = R.filter((r) => ["rower", "both"].includes(r.role)), o = rw.filter((r) => r.squad === "open").length, w = rw.filter((r) => r.squad === "women").length; return `${o} Open · ${w} Women's${rw.length - o - w ? ` · ${rw.length - o - w} not set` : ""} · `; })()}${R.reduce((a, r) => a + (r.want_row || 0), 0)} outings wanted</div></div>
       <div class="card stat"><div class="k">Coxes</div><div class="v">${nCox}</div><div class="s">${R.reduce((a, r) => a + (r.want_cox || 0), 0)} outings wanted</div></div>
       <div class="card stat"><div class="k">Bankriders</div><div class="v">${nBank}</div><div class="s">can bankride this week</div></div>
     </div>
@@ -2242,7 +2256,7 @@ async function pageSignupCommittee() {
         <div class="slot-committee">${list.map((sl) => `<div class="card slot-row" data-id="${sl.id}">
           <div class="slot-time tnum">${esc(tRange(sl) || "TBC")}</div>${slotChip(sl.kind)}
           <div class="slot-meta" style="flex:1">${esc([sl.location, sl.note].filter(Boolean).join(" · "))}</div>
-          <div class="slot-counts"><span title="Free in total"><b>${sl.count}</b> free</span><span title="Rowers">${sl.rowers} row</span><span title="Coxes">${sl.coxes} cox</span><span title="Can bankride">${sl.bankriders} BR</span></div>
+          <div class="slot-counts"><span title="Free in total"><b>${sl.count}</b> free</span>${squadCounts(sl)}<span title="Coxes (either squad)">${sl.coxes} cox</span><span title="Can bankride">${sl.bankriders} BR</span></div>
           <button class="btn sm" data-mk="${sl.id}">${I.plus}Create session</button>
           <button class="btn sm ghost" data-ed="${sl.id}">Edit</button></div>`).join("")}</div>`).join("")
         : `<div class="card empty">${I.calendar}<h3>No sessions listed</h3><p>Add the water, erg and tank sessions people can sign up for, or copy last week's.</p></div>`}`;
@@ -2260,15 +2274,19 @@ async function pageSignupCommittee() {
   } else if (S.suTab === "grid") {
     body.innerHTML = !R.length || !d.slots.length ? `<div class="card empty">${I.user}<h3>Nothing to show yet</h3><p>Responses will appear here as people sign up.</p></div>` :
       `<div class="card table-wrap"><table class="t grid-t"><thead><tr><th>Name</th>${d.slots.map((sl) => `<th class="gc" title="${esc([sl.location, sl.note].filter(Boolean).join(" · "))}"><div>${slotLabel(sl)}</div><div>${slotChip(sl.kind)}</div></th>`).join("")}</tr></thead>
-      <tbody>${R.slice().sort((a, b) => a.name.localeCompare(b.name)).map((r) => `<tr><td><b>${esc(r.name)}</b> <span class="faint small">${roleShort[r.role]}</span></td>${d.slots.map((sl) => `<td class="gc">${r.slot_ids.includes(sl.id) ? `<span class="tick ${sl.kind}">${I.check}</span>` : ""}</td>`).join("")}</tr>`).join("")}
+      <tbody>${R.slice().sort((a, b) => a.name.localeCompare(b.name)).map((r) => `<tr><td><b>${esc(r.name)}</b> <span class="faint small">${roleShort[r.role]}${r.squad ? ` · ${esc(SQUAD_SHORT[r.squad])}` : ""}</span></td>${d.slots.map((sl) => `<td class="gc">${r.slot_ids.includes(sl.id) ? `<span class="tick ${sl.kind}">${I.check}</span>` : ""}</td>`).join("")}</tr>`).join("")}
+      <tr class="tot"><td>Open rowers</td>${d.slots.map((sl) => `<td class="gc">${sl.rowers_open || "·"}</td>`).join("")}</tr>
+      <tr class="tot"><td>Women's rowers</td>${d.slots.map((sl) => `<td class="gc">${sl.rowers_women || "·"}</td>`).join("")}</tr>
+      ${d.slots.some((sl) => sl.rowers_unknown) ? `<tr class="tot"><td title="Signed up before the squad question, with no squad on their profile">Rowers, squad not set</td>${d.slots.map((sl) => `<td class="gc">${sl.rowers_unknown || "·"}</td>`).join("")}</tr>` : ""}
+      <tr class="tot"><td>Coxes</td>${d.slots.map((sl) => `<td class="gc">${sl.coxes || "·"}</td>`).join("")}</tr>
       <tr class="tot"><td>Total free</td>${d.slots.map((sl) => `<td class="gc"><b>${sl.count}</b></td>`).join("")}</tr></tbody></table></div>`;
   } else {
-    body.innerHTML = R.length ? `<div class="card table-wrap"><table class="t"><thead><tr><th>Name</th><th>Phone</th><th>College</th><th>As</th><th class="num">Row</th><th class="num">Cox</th><th>Side</th><th class="num">Sched / max</th><th>Bankride</th><th class="num">Free for</th></tr></thead>
+    body.innerHTML = R.length ? `<div class="card table-wrap"><table class="t"><thead><tr><th>Name</th><th>Phone</th><th>College</th><th>As</th><th class="num">Row</th><th class="num">Cox</th><th>Squad</th><th>Side</th><th class="num">Sched / max</th><th>Bankride</th><th class="num">Free for</th></tr></thead>
       <tbody>${R.map((r) => `<tr class="clickable" data-id="${r.id}">
         <td><b>${esc(r.name)}</b>${r.needs_review ? ` <span class="chip warn" title="Added through the form — check their details in Rowers">New</span>` : ""}${r.comments ? ` <span title="${esc(r.comments)}">💬</span>` : ""}</td>
         <td>${phoneCell(r.member_id, r.phone_masked, r.has_phone)}</td>
         <td>${esc(r.college)}</td><td><span class="chip ${r.role === "bankrider" ? "violet" : r.role === "rower" ? "" : "accent"}">${roleShort[r.role]}</span></td>
-        <td class="num">${r.want_row || ""}</td><td class="num">${r.want_cox || ""}</td><td>${r.side ? `<span class="chip">${esc(SIDE_SHORT[r.side] || r.side)}</span>` : ""}</td>
+        <td class="num">${r.want_row || ""}</td><td class="num">${r.want_cox || ""}</td><td>${r.squad ? `<span class="chip ${r.squad === "women" ? "violet" : "accent"}">${esc(SQUAD_SHORT[r.squad])}</span>` : ""}</td><td>${r.side ? `<span class="chip">${esc(SIDE_SHORT[r.side] || r.side)}</span>` : ""}</td>
         <td class="num"><span class="${r.max_outings && r.scheduled > r.max_outings ? "chip bad" : ""}">${r.scheduled}${r.max_outings ? ` / ${r.max_outings}` : ""}</span></td>
         <td>${r.can_bankride ? `<span class="chip ok">${I.check}Yes</span>` : `<span class="faint">No</span>`}</td>
         <td class="num">${r.slot_ids.length}</td></tr>`).join("")}</tbody></table></div>`
@@ -2314,7 +2332,7 @@ function responseDetail(r, d, roleShort) {
     body: `<dl class="kv"><dt>Phone</dt><dd>${phoneCell(r.member_id, r.phone_masked, r.has_phone)}${r.has_phone ? ` <button type="button" class="btn sm ghost danger" id="rd-delphone">Delete number</button>` : ""}</dd>
       <dt>College</dt><dd>${esc(r.college)}</dd><dt>Signing up as</dt><dd>${roleShort[r.role]}</dd>
       ${r.want_row ? `<dt>Rowing outings</dt><dd>${r.want_row}</dd>` : ""}${r.want_cox ? `<dt>Coxing outings</dt><dd>${r.want_cox}</dd>` : ""}
-      ${r.side ? `<dt>Side</dt><dd>${esc(r.side)}</dd>` : ""}${r.max_outings ? `<dt>Max this week</dt><dd>${r.max_outings} (scheduled: ${r.scheduled})</dd>` : ""}
+      ${r.squad ? `<dt>Squad</dt><dd>${esc(d.squads[r.squad])}</dd>` : ""}${r.side ? `<dt>Side</dt><dd>${esc(r.side)}</dd>` : ""}${r.max_outings ? `<dt>Max this week</dt><dd>${r.max_outings} (scheduled: ${r.scheduled})</dd>` : ""}
       <dt>Can bankride</dt><dd>${r.can_bankride ? "Yes" : "No"}</dd><dt>Submitted</dt><dd>${esc(r.updated_at)} UTC</dd></dl>
       ${r.comments ? `<div class="callout">${I.info}<div>${esc(r.comments)}</div></div>` : ""}
       <div class="section-title" style="margin:6px 0 0">Free for (${slots.length})</div>
@@ -2390,36 +2408,45 @@ function editPlace(p, after) {
 }
 
 // ------------------------------------------------------------------ races --
-const RACE_ST = { yes: ["Available", "ok"], maybe: ["Maybe", "warn"], no: ["Not available", "bad"] };
-const raceEligible = (r, m) => r.entry === "all" || (m && r.entry === (m.category || "").toLowerCase());
+const RACE_ST = { yes: ["Available", "ok"], maybe: ["Maybe", "warn"], cox: ["Cox only", "accent"], no: ["Not available", "bad"] };
+const RACE_ORDER = ["yes", "cox", "maybe", "no"];
+const RACE_ENTRY_CHIP = { novice: "accent", senior: "violet", all: "" };
+const youify = (t) => t.replace(/they're/g, "you're").replace(/they could/g, "you could");
+/* "Open · Rower or cox · Bow pref" */
+function raceRespSummary(x, data) {
+  if (x.status === "no") return "";
+  return [data.squads[x.squad], x.role ? data.roles[x.role] : "", x.side ? SIDE_SHORT[x.side] || x.side : ""].filter(Boolean).join(" · ");
+}
 
 function raceCard(r, data) {
   const d = pd(r.date), me = S.boot.members.find((m) => m.id === S.me);
   const mine = r.responses.find((x) => x.member_id === S.me);
-  const eligible = raceEligible(r, me);
   const locked = r.past || !r.open;
-  const canRespond = isCommittee() || (!locked && (!me || eligible));
-  const groups = ["yes", "maybe", "no"].map((k) => [k, r.responses.filter((x) => x.status === k)]);
   let respond;
-  if (!canRespond) respond = `<div class="small muted">${r.past ? "This race has happened." : !r.open ? "Sign-up is closed." : `For ${esc(data.entry[r.entry].toLowerCase())} only.`}${mine ? ` You said <b>${esc(RACE_ST[mine.status][0].toLowerCase())}</b>.` : ""}</div>`;
-  else respond = `<div class="race-respond"><span class="small muted">${me ? `${esc(me.name.split(" ")[0])}, can you race?` : "Can you race?"}</span>
-      <div class="seg">${Object.entries(RACE_ST).map(([k, [l]]) => `<button data-race-st="${k}" class="${mine?.status === k ? "on " + k : ""}">${esc(l)}</button>`).join("")}</div>
-      ${mine ? `<button class="btn ghost sm" data-race-note>${mine.comment ? "Edit note" : "Add note"}</button>` : ""}</div>
-      ${mine?.comment ? `<div class="small muted">Your note: “${esc(mine.comment)}”</div>` : ""}`;
+  if (locked && !isCommittee()) respond = `<div class="small muted">${r.past ? "This race has happened." : "Sign-up is closed."}${mine ? ` You said <b>${esc(RACE_ST[mine.status][0].toLowerCase())}</b>.` : ""}</div>`;
+  else respond = `<div class="race-respond">
+      <span class="small muted">${me ? `${esc(me.name.split(" ")[0])}, can you race?` : "Can you race?"}</span>
+      <div class="seg">${RACE_ORDER.map((k) => `<button data-race-st="${k}" class="${mine?.status === k ? "on " + k : ""}">${esc(RACE_ST[k][0])}</button>`).join("")}</div>
+      ${mine ? `<button class="btn ghost sm" data-race-mine>Edit</button>` : ""}</div>
+      ${mine && raceRespSummary(mine, data) ? `<div class="small muted">You: ${esc(raceRespSummary(mine, data))}${mine.comment ? ` · “${esc(mine.comment)}”` : ""}</div>` : ""}
+      ${me && !mine && r.me_problems.length ? `<div class="small race-warn">${I.alert}${esc(youify(r.me_problems[0]))}.</div>` : ""}`;
+  const counts = RACE_ORDER.filter((k) => r.counts[k]).map((k) => `<span class="chip ${RACE_ST[k][1]}">${r.counts[k]} ${esc(RACE_ST[k][0].toLowerCase())}</span>`).join("") || `<span class="chip">No responses yet</span>`;
   return `<article class="card race ${r.past ? "past" : ""}" data-race="${r.id}">
     <div class="race-head"><div class="datebox"><span>${DAY[dow(r.date)]}</span><b>${d.getUTCDate()}</b><span>${MON[d.getUTCMonth()]}</span></div>
       <div style="flex:1;min-width:0"><div class="race-title">${esc(r.title)}</div>
         <div class="o-sub">${r.city ? `<span>${I.pin}${esc(r.city)}</span>` : ""}${r.time_slot ? `<span>${esc(r.time_slot)}</span>` : ""}${r.term ? `<span>${esc(r.term)}</span>` : ""}</div></div>
       ${isCommittee() ? `<button class="btn sm" data-race-edit>Edit</button>` : ""}</div>
-    <div class="race-chips"><span class="chip ${r.entry === "novice" ? "accent" : r.entry === "senior" ? "violet" : ""}">${esc(data.entry[r.entry])}</span>${r.race_type ? `<span class="chip">${esc(r.race_type)}</span>` : ""}${!r.open && !r.past ? `<span class="chip warn">Sign-up closed</span>` : ""}</div>
+    <div class="race-chips"><span class="chip ${RACE_ENTRY_CHIP[r.entry]}">${esc(data.entry[r.entry])}</span>${r.squad !== "any" ? `<span class="chip violet">${esc(data.squads[r.squad])} squad</span>` : ""}${r.race_type ? `<span class="chip">${esc(r.race_type)}</span>` : ""}${!r.open && !r.past ? `<span class="chip warn">Sign-up closed</span>` : ""}</div>
     ${r.notes ? `<div class="race-notes small">${esc(r.notes)}</div>` : ""}
     ${r.links.length ? `<div class="race-links">${r.links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${I.link}${esc(l.label || l.url.replace(/^https?:\/\//, "").replace(/\/$/, ""))}</a>`).join("")}</div>` : ""}
     ${respond}
-    <details class="race-who"${isCommittee() ? " open" : ""}><summary><span class="chip ok">${r.counts.yes} available</span><span class="chip warn">${r.counts.maybe} maybe</span><span class="chip bad">${r.counts.no} not</span></summary>
-      ${r.responses.length ? groups.filter(([, l]) => l.length).map(([k, l]) => `<div class="race-group"><div class="faint small">${RACE_ST[k][0]}</div>${l.map((x) => `<div class="race-person ${x.member_id === S.me ? "me" : ""}">
-        <span>${esc(x.name)} <span class="faint small">${esc(x.category)}</span>${x.comment && isCommittee() ? ` <span class="small muted">“${esc(x.comment)}”</span>` : ""}</span>
-        ${isCommittee() ? `<button class="btn ghost sm" data-race-set="${x.member_id}">Change</button>` : ""}</div>`).join("")}</div>`).join("") : `<div class="faint small">No responses yet.</div>`}
-      ${isCommittee() ? `<button class="btn sm" data-race-set="">${I.plus}Add response for someone</button>` : ""}
+    <details class="race-who"${isCommittee() ? " open" : ""}><summary>${counts}</summary>
+      ${RACE_ORDER.map((k) => [k, r.responses.filter((x) => x.status === k)]).filter(([, l]) => l.length).map(([k, l]) => `<div class="race-group"><div class="faint small">${RACE_ST[k][0]}</div>${l.map((x) => `<div class="race-person ${x.member_id === S.me ? "me" : ""}">
+        <span>${esc(x.name)} <span class="faint small">${esc(x.category)}${raceRespSummary(x, data) ? ` · ${esc(raceRespSummary(x, data))}` : ""}</span>
+          ${x.problems?.length ? ` <span class="chip bad" title="${esc(x.problems.join(". "))}">${I.alert}Not eligible</span>` : ""}
+          ${x.comment && isCommittee() ? `<span class="small muted race-comment">“${esc(x.comment)}”</span>` : ""}</span>
+        ${isCommittee() ? `<button class="btn ghost sm" data-race-set="${x.member_id}">Change</button>` : ""}</div>`).join("")}</div>`).join("")}
+      ${isCommittee() ? `<button class="btn sm" data-race-set="">${I.plus}Add someone</button>` : ""}
     </details>
   </article>`;
 }
@@ -2432,49 +2459,107 @@ async function pageRaces() {
   if (S.raceTab === "past") shown.reverse();
   const committee = isCommittee();
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>Races</h1><p>Upcoming regattas and head races. Say whether you can race so the coaches can put crews together.</p></div>
+    <div class="page-head"><div><h1>Races</h1><p>Upcoming regattas and head races. Say whether you can race so the captains can put crews together.</p></div>
       <div class="toolbar"><div class="seg" id="rc-tab"><button data-t="upcoming" class="${S.raceTab === "upcoming" ? "on" : ""}">Upcoming</button><button data-t="past" class="${S.raceTab === "past" ? "on" : ""}">Past</button></div>
       ${committee ? `<button class="btn primary" id="rc-add">${I.plus}Add race</button>` : ""}</div></div>
     ${shown.length ? `<div class="race-list">${shown.map((r) => raceCard(r, data)).join("")}</div>`
-      : `<div class="card empty">${I.flag}<h3>${S.raceTab === "past" ? "No past races" : "No races planned yet"}</h3><p>${committee && S.raceTab === "upcoming" ? "Add a race so rowers can say whether they're available." : "Races will show up here once a coach adds them."}</p></div>`}`;
+      : `<div class="card empty">${I.flag}<h3>${S.raceTab === "past" ? "No past races" : "No races planned yet"}</h3><p>${committee && S.raceTab === "upcoming" ? "Add a race so rowers can say whether they're available." : "Races will show up here once the committee adds them."}</p></div>`}`;
   $$("#rc-tab button").forEach((b) => b.onclick = () => { S.raceTab = b.dataset.t; pageRaces(); });
   if (committee) $("#rc-add").onclick = () => editRace(null, data);
   $$(".race[data-race]").forEach((card) => {
     const r = data.races.find((x) => x.id === +card.dataset.race);
     const e = $("[data-race-edit]", card); if (e) e.onclick = () => editRace(r, data);
     $$("[data-race-st]", card).forEach((b) => b.onclick = () => requireMe(async () => {
-      const me = S.boot.members.find((m) => m.id === S.me);
-      if (!committee && !raceEligible(r, me)) return toast(`This race is for ${data.entry[r.entry].toLowerCase()} only`, true);
-      const mine = r.responses.find((x) => x.member_id === S.me);
-      try {
-        if (mine?.status === b.dataset.raceSt) await api(`/api/races/${r.id}/response/${S.me}`, { method: "DELETE" });
-        else await api(`/api/races/${r.id}/response`, { method: "PUT", body: { member_id: S.me, status: b.dataset.raceSt, comment: mine?.comment || "" } });
+      const status = b.dataset.raceSt, mine = r.responses.find((x) => x.member_id === S.me);
+      if (status !== "no") return raceResponseModal(r, data, S.me, status);
+      try {   // "Not available" needs no other details
+        await api(`/api/races/${r.id}/response`, { method: "PUT", body: { member_id: S.me, status, squad: mine?.squad || "", comment: mine?.comment || "" } });
         pageRaces();
       } catch (err) { fail(err); }
     }));
-    const n = $("[data-race-note]", card); if (n) n.onclick = () => raceResponseModal(r, S.me);
-    $$("[data-race-set]", card).forEach((b) => b.onclick = () => raceResponseModal(r, b.dataset.raceSet ? +b.dataset.raceSet : null));
+    const n = $("[data-race-mine]", card); if (n) n.onclick = () => requireMe(() => raceResponseModal(r, data, S.me));
+    $$("[data-race-set]", card).forEach((b) => b.onclick = () => raceResponseModal(r, data, b.dataset.raceSet ? +b.dataset.raceSet : null));
   });
 }
 
-function raceResponseModal(r, memberId) {
+/* The race response form, for yourself or (committee) for someone else. Eligibility is checked live by the server. */
+function raceResponseModal(r, data, memberId, presetStatus) {
+  const committee = isCommittee(), self = memberId != null && memberId === S.me && !committee;
   const cur = memberId != null ? r.responses.find((x) => x.member_id === memberId) : null;
-  let status = cur?.status || "yes", picker = null;
-  const who = memberId != null ? S.boot.members.find((m) => m.id === memberId)?.name || cur?.name : null;
+  const prof = memberId === S.me ? data.me : null;
+  const st = { member_id: memberId, status: presetStatus || cur?.status || "yes", squad: cur?.squad || prof?.squad || "", role: cur?.role && cur.role !== "cox" ? cur.role : cur?.role || "rower",
+    side: cur?.side || prof?.side || "", problems: [] };
+  if (st.status === "cox") st.role = "cox";
+  let picker = null, checkSeq = 0;
+  const pills = (name, opts, v) => `<div class="pills" data-name="${name}">${opts.map(([k, l]) => `<button type="button" class="pill ${v === k ? "on" : ""}" data-v="${esc(k)}">${esc(l)}</button>`).join("")}</div>`;
+  const whoName = memberId != null ? (S.boot.members.find((m) => m.id === memberId)?.name || cur?.name || "") : "";
   modal({
-    title: esc(r.title),
-    body: `${isCommittee() && memberId == null ? `<label class="field"><span>Rower</span><div id="rr-who"></div></label>` : `<div><b>${esc(who || "")}</b></div>`}
-      <div class="field"><span>Can they race?</span><div class="seg" id="rr-st">${Object.entries(RACE_ST).map(([k, [l]]) => `<button type="button" data-v="${k}" class="${status === k ? "on " + k : ""}">${esc(l)}</button>`).join("")}</div></div>
-      <label class="field"><span>Note (optional)</span><textarea class="input" id="rr-c" rows="2" maxlength="500" placeholder="e.g. Can only do the morning division">${esc(cur?.comment || "")}</textarea><span class="hint">Only the committee sees notes.</span></label>`,
+    title: esc(r.title), wide: true,
+    body: `${committee && memberId == null ? `<label class="field"><span>Who</span><div id="rr-who"></div></label>` : `<div><b>${esc(whoName)}</b> <span class="faint small">${esc(data.entry[r.entry])}${r.squad !== "any" ? ` · ${esc(data.squads[r.squad])} squad` : ""}</span></div>`}
+      <div class="field"><span>${self ? "Can you race?" : "Can they race?"}</span><div class="seg" id="rr-st">${RACE_ORDER.map((k) => `<button type="button" data-v="${k}" class="${st.status === k ? "on " + k : ""}">${esc(RACE_ST[k][0])}</button>`).join("")}</div></div>
+      <div id="rr-details">
+        <div class="grid-2"><div class="field"><span>Squad</span>${pills("squad", Object.entries(data.squads), st.squad)}</div>
+          <div class="field" id="rr-role-f"><span>${self ? "I'd like to" : "Would"}</span>${pills("role", Object.entries(data.roles).map(([k, l]) => [k, l]), st.role)}</div></div>
+        <div class="field" id="rr-side-f"><span>Side preference</span>${pills("side", data.sides.map((x) => [x, x]), st.side)}</div>
+      </div>
+      <div id="rr-elig"></div>
+      <label class="field"><span>Note (optional)</span><textarea class="input" id="rr-c" rows="2" maxlength="500" placeholder="e.g. Can only do the morning division">${esc(cur?.comment || "")}</textarea><span class="hint">Only the committee sees notes.${self ? " Your squad and side are saved to your profile." : ""}</span></label>`,
     foot: `${cur ? `<button class="btn danger" id="rr-del">Remove response</button>` : ""}<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="rr-save">Save</button></div>`,
     onMount: (m, close) => {
+      const show = () => {
+        const no = st.status === "no", coxOnly = st.status === "cox";
+        $("#rr-details", m).classList.toggle("hidden", no);
+        $("#rr-role-f", m).classList.toggle("hidden", coxOnly);
+        $("#rr-side-f", m).classList.toggle("hidden", coxOnly || st.role === "cox");
+      };
+      const drawElig = () => {
+        const save = $("#rr-save", m), p = st.problems;
+        $("#rr-elig", m).innerHTML = p.length ? `<div class="callout bad">${I.alert}<div><b>${self ? "You can't enter this race" : "Not eligible"}</b><br>${p.map((x) => esc(self ? youify(x) : x)).join(".<br>")}.${committee ? "<br><span class='small'>You can still save, as the committee.</span>" : ""}</div></div>` : "";
+        save.textContent = p.length && committee ? "Save anyway" : "Save";
+        save.classList.toggle("danger", !!(p.length && committee)); save.classList.toggle("primary", !(p.length && committee));
+        save.disabled = !!(p.length && !committee);
+      };
+      const check = async () => {
+        if (st.member_id == null) { st.problems = []; return drawElig(); }
+        const seq = ++checkSeq;
+        try {
+          const res = await api(`/api/races/${r.id}/check`, { method: "POST", body: { member_id: st.member_id, status: st.status, squad: st.squad, role: st.status === "cox" ? "cox" : st.role } });
+          if (seq !== checkSeq) return;
+          st.problems = res.problems; drawElig();
+          return res.profile;
+        } catch {}
+      };
+      // pick someone (committee): fill in their profile's squad and side
       const box = $("#rr-who", m);
-      if (box) picker = combo(box, { items: () => S.boot.members.map((x) => ({ id: x.id, label: x.name, sub: x.category, dim: !raceEligible(r, x), rank: raceEligible(r, x) ? 0 : 1 })), placeholder: "Search names…", renderWhy: (i) => `<span class="chip">${esc(i.sub)}</span>` });
-      $$("#rr-st button", m).forEach((b) => b.onclick = () => { status = b.dataset.v; $$("#rr-st button", m).forEach((x) => x.className = x === b ? "on " + x.dataset.v : ""); });
+      if (box) picker = combo(box, { items: () => S.boot.members.filter((x) => !r.responses.some((y) => y.member_id === x.id)).map((x) => ({ id: x.id, label: x.name, sub: x.category })), placeholder: "Search names…",
+        renderWhy: (i) => `<span class="chip">${esc(i.sub)}</span>`,
+        onChange: async (id) => {
+          st.member_id = id;
+          const prof = await check();
+          if (prof) {
+            if (prof.squad && !st.squad) { st.squad = prof.squad; $$('[data-name="squad"] .pill', m).forEach((x) => x.classList.toggle("on", x.dataset.v === st.squad)); }
+            if (prof.side && !st.side) { st.side = prof.side; $$('[data-name="side"] .pill', m).forEach((x) => x.classList.toggle("on", x.dataset.v === st.side)); }
+            check();
+          }
+        } });
+      $$("#rr-st button", m).forEach((b) => b.onclick = () => {
+        st.status = b.dataset.v; $$("#rr-st button", m).forEach((x) => (x.className = x === b ? "on " + x.dataset.v : ""));
+        show(); check();
+      });
+      $$(".pills", m).forEach((g) => $$(".pill", g).forEach((b) => b.onclick = () => {
+        $$(".pill", g).forEach((x) => x.classList.toggle("on", x === b));
+        st[g.dataset.name] = b.dataset.v; show(); check();
+      }));
+      show(); check();
       $("#rr-save", m).onclick = async () => {
-        const mid = memberId ?? picker?.get();
-        if (mid == null) return toast("Pick a rower", true);
-        try { await api(`/api/races/${r.id}/response`, { method: "PUT", body: { member_id: mid, status, comment: $("#rr-c", m).value } }); close(); pageRaces(); } catch (e) { fail(e); }
+        if (st.member_id == null) return toast("Pick who to add", true);
+        if (st.status !== "no") {
+          if (!st.squad) return toast(self ? "Choose your squad" : "Choose their squad", true);
+          if (st.status !== "cox" && st.role !== "cox" && !st.side) return toast("Choose a side preference", true);
+        }
+        const body = { member_id: st.member_id, status: st.status, squad: st.squad, role: st.status === "cox" ? "cox" : st.role, side: st.side, comment: $("#rr-c", m).value, override: committee && st.problems.length > 0 };
+        try { await api(`/api/races/${r.id}/response`, { method: "PUT", body }); close(); toast("Response saved"); pageRaces(); }
+        catch (e) { if (e.status === 409 && e.detail?.problems) { st.problems = e.detail.problems; drawElig(); } else fail(e); }
       };
       const d = $("#rr-del", m);
       if (d) d.onclick = async () => { try { await api(`/api/races/${r.id}/response/${memberId}`, { method: "DELETE" }); close(); pageRaces(); } catch (e) { fail(e); } };
@@ -2483,7 +2568,7 @@ function raceResponseModal(r, memberId) {
 }
 
 function editRace(r, data) {
-  const v = r || { title: "", date: S.boot.today, term: S.boot.settings.current_term || "", city: "", time_slot: "", entry: "all", race_type: "", notes: "", open: true, links: [] };
+  const v = r || { title: "", date: S.boot.today, term: S.boot.settings.current_term || "", city: "", time_slot: "", entry: "all", squad: "any", race_type: "", notes: "", open: true, links: [] };
   const links = v.links.map((l) => ({ ...l }));
   const types = [...new Set(data.races.map((x) => x.race_type).filter(Boolean))];
   const linkRows = () => links.map((l, i) => `<div class="race-link-row" data-i="${i}"><input class="input" data-k="label" placeholder="Label, e.g. Entry info" value="${esc(l.label)}"><input class="input" data-k="url" type="url" placeholder="https://…" value="${esc(l.url)}"><button type="button" class="btn ghost icon" data-rm aria-label="Remove link">${I.x}</button></div>`).join("");
@@ -2492,7 +2577,8 @@ function editRace(r, data) {
     body: `<label class="field"><span>Title</span><input class="input" id="r-title" value="${esc(v.title)}" placeholder="e.g. Christ Church Regatta"></label>
       <div class="grid-3"><label class="field"><span>Date</span><input class="input" type="date" id="r-date" value="${esc(v.date)}"></label>
         <label class="field"><span>Term</span><select class="input" id="r-term"><option value="">–</option>${data.terms.map((t) => `<option ${v.term === t ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-        <label class="field"><span>Who should enter</span><select class="input" id="r-entry">${Object.entries(data.entry).map(([k, l]) => `<option value="${k}" ${v.entry === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
+        <label class="field"><span>Who should enter</span><div class="grid-2" style="gap:6px"><select class="input" id="r-entry" aria-label="Novice or senior">${Object.entries(data.entry).map(([k, l]) => `<option value="${k}" ${v.entry === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+          <select class="input" id="r-squad" aria-label="Squad">${Object.entries(data.race_squads).map(([k, l]) => `<option value="${k}" ${(v.squad || "any") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div></label></div>
       <div class="grid-3"><label class="field"><span>City</span><input class="input" id="r-city" value="${esc(v.city)}" placeholder="e.g. Oxford"></label>
         <label class="field"><span>Expected time slot</span><input class="input" id="r-slot" value="${esc(v.time_slot)}" placeholder="e.g. 09:00–13:00, Morning"></label>
         <label class="field"><span>Race type</span><input class="input" id="r-type" list="r-types" value="${esc(v.race_type)}" placeholder="e.g. Head race, Side-by-side"><datalist id="r-types">${types.map((t) => `<option value="${esc(t)}">`).join("")}</datalist></label></div>
@@ -2509,7 +2595,7 @@ function editRace(r, data) {
       $("#r-save", m).onclick = async () => {
         sync();
         const body = { title: $("#r-title", m).value.trim(), date: $("#r-date", m).value, term: $("#r-term", m).value, city: $("#r-city", m).value, time_slot: $("#r-slot", m).value,
-          entry: $("#r-entry", m).value, race_type: $("#r-type", m).value, notes: $("#r-notes", m).value, open: $("#r-open", m).checked,
+          entry: $("#r-entry", m).value, squad: $("#r-squad", m).value, race_type: $("#r-type", m).value, notes: $("#r-notes", m).value, open: $("#r-open", m).checked,
           links: links.filter((l) => l.url.trim()) };
         if (!body.title) return toast("Title is required", true);
         if (!body.date) return toast("Pick a date", true);

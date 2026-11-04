@@ -218,7 +218,7 @@ CREATE TABLE IF NOT EXISTS race_links (
 CREATE TABLE IF NOT EXISTS race_responses (
     race_id INTEGER NOT NULL REFERENCES races(id) ON DELETE CASCADE,
     member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
-    status TEXT NOT NULL,                          -- yes | maybe | no
+    status TEXT NOT NULL,                          -- yes | maybe | cox (cox only) | no
     comment TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (race_id, member_id)
@@ -234,11 +234,19 @@ CREATE TABLE IF NOT EXISTS signup_availability (
 # Columns added after the first release; added to existing databases on start-up.
 MIGRATIONS = {
     "outings": {"end_time": "TEXT NOT NULL DEFAULT ''"},
+    "races": {"squad": "TEXT NOT NULL DEFAULT 'any'"},             # any | open | women
+    "race_responses": {
+        "squad": "TEXT NOT NULL DEFAULT ''",                        # open | women
+        "role": "TEXT NOT NULL DEFAULT ''",                         # rower | cox | both
+        "side": "TEXT NOT NULL DEFAULT ''",                         # same options as the weekly sign-up
+    },
     "signup_slots": {"end_time": "TEXT NOT NULL DEFAULT ''"},
+    "signups": {"squad": "TEXT NOT NULL DEFAULT ''"},              # open | women (rowers only)
     "members": {
         "phone": "TEXT NOT NULL DEFAULT ''",          # committee-only
         "college": "TEXT NOT NULL DEFAULT ''",
         "side": "TEXT NOT NULL DEFAULT ''",
+        "squad": "TEXT NOT NULL DEFAULT ''",          # open | women (for race eligibility)
         "needs_review": "INTEGER NOT NULL DEFAULT 0",  # created via the sign-up form
         "cal_token": "TEXT NOT NULL DEFAULT ''",       # secret for the personal calendar feed
         "phone_updated_at": "TEXT NOT NULL DEFAULT ''",  # for automatic deletion of old numbers

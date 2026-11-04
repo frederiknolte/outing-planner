@@ -577,6 +577,7 @@ class MemberIn(BaseModel):
     phone: Optional[str] = Field(None, max_length=40)   # None = keep the stored number, "" = delete it
     college: str = Field("", max_length=80)
     side: str = Field("", max_length=40)
+    squad: str = ""                                      # '' | open | women (race eligibility)
 
 
 def _phone_value(phone: Optional[str]) -> Optional[str]:
@@ -600,6 +601,8 @@ def _member_validate(m: MemberIn):
         raise HTTPException(400, "Bad subs plan")
     if m.cox_status not in ("", "N", "X", "S"):
         raise HTTPException(400, "Bad cox status")
+    if m.squad not in ("", "open", "women"):
+        raise HTTPException(400, "Bad squad")
 
 
 @app.get("/api/committee/members")
@@ -626,11 +629,11 @@ def member_create(m: MemberIn, _: str = Depends(require_committee)):
         try:
             cur = conn.execute(
                 """INSERT INTO members(name, category, swim_test, subs_plan, subs_term, subs_year, cox_status,
-                   past_water, past_land, active, notes, phone, phone_updated_at, college, side)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ? != '' THEN datetime('now') ELSE '' END,?,?)""",
+                   past_water, past_land, active, notes, phone, phone_updated_at, college, side, squad)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ? != '' THEN datetime('now') ELSE '' END,?,?,?)""",
                 (m.name.strip(), m.category, int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
                  m.cox_status, m.past_water, m.past_land, int(m.active), m.notes, _phone_value(m.phone) or "",
-                 m.phone or "", m.college.strip(), m.side))
+                 m.phone or "", m.college.strip(), m.side, m.squad))
         except db.sqlite3.IntegrityError:
             raise HTTPException(400, "A member with that name already exists")
         return {"id": cur.lastrowid}
@@ -643,11 +646,11 @@ def member_update(member_id: int, m: MemberIn, _: str = Depends(require_committe
         try:
             conn.execute(
                 """UPDATE members SET name=?, category=?, swim_test=?, subs_plan=?, subs_term=?, subs_year=?,
-                   cox_status=?, past_water=?, past_land=?, active=?, notes=?, college=?, side=?,
+                   cox_status=?, past_water=?, past_land=?, active=?, notes=?, college=?, side=?, squad=?,
                    needs_review=0 WHERE id=?""",
                 (m.name.strip(), m.category, int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
                  m.cox_status, m.past_water, m.past_land, int(m.active), m.notes,
-                 m.college.strip(), m.side, member_id))
+                 m.college.strip(), m.side, m.squad, member_id))
             new_phone = _phone_value(m.phone)
             if new_phone is not None:
                 conn.execute("UPDATE members SET phone = ?, phone_updated_at = CASE WHEN ? != '' THEN datetime('now') ELSE '' END WHERE id = ?",
