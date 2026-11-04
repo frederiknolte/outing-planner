@@ -123,6 +123,31 @@ CREATE TABLE IF NOT EXISTS places (
     lon REAL
 );
 
+-- Committee to-do list (see tasks.py)
+CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    priority TEXT NOT NULL DEFAULT '',             -- high | medium | low | ''
+    plan TEXT NOT NULL DEFAULT '',
+    owner TEXT NOT NULL DEFAULT '',                -- free text, e.g. "Sophie to chase Toby", "Captains"
+    due TEXT NOT NULL DEFAULT '',                  -- YYYY-MM-DD or ''
+    repeat_yearly INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'open',           -- open | in_progress | waiting | done
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    done_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS task_updates (
+    id INTEGER PRIMARY KEY,
+    task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT '',               -- new status, or '' for a plain update
+    note TEXT NOT NULL DEFAULT '',
+    author TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_task_updates ON task_updates(task_id);
+
 -- Club committee positions (see committee_roster.py)
 CREATE TABLE IF NOT EXISTS committee_holders (
     position TEXT NOT NULL,                        -- president | vice_president | mens_captain | ...

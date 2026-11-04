@@ -46,6 +46,9 @@ const I = {
   flag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22V4M4 4h13l-2 4 2 4H4"/></svg>',
   link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>',
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
+  users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/></svg>',
+  todo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></svg>',
+  repeat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
 };
 
@@ -191,11 +194,13 @@ const ROUTES = [
   { id: "me", label: "My outings", icon: I.user },
   { id: "stats", label: "Leaderboard", parent: "me", icon: I.trophy },
   { id: "rowers", label: "Rowers", tab: "Members", icon: I.user },
-  { id: "committee", label: "Committee", parent: "rowers", icon: I.user },
   { id: "reminders", label: "Subs reminders", parent: "rowers", icon: I.user, committee: true, count: "reminders" },
-  { id: "coaches", label: "Coaches", parent: "rowers", icon: I.whistle, committee: true },
   { id: "boats", label: "Boat park", tab: "Boats", icon: I.boat },
   { id: "issues", label: "Issues", parent: "boats", icon: I.alert, count: "issues" },
+  { id: "committee", label: "Committee", tab: "Overview", icon: I.users },
+  { id: "todo", label: "To-do", parent: "committee", icon: I.todo, committee: true, count: "todo" },
+  { id: "handbook", label: "Handbook", parent: "committee", icon: I.info, committee: true },
+  { id: "coaches", label: "Coaches", parent: "committee", icon: I.whistle, committee: true },
   { id: "settings", label: "Settings", icon: I.gear, committee: true, gear: true },
 ];
 S.counts = {};
@@ -1002,6 +1007,7 @@ async function refreshCounts() {
   get("subs", "/api/subs", (d) => d.open.length);
   get("issues", "/api/issues", (d) => d.issues.filter((i) => d.active.includes(i.status)).length);
   if (isCommittee()) get("reminders", "/api/committee/subs-reminders", (d) => d.members.length);
+  if (isCommittee()) get("todo", "/api/committee/tasks", taskAttention);
 }
 const refreshSubsCount = refreshCounts;
 
@@ -1673,6 +1679,199 @@ function editCommittee(d) {
         const bySlot = {};
         holders.forEach((h) => { h.slot = bySlot[h.position] = (bySlot[h.position] ?? -1) + 1; });
         try { await api("/api/committee/club-committee", { method: "PUT", body: { holders } }); close(); toast("Committee saved"); rerender(); } catch (e) { fail(e); }
+      };
+    },
+  });
+}
+
+// ---------------------------------------------------------- committee to-do --
+const TASK_ST = { open: "", in_progress: "accent", waiting: "warn", done: "ok" };
+const TASK_PRI = { high: "bad", medium: "warn", low: "", "": "" };
+const daysUntil = (d) => Math.round((pd(d) - pd(S.boot.today)) / 86400000);
+/* badge on the To-do tab: open tasks that are overdue, due within 2 weeks, or high priority */
+const taskAttention = (d) => d.tasks.filter((t) => t.status !== "done" && (t.priority === "high" || (t.due && daysUntil(t.due) <= 14))).length;
+const dueChip = (t) => {
+  if (!t.due) return "";
+  const n = daysUntil(t.due), done = t.status === "done";
+  const cls = done ? "" : n < 0 ? "bad" : n <= 14 ? "warn" : "";
+  const when = done ? `Due ${fmtShort(t.due)}` : n < 0 ? `Overdue · ${fmtShort(t.due)}` : n === 0 ? "Due today" : n <= 14 ? `Due in ${n} day${n === 1 ? "" : "s"}` : `Due ${fmtShort(t.due)} ${pd(t.due).getUTCFullYear()}`;
+  return `<span class="chip ${cls}">${I.calendar}${esc(when)}</span>`;
+};
+/* Escape, keep line breaks, and turn web addresses and emails into links. */
+function richText(text) {
+  const URL_RE = /(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"]|\b(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:org|com|net|uk|io|co|edu|gov|ac\.uk|org\.uk|co\.uk)(?:\/[^\s<]*[^\s<.,;:!?)\]'"])?|[\w.+-]+@[\w-]+(?:\.[\w-]+)+)/gi;
+  return esc(text).replace(URL_RE, (m) => {
+    const href = m.includes("@") && !m.includes("/") ? `mailto:${m}` : /^https?:/i.test(m) ? m : `https://${m}`;
+    return `<a href="${href}" target="_blank" rel="noopener noreferrer">${m}</a>`;
+  });
+}
+const me4 = () => meName() || "Committee";
+
+async function pageTasks() {
+  let d;
+  try { d = await api("/api/committee/tasks"); } catch (e) { return fail(e); }
+  setCount("todo", taskAttention(d));
+  S.taskFilter = S.taskFilter || "open";
+  const q = (S.taskQ || "").toLowerCase();
+  const shown = d.tasks.filter((t) => (S.taskFilter === "all" || (S.taskFilter === "done") === (t.status === "done"))
+    && (!S.taskOwner || t.owner === S.taskOwner) && (!q || `${t.title} ${t.plan} ${t.owner}`.toLowerCase().includes(q)));
+  const nOpen = d.tasks.filter((t) => t.status !== "done").length;
+  $("#main").innerHTML = `
+    <div class="page-head"><div><h1>Committee to-do</h1><p>${nOpen} open task${nOpen === 1 ? "" : "s"}. Only the committee can see this list.</p></div>
+      <div class="toolbar"><button class="btn" id="tk-import">${I.upload}Import from Word</button><button class="btn primary" id="tk-new">${I.plus}New task</button></div></div>
+    ${d.open_boat_issues ? `<div class="callout" style="margin-bottom:14px">${I.boat}<div>Problems with a specific boat are tracked under <a href="#/issues">Boat park → Issues</a> (${d.open_boat_issues} open). Use <b>Move to boat issues</b> on a task that's really about one boat.</div></div>` : ""}
+    <div class="filters">
+      <input class="input" id="tk-q" placeholder="Search tasks…" style="max-width:240px" value="${esc(S.taskQ || "")}">
+      <div class="seg" id="tk-f">${[["open", "Open"], ["done", "Done"], ["all", "All"]].map(([k, l]) => `<button data-f="${k}" class="${S.taskFilter === k ? "on" : ""}">${l}</button>`).join("")}</div>
+      ${d.owners.length ? `<select class="input" id="tk-owner" style="width:auto"><option value="">Everyone</option>${d.owners.map((o) => `<option ${S.taskOwner === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>` : ""}
+    </div>
+    ${shown.length ? `<div class="issue-list">${shown.map((t) => `<button class="card issue-row task-row ${t.status === "done" ? "done" : ""}" data-task="${t.id}">
+        <div class="issue-main"><div class="issue-title">${esc(t.title)}</div>
+          <div class="o-sub">${t.owner ? `<span>${I.user}${esc(t.owner)}</span>` : `<span class="faint">No one assigned</span>`}${t.repeat_yearly ? `<span>${I.repeat}Every year</span>` : ""}${t.notes > 1 ? `<span>${t.notes} updates</span>` : ""}</div>
+          ${t.latest ? `<div class="task-latest small"><b>${esc(t.latest.author || "Update")}:</b> ${esc(t.latest.note)}</div>` : ""}</div>
+        <div class="issue-chips">${t.priority ? `<span class="chip ${TASK_PRI[t.priority]}">${esc(d.priorities[t.priority])}</span>` : ""}${dueChip(t)}<span class="chip ${TASK_ST[t.status]}">${esc(d.statuses[t.status])}</span></div>
+      </button>`).join("")}</div>`
+      : `<div class="card empty">${I.todo}<h3>${d.tasks.length ? "Nothing here" : "No tasks yet"}</h3><p>${d.tasks.length ? "No tasks match these filters." : "Add the committee's to-do list, or import it from the Word document."}</p>${d.tasks.length ? "" : `<button class="btn primary" id="tk-import2">${I.upload}Import from Word</button>`}</div>`}`;
+  $("#tk-new").onclick = () => editTask(null, d);
+  $("#tk-import").onclick = importTasks; const i2 = $("#tk-import2"); if (i2) i2.onclick = importTasks;
+  $$("#tk-f button").forEach((b) => b.onclick = () => { S.taskFilter = b.dataset.f; pageTasks(); });
+  const ow = $("#tk-owner"); if (ow) ow.onchange = (e) => { S.taskOwner = e.target.value; pageTasks(); };
+  let tq; $("#tk-q").oninput = (e) => { clearTimeout(tq); tq = setTimeout(() => { S.taskQ = e.target.value; pageTasks().then(() => { const i = $("#tk-q"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 250); };
+  $$("[data-task]").forEach((b) => b.onclick = () => openTask(+b.dataset.task, d));
+}
+
+async function openTask(id, d) {
+  let t;
+  try { t = await api(`/api/committee/tasks/${id}`); } catch (e) { return fail(e); }
+  const st = d.statuses;
+  const timeline = t.updates.map((u, k) => `<div class="tl-item"><div class="tl-dot ${u.status ? TASK_ST[u.status] || "" : ""}"></div><div>
+      <div class="small"><b>${esc(u.author || "Someone")}</b> ${k === 0 ? "added this task" : u.status ? `set it to <span class="chip ${TASK_ST[u.status]}">${esc(st[u.status])}</span>` : "posted an update"} <span class="faint">· ${esc(utcStamp(u.created_at))}</span></div>
+      ${u.note ? `<div class="tl-note">${richText(u.note)}</div>` : ""}</div></div>`).join("");
+  modal({
+    title: esc(t.title), wide: true,
+    body: `<div class="issue-chips">${t.priority ? `<span class="chip ${TASK_PRI[t.priority]}">${esc(d.priorities[t.priority])} priority</span>` : ""}<span class="chip ${TASK_ST[t.status]}">${esc(st[t.status])}</span>${dueChip(t)}${t.repeat_yearly ? `<span class="chip">${I.repeat}Every year</span>` : ""}${t.owner ? `<span class="chip">${I.user}${esc(t.owner)}</span>` : ""}</div>
+      <div><div class="section-title" style="margin:4px 0 6px">Plan of action</div>${t.plan ? `<div class="issue-desc">${richText(t.plan)}</div>` : `<div class="faint small">No plan written yet.</div>`}</div>
+      <div class="section-title" style="margin:6px 0 0">Updates</div>
+      <div class="timeline">${timeline}</div>
+      <div class="card-pad issue-add">
+        <div class="grid-2"><label class="field"><span>Status</span><select class="input" id="tu-st">${Object.entries(st).map(([k, l]) => `<option value="${k}" ${k === t.status ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+          <label class="field"><span>Your name</span><input class="input" id="tu-who" value="${esc(meName() || "")}"></label></div>
+        <label class="field"><span>Update</span><textarea class="input" id="tu-note" rows="2" maxlength="4000" placeholder="e.g. Ordered, awaiting delivery"></textarea></label>
+        ${t.repeat_yearly && t.status !== "done" ? `<div class="small muted">${I.repeat} When this is marked done, next year's task is added automatically, due ${esc(fmtShort(t.due))} ${pd(t.due).getUTCFullYear() + 1}.</div>` : ""}
+      </div>`,
+    foot: `<button class="btn danger" id="tu-del">Delete</button><button class="btn" id="tu-edit">Edit</button><button class="btn" id="tu-move" title="For problems with one boat">${I.boat}Move to boat issues</button><div class="r"><button class="btn" data-close>Close</button><button class="btn primary" id="tu-save">Save update</button></div>`,
+    onMount: (m, close) => {
+      $("#tu-save", m).onclick = async () => {
+        const status = $("#tu-st", m).value, note = $("#tu-note", m).value.trim();
+        if (!note && status === t.status) return toast("Write an update or change the status", true);
+        try {
+          const r = await api(`/api/committee/tasks/${id}/updates`, { method: "POST", body: { note, status: status !== t.status ? status : "", author: $("#tu-who", m).value.trim() || me4() } });
+          close(); toast(r.next_id ? "Done! Next year's task has been added" : "Update saved"); await rerender();
+          if (!r.next_id || status !== "done") openTask(id, d);
+        } catch (e) { fail(e); }
+      };
+      $("#tu-edit", m).onclick = () => editTask(t, d);
+      $("#tu-move", m).onclick = () => moveTaskToBoat(t);
+      $("#tu-del", m).onclick = async () => {
+        if (!await confirmBox("Delete this task?", "Its updates are deleted too. To keep the history, mark it as done instead.", "Delete", true)) return openTask(id, d);
+        try { await api(`/api/committee/tasks/${id}`, { method: "DELETE" }); toast("Task deleted"); rerender(); } catch (e) { fail(e); }
+      };
+    },
+  });
+}
+
+async function editTask(t, d) {
+  let roster = { holders: [], positions: [] };
+  try { roster = await api("/api/club-committee"); } catch {}
+  const v = t || { title: "", priority: "", plan: "", owner: "", due: "", repeat_yearly: false };
+  let pri = v.priority;
+  const who = [...new Set([...d.owners, ...roster.holders.map((h) => h.name), "Captains", "Whole committee"])].sort((a, b) => a.localeCompare(b));
+  modal({
+    title: t ? "Edit task" : "New task", wide: true,
+    body: `<label class="field"><span>Task</span><input class="input" id="te-title" maxlength="300" value="${esc(v.title)}" placeholder="e.g. Renew insurance (BR Affiliation Plus)"></label>
+      <div class="grid-2"><div class="field"><span>Priority</span><div class="seg" id="te-pri">${[["high", "High"], ["medium", "Medium"], ["low", "Low"], ["", "None"]].map(([k, l]) => `<button type="button" data-v="${k}" class="${pri === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
+        <label class="field"><span>Who's doing it</span><input class="input" id="te-owner" list="te-owners" maxlength="200" value="${esc(v.owner)}" placeholder="e.g. Sophie, or Captains"><datalist id="te-owners">${who.map((x) => `<option value="${esc(x)}">`).join("")}</datalist></label></div>
+      <div class="grid-2"><label class="field"><span>Due date (optional)</span><input class="input" type="date" id="te-due" value="${esc(v.due)}"></label>
+        <div class="field"><span>&nbsp;</span><label class="check"><input type="checkbox" id="te-rep" ${v.repeat_yearly ? "checked" : ""}> Repeats every year <span class="faint small">(e.g. insurance, BR affiliation, safety audit)</span></label></div></div>
+      <label class="field"><span>Plan of action</span><textarea class="input" id="te-plan" rows="6" maxlength="8000" placeholder="Steps, contacts, links, costs…">${esc(v.plan)}</textarea></label>`,
+    foot: `<div class="r"><button class="btn" id="te-cancel">Cancel</button><button class="btn primary" id="te-save">Save</button></div>`,
+    onMount: (m, close) => {
+      $$("#te-pri button", m).forEach((b) => b.onclick = () => { pri = b.dataset.v; $$("#te-pri button", m).forEach((x) => x.classList.toggle("on", x === b)); });
+      $("#te-cancel", m).onclick = () => (t ? openTask(t.id, d) : close());
+      $("#te-save", m).onclick = async () => {
+        const body = { title: $("#te-title", m).value.trim(), priority: pri, owner: $("#te-owner", m).value, due: $("#te-due", m).value, repeat_yearly: $("#te-rep", m).checked, plan: $("#te-plan", m).value };
+        if (!body.title) return toast("Give the task a title", true);
+        if (body.repeat_yearly && !body.due) return toast("A yearly task needs a due date", true);
+        try {
+          const r = await api(t ? `/api/committee/tasks/${t.id}` : `/api/committee/tasks?author=${encodeURIComponent(me4())}`, { method: t ? "PUT" : "POST", body });
+          close(); toast("Task saved"); await rerender(); openTask(t ? t.id : r.id, d);
+        } catch (e) { fail(e); }
+      };
+    },
+  });
+}
+
+async function moveTaskToBoat(t) {
+  let boats;
+  try { boats = (await api("/api/committee/boats")).boats.filter((b) => b.status !== "retired"); } catch (e) { return fail(e); }
+  let sev = "minor";
+  modal({
+    title: "Move to boat issues",
+    body: `<p class="muted" style="margin:0">“${esc(t.title)}” becomes an issue on the boat's page, with its plan and updates. Rowers can then see it and add notes and photos. The task is removed from this list.</p>
+      <label class="field"><span>Boat</span><select class="input" id="mv-boat"><option value="">Choose a boat…</option>${boats.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join("")}</select></label>
+      <div class="field"><span>How serious?</span><div class="seg" id="mv-sev">${Object.entries(ISSUE_SEV).map(([k, [l]]) => `<button type="button" data-v="${k}" class="${k === sev ? "on" : ""}">${esc(l)}</button>`).join("")}</div></div>`,
+    foot: `<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="mv-go">${I.boat}Move</button></div>`,
+    onMount: (m, close) => {
+      $$("#mv-sev button", m).forEach((b) => b.onclick = () => { sev = b.dataset.v; $$("#mv-sev button", m).forEach((x) => x.classList.toggle("on", x === b)); });
+      $("#mv-go", m).onclick = async () => {
+        const boat_id = +$("#mv-boat", m).value;
+        if (!boat_id) return toast("Pick a boat", true);
+        try {
+          const r = await api(`/api/committee/tasks/${t.id}/move-to-boat`, { method: "POST", body: { boat_id, severity: sev, author: me4() } });
+          close(); toast("Moved to boat issues"); refreshCounts(); await go("issues"); openIssue(r.issue_id, boats);
+        } catch (e) { fail(e); }
+      };
+    },
+  });
+}
+
+function importTasks() {
+  modal({
+    title: "Import to-do list from Word",
+    body: `<p class="muted" style="margin:0">Choose the committee's .docx to-do list. Each row of its table becomes a task: the first column is the task, and columns headed <i>Priority</i>, <i>Plan of action</i>, <i>Person</i> and <i>Update</i> fill in the rest. Tasks already on the list, or already moved to boat issues, are skipped (same title), so importing again is safe.</p>
+      <input class="input" type="file" id="im-file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+      <label class="check"><input type="checkbox" id="im-notes" checked> Add the notes below the table to the Handbook</label>`,
+    foot: `<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="im-go">${I.upload}Import</button></div>`,
+    onMount: (m, close) => {
+      $("#im-go", m).onclick = async () => {
+        const f = $("#im-file", m).files[0];
+        if (!f) return toast("Choose a .docx file", true);
+        const fd = new FormData(); fd.append("file", f); fd.append("notes_to_handbook", $("#im-notes", m).checked ? "true" : "false");
+        const btn = $("#im-go", m); btn.disabled = true;
+        try {
+          const r = await api("/api/committee/tasks/import", { method: "POST", body: fd });
+          close(); toast(`Imported ${r.added} task${r.added === 1 ? "" : "s"}${r.skipped ? ` · ${r.skipped} already on the list` : ""}${r.notes_added ? " · notes added to the Handbook" : ""}`); rerender();
+        } catch (e) { fail(e); btn.disabled = false; }
+      };
+    },
+  });
+}
+
+async function pageHandbook() {
+  let h;
+  try { h = await api("/api/committee/handbook"); } catch (e) { return fail(e); }
+  $("#main").innerHTML = `
+    <div class="page-head"><div><h1>Committee handbook</h1><p>Standing information to hand over each year: contacts, how-tos and reminders. Only the committee can see this.</p></div>
+      <div class="toolbar"><button class="btn primary" id="hb-edit">Edit</button></div></div>
+    <div class="card card-pad handbook">${h.text ? richText(h.text) : `<span class="faint">Nothing written yet. Add contacts, procedures and reminders, or import them with the to-do list.</span>`}</div>`;
+  $("#hb-edit").onclick = () => modal({
+    title: "Edit handbook", wide: "xl",
+    body: `<textarea class="input" id="hb-text" rows="20" maxlength="50000" placeholder="e.g. If there are any significant safety incidents, report them to British Rowing at incidentreporting.britishrowing.org">${esc(h.text)}</textarea>
+      <span class="hint">Plain text. Line breaks are kept, and web addresses and emails become links. Start a line with • for a bullet.</span>`,
+    foot: `<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="hb-save">Save</button></div>`,
+    onMount: (m, close) => {
+      $("#hb-save", m).onclick = async () => {
+        try { await api("/api/committee/handbook", { method: "PUT", body: { text: $("#hb-text", m).value } }); close(); toast("Handbook saved"); pageHandbook(); } catch (e) { fail(e); }
       };
     },
   });
@@ -2371,7 +2570,7 @@ function route() {
   const r = ROUTES.find((x) => x.id === id && routeAllowed(x)) || ROUTES[0];
   shell(r.id);
   S.page = ({ schedule: pageSchedule, signup: pageSignup, subs: pageSubs, races: pageRaces, me: pageMe, stats: pageStats, rowers: pageRowers,
-    committee: pageCommittee, reminders: pageSubsReminders, coaches: pageCoaches, boats: pageBoats, issues: pageIssues, settings: pageSettings })[r.id];
+    committee: pageCommittee, todo: pageTasks, handbook: pageHandbook, reminders: pageSubsReminders, coaches: pageCoaches, boats: pageBoats, issues: pageIssues, settings: pageSettings })[r.id];
   window.scrollTo(0, 0);
   return S.page();
 }
