@@ -2415,7 +2415,63 @@ const youify = (t) => t.replace(/they're/g, "you're").replace(/they could/g, "yo
 /* "Open · Rower or cox · Bow pref" */
 function raceRespSummary(x, data) {
   if (x.status === "no") return "";
-  return [data.squads[x.squad], x.role ? data.roles[x.role] : "", x.side ? SIDE_SHORT[x.side] || x.side : ""].filter(Boolean).join(" · ");
+  return [x.role !== "cox" ? data.squads[x.squad] : "", x.role ? data.roles[x.role] : "", x.side ? SIDE_SHORT[x.side] || x.side : ""].filter(Boolean).join(" · ");
+}
+
+/* Answers grouped for the card and the "who" panel. Cox only counts as available (to cox). */
+const RACE_FILTER = { yes: ["yes", "cox"], maybe: ["maybe"], no: ["no"] };
+const RACE_FILTER_LABEL = { yes: "Available", maybe: "Maybe", no: "Not available" };
+const RACE_FILTER_CHIP = { yes: "ok", maybe: "warn", no: "bad" };
+/* Split responses into crew columns. Someone who'd row or cox goes in their squad's column and in Coxes. */
+function raceCrew(list) {
+  const out = { open: [], women: [], unset: [], cox: [] };
+  for (const x of list) {
+    const rows = x.status !== "cox" && x.role !== "cox";
+    const coxes = x.status === "cox" || x.role === "cox" || x.role === "both";
+    if (rows) out[x.squad === "open" || x.squad === "women" ? x.squad : "unset"].push(x);
+    if (coxes) out.cox.push(x);
+  }
+  return out;
+}
+
+/* Who gave an answer, as crew columns (Open rowers / Women's rowers / Coxes). */
+function raceWhoModal(r, data, filter) {
+  const committee = isCommittee();
+  const count = (k) => r.responses.filter((x) => RACE_FILTER[k].includes(x.status)).length;
+  const person = (x, col) => {
+    const side = col !== "cox" && col !== "no" && x.side ? SIDE_SHORT[x.side] || x.side : "";
+    const also = x.role === "both" && x.status !== "cox" && col !== "no" ? (col === "cox" ? "also rows" : "also coxes") : "";
+    const tag = x.status === "cox" ? "cox only" : "";
+    const el = committee ? `button type="button" data-race-set="${x.member_id}"` : "div";
+    return `<${el} class="race-person ${x.member_id === S.me ? "me" : ""}">
+      <span class="race-person-name">${esc(x.name)}</span>
+      <span class="race-person-meta"><span class="chip ${x.category === "Novice" ? "accent" : ""}" title="${esc(x.category || "Category not set")}">${esc(x.category || "?")}</span>${[side, also, tag].filter(Boolean).map((t) => `<span>${esc(t)}</span>`).join("")}${x.problems?.length ? `<span class="chip bad" title="${esc(x.problems.join(". "))}">${I.alert}Not eligible</span>` : ""}</span>
+      ${x.comment && committee ? `<span class="small muted race-comment">“${esc(x.comment)}”</span>` : ""}</${committee ? "button" : "div"}>`;
+  };
+  const body = () => {
+    const list = r.responses.filter((x) => RACE_FILTER[filter].includes(x.status));
+    if (!list.length) return `<div class="small muted race-who-empty">Nobody has said ${esc(RACE_FILTER_LABEL[filter].toLowerCase())}.</div>`;
+    if (filter === "no") return `<div class="race-col">${list.map((x) => person(x, "no")).join("")}</div>`;
+    const c = raceCrew(list);
+    const cols = [["open", "Open rowers"], ["women", "Women's rowers"], ["unset", "Rowers, squad not set"], ["cox", "Coxes"]].filter(([k]) => k !== "unset" || c.unset.length);
+    return `<div class="race-cols">${cols.map(([k, l]) => `<div class="race-col"><div class="race-col-h"><span>${esc(l)}</span><b>${c[k].length}</b></div>
+      ${c[k].length ? c[k].map((x) => person(x, k)).join("") : `<div class="faint small">Nobody</div>`}</div>`).join("")}</div>`;
+  };
+  modal({
+    title: esc(r.title), wide: true,
+    body: `<div class="seg" id="rw-f">${Object.keys(RACE_FILTER).map((k) => `<button type="button" data-f="${k}">${esc(RACE_FILTER_LABEL[k])} · ${count(k)}</button>`).join("")}</div>
+      <div id="rw-body"></div>${committee ? `<div class="faint small">Click someone to change their answer.</div>` : ""}`,
+    foot: `${committee ? `<button class="btn" data-race-set="">${I.plus}Add someone</button>` : ""}<div class="r"><button class="btn" data-close>Close</button></div>`,
+    onMount: (m) => {
+      const draw = () => {
+        $("#rw-body", m).innerHTML = body();
+        $$("#rw-f button", m).forEach((b) => (b.className = b.dataset.f === filter ? "on " + filter : ""));
+        $$("[data-race-set]", m).forEach((b) => b.onclick = () => raceResponseModal(r, data, b.dataset.raceSet ? +b.dataset.raceSet : null));
+      };
+      $$("#rw-f button", m).forEach((b) => b.onclick = () => { filter = b.dataset.f; draw(); });
+      draw();
+    },
+  });
 }
 
 function raceCard(r, data) {
@@ -2430,7 +2486,16 @@ function raceCard(r, data) {
       ${mine ? `<button class="btn ghost sm" data-race-mine>Edit</button>` : ""}</div>
       ${mine && raceRespSummary(mine, data) ? `<div class="small muted">You: ${esc(raceRespSummary(mine, data))}${mine.comment ? ` · “${esc(mine.comment)}”` : ""}</div>` : ""}
       ${me && !mine && r.me_problems.length ? `<div class="small race-warn">${I.alert}${esc(youify(r.me_problems[0]))}.</div>` : ""}`;
-  const counts = RACE_ORDER.filter((k) => r.counts[k]).map((k) => `<span class="chip ${RACE_ST[k][1]}">${r.counts[k]} ${esc(RACE_ST[k][0].toLowerCase())}</span>`).join("") || `<span class="chip">No responses yet</span>`;
+  const avail = r.responses.filter((x) => RACE_FILTER.yes.includes(x.status));
+  const crew = raceCrew(avail), flex = avail.filter((x) => x.status === "yes" && x.role === "both").length;
+  const n = (k) => r.responses.filter((x) => RACE_FILTER[k].includes(x.status)).length;
+  const crewLine = avail.length ? `<div class="race-crew">${[["open", "Open rowers"], ["women", "Women's rowers"], ["unset", "Squad not set"], ["cox", "Coxes"]].filter(([k]) => k !== "unset" || crew.unset.length)
+      .map(([k, l]) => `<button type="button" class="race-crew-n" data-race-who="yes"><b>${crew[k].length}</b><span>${esc(l)}</span></button>`).join("")}</div>
+      ${flex ? `<div class="faint small">${flex === 1 ? "1 person" : flex + " people"} could row or cox, so ${flex === 1 ? "is" : "are"} counted in both.</div>` : ""}` : "";
+  const who = r.responses.length
+    ? `<div class="race-who">${Object.keys(RACE_FILTER).filter((k) => n(k)).map((k) => `<button type="button" class="chip ${RACE_FILTER_CHIP[k]}" data-race-who="${k}">${n(k)} ${esc(RACE_FILTER_LABEL[k].toLowerCase())}</button>`).join("")}
+        <button type="button" class="btn ghost sm" data-race-who="yes">See who</button></div>`
+    : `<div class="race-who"><span class="chip">No responses yet</span>${isCommittee() ? `<button class="btn ghost sm" data-race-set="">${I.plus}Add someone</button>` : ""}</div>`;
   return `<article class="card race ${r.past ? "past" : ""}" data-race="${r.id}">
     <div class="race-head"><div class="datebox"><span>${DAY[dow(r.date)]}</span><b>${d.getUTCDate()}</b><span>${MON[d.getUTCMonth()]}</span></div>
       <div style="flex:1;min-width:0"><div class="race-title">${esc(r.title)}</div>
@@ -2440,14 +2505,8 @@ function raceCard(r, data) {
     ${r.notes ? `<div class="race-notes small">${esc(r.notes)}</div>` : ""}
     ${r.links.length ? `<div class="race-links">${r.links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${I.link}${esc(l.label || l.url.replace(/^https?:\/\//, "").replace(/\/$/, ""))}</a>`).join("")}</div>` : ""}
     ${respond}
-    <details class="race-who"${isCommittee() ? " open" : ""}><summary>${counts}</summary>
-      ${RACE_ORDER.map((k) => [k, r.responses.filter((x) => x.status === k)]).filter(([, l]) => l.length).map(([k, l]) => `<div class="race-group"><div class="faint small">${RACE_ST[k][0]}</div>${l.map((x) => `<div class="race-person ${x.member_id === S.me ? "me" : ""}">
-        <span>${esc(x.name)} <span class="faint small">${esc(x.category)}${raceRespSummary(x, data) ? ` · ${esc(raceRespSummary(x, data))}` : ""}</span>
-          ${x.problems?.length ? ` <span class="chip bad" title="${esc(x.problems.join(". "))}">${I.alert}Not eligible</span>` : ""}
-          ${x.comment && isCommittee() ? `<span class="small muted race-comment">“${esc(x.comment)}”</span>` : ""}</span>
-        ${isCommittee() ? `<button class="btn ghost sm" data-race-set="${x.member_id}">Change</button>` : ""}</div>`).join("")}</div>`).join("")}
-      ${isCommittee() ? `<button class="btn sm" data-race-set="">${I.plus}Add someone</button>` : ""}
-    </details>
+    ${crewLine}
+    ${who}
   </article>`;
 }
 
@@ -2479,6 +2538,7 @@ async function pageRaces() {
     }));
     const n = $("[data-race-mine]", card); if (n) n.onclick = () => requireMe(() => raceResponseModal(r, data, S.me));
     $$("[data-race-set]", card).forEach((b) => b.onclick = () => raceResponseModal(r, data, b.dataset.raceSet ? +b.dataset.raceSet : null));
+    $$("[data-race-who]", card).forEach((b) => b.onclick = () => raceWhoModal(r, data, b.dataset.raceWho));
   });
 }
 
@@ -2498,8 +2558,8 @@ function raceResponseModal(r, data, memberId, presetStatus) {
     body: `${committee && memberId == null ? `<label class="field"><span>Who</span><div id="rr-who"></div></label>` : `<div><b>${esc(whoName)}</b> <span class="faint small">${esc(data.entry[r.entry])}${r.squad !== "any" ? ` · ${esc(data.squads[r.squad])} squad` : ""}</span></div>`}
       <div class="field"><span>${self ? "Can you race?" : "Can they race?"}</span><div class="seg" id="rr-st">${RACE_ORDER.map((k) => `<button type="button" data-v="${k}" class="${st.status === k ? "on " + k : ""}">${esc(RACE_ST[k][0])}</button>`).join("")}</div></div>
       <div id="rr-details">
-        <div class="grid-2"><div class="field"><span>Squad</span>${pills("squad", Object.entries(data.squads), st.squad)}</div>
-          <div class="field" id="rr-role-f"><span>${self ? "I'd like to" : "Would"}</span>${pills("role", Object.entries(data.roles).map(([k, l]) => [k, l]), st.role)}</div></div>
+        <div class="grid-2"><div class="field" id="rr-role-f"><span>${self ? "I'd like to" : "Would"}</span>${pills("role", Object.entries(data.roles).map(([k, l]) => [k, l]), st.role)}</div>
+          <div class="field" id="rr-squad-f"><span>Squad</span>${pills("squad", Object.entries(data.squads), st.squad)}</div></div>
         <div class="field" id="rr-side-f"><span>Side preference</span>${pills("side", data.sides.map((x) => [x, x]), st.side)}</div>
       </div>
       <div id="rr-elig"></div>
@@ -2510,6 +2570,7 @@ function raceResponseModal(r, data, memberId, presetStatus) {
         const no = st.status === "no", coxOnly = st.status === "cox";
         $("#rr-details", m).classList.toggle("hidden", no);
         $("#rr-role-f", m).classList.toggle("hidden", coxOnly);
+        $("#rr-squad-f", m).classList.toggle("hidden", coxOnly || st.role === "cox");   // coxes cox either squad
         $("#rr-side-f", m).classList.toggle("hidden", coxOnly || st.role === "cox");
       };
       const drawElig = () => {
@@ -2553,9 +2614,9 @@ function raceResponseModal(r, data, memberId, presetStatus) {
       show(); check();
       $("#rr-save", m).onclick = async () => {
         if (st.member_id == null) return toast("Pick who to add", true);
-        if (st.status !== "no") {
+        if (st.status !== "no" && st.status !== "cox" && st.role !== "cox") {
           if (!st.squad) return toast(self ? "Choose your squad" : "Choose their squad", true);
-          if (st.status !== "cox" && st.role !== "cox" && !st.side) return toast("Choose a side preference", true);
+          if (!st.side) return toast("Choose a side preference", true);
         }
         const body = { member_id: st.member_id, status: st.status, squad: st.squad, role: st.status === "cox" ? "cox" : st.role, side: st.side, comment: $("#rr-c", m).value, override: committee && st.problems.length > 0 };
         try { await api(`/api/races/${r.id}/response`, { method: "PUT", body }); close(); toast("Response saved"); pageRaces(); }

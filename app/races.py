@@ -2,13 +2,14 @@
 
 The committee creates races (title, date, term, city, expected time slot, who should
 enter, which squad, race type, notes and source links). Members then say whether
-they're available, maybe, available to cox only, or not available, plus their squad
-(Open / Women's), whether they'd row, cox or both, and their side preference.
+they're available, maybe, available to cox only, or not available, plus whether
+they'd row, cox or both, and (if they'd row) their squad (Open / Women's) and side.
 Squad and side are saved back to the member's profile.
 
 Eligibility (race_problems) is checked on the server: a novice race is for novices,
-a senior race for seniors, and an Open or Women's race needs a rower from that squad.
-Coxes aren't held to the squad rule (anyone can cox either squad's crew). Rowers
+a senior race for seniors (but senior coxes can cox novice races), and an Open or
+Women's race needs a rower from that squad. Coxes have no squad and aren't held to
+the squad rule (anyone can cox either squad's crew). Rowers
 can't submit an ineligible response; the committee is warned and can override.
 """
 from __future__ import annotations
@@ -72,18 +73,24 @@ class CheckIn(BaseModel):
 
 
 def race_problems(race, category: str, squad: str, role: str, status: str) -> list[str]:
-    """Why this member can't enter this race (empty list = eligible). Saying "not available" is always fine."""
+    """Why this member can't enter this race (empty list = eligible). Saying "not available" is always fine.
+
+    Coxes aren't held to the squad rule, and senior coxes can cox novice races. When
+    coxing would fix a problem for someone who'd row, the message says so.
+    """
     if status == "no":
         return []
     out = []
+    coxing = status == "cox" or role == "cox"
     entry = race["entry"]
-    if entry != "all" and entry != (category or "").lower():
-        out.append(f"This race is for {ENTRY[entry].lower()}, and they're {'a ' + category.lower() if category else 'not set as novice or senior'}")
-    rows = status != "cox" and role in ("rower", "both")
+    cat = (category or "").lower()
+    if entry != "all" and entry != cat and not (coxing and entry == "novice" and cat == "senior"):
+        out.append(f"This race is for {ENTRY[entry].lower()}, and they're {'a ' + cat if cat else 'not set as novice or senior'}"
+                   + (" (they could still cox)" if entry == "novice" and cat == "senior" else ""))
     rsq = race["squad"] or "any"
-    if rows and rsq != "any" and squad != rsq:
+    if not coxing and rsq != "any" and squad != rsq:
         out.append(f"This race is for the {SQUADS[rsq]} squad, and they're {'in the ' + SQUADS[squad] + ' squad' if squad in SQUADS else 'not in a squad yet'}"
-                   + (" (they could still cox)" if role == "both" or status != "cox" else ""))
+                   " (they could still cox)")
     return out
 
 
@@ -224,15 +231,16 @@ def _clean_response(b: ResponseIn) -> tuple[str, str, str]:
         raise HTTPException(400, "Choose available, maybe, cox only or not available")
     if b.status == "no":
         return (b.squad if b.squad in SQUADS else ""), "", ""
-    if b.squad not in SQUADS:
-        raise HTTPException(400, "Choose your squad (Open or Women's)")
     role = "cox" if b.status == "cox" else b.role
     if role not in ROLES:
         raise HTTPException(400, "Choose whether you'd row, cox or both")
-    side = b.side if role in ("rower", "both") else ""
-    if role in ("rower", "both") and side not in SIDES:
+    if role == "cox":                       # coxes cox either squad's crew
+        return "", role, ""
+    if b.squad not in SQUADS:
+        raise HTTPException(400, "Choose your squad (Open or Women's)")
+    if b.side not in SIDES:
         raise HTTPException(400, "Choose a side preference")
-    return b.squad, role, side
+    return b.squad, role, b.side
 
 
 @router.post("/api/races/{race_id}/check")
