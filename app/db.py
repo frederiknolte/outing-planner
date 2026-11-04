@@ -272,8 +272,8 @@ DEFAULT_SETTINGS = {
     # River rules (see river.py)
     "term_start": "2026-10-11",        # Sunday of 1st week of Full Term
     "peak_end": "",                    # last day of the term's major regatta; blank = end of 8th week
-    "peak_crews_before_8": "1",
-    "photo_storage_mb": "300",         # total space boat-issue photos may use        # crews allowed on the water at once before 08:00 in peak term (Extra Slot = 2)
+    "peak_crews_before_8": "1",        # crews allowed on the water at once before 08:00 in peak term (Extra Slot = 2)
+    "photo_storage_mb": "300",         # total space boat-issue photos may use
 }
 
 
@@ -311,6 +311,8 @@ def init_db() -> None:
                 if col not in have:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
         _normalize_times(conn)
+        # Races used to have a separate "Cox only" answer; it's now Available + the cox role.
+        conn.execute("UPDATE race_responses SET status = 'yes', role = 'cox', squad = '', side = '' WHERE status = 'cox'")
         for k, v in DEFAULT_SETTINGS.items():
             conn.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (k, v))
         conn.execute("UPDATE settings SET value = ? WHERE key = 'club_name' AND value IN ('Boat Club', 'Reuben College Boat Club')",

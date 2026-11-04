@@ -2408,8 +2408,8 @@ function editPlace(p, after) {
 }
 
 // ------------------------------------------------------------------ races --
-const RACE_ST = { yes: ["Available", "ok"], maybe: ["Maybe", "warn"], cox: ["Cox only", "accent"], no: ["Not available", "bad"] };
-const RACE_ORDER = ["yes", "cox", "maybe", "no"];
+const RACE_ST = { yes: ["Available", "ok"], maybe: ["Maybe", "warn"], no: ["Not available", "bad"] };
+const RACE_ORDER = ["yes", "maybe", "no"];
 const RACE_ENTRY_CHIP = { novice: "accent", senior: "violet", all: "" };
 const youify = (t) => t.replace(/they're/g, "you're").replace(/they could/g, "you could");
 /* "Open · Rower or cox · Bow pref" */
@@ -2418,16 +2418,16 @@ function raceRespSummary(x, data) {
   return [x.role !== "cox" ? data.squads[x.squad] : "", x.role ? data.roles[x.role] : "", x.side ? SIDE_SHORT[x.side] || x.side : ""].filter(Boolean).join(" · ");
 }
 
-/* Answers grouped for the card and the "who" panel. Cox only counts as available (to cox). */
-const RACE_FILTER = { yes: ["yes", "cox"], maybe: ["maybe"], no: ["no"] };
+/* Answers grouped for the card and the "who" panel. */
+const RACE_FILTER = { yes: ["yes"], maybe: ["maybe"], no: ["no"] };
 const RACE_FILTER_LABEL = { yes: "Available", maybe: "Maybe", no: "Not available" };
 const RACE_FILTER_CHIP = { yes: "ok", maybe: "warn", no: "bad" };
 /* Split responses into crew columns. Someone who'd row or cox goes in their squad's column and in Coxes. */
 function raceCrew(list) {
   const out = { open: [], women: [], unset: [], cox: [] };
   for (const x of list) {
-    const rows = x.status !== "cox" && x.role !== "cox";
-    const coxes = x.status === "cox" || x.role === "cox" || x.role === "both";
+    const rows = x.role !== "cox";
+    const coxes = x.role === "cox" || x.role === "both";
     if (rows) out[x.squad === "open" || x.squad === "women" ? x.squad : "unset"].push(x);
     if (coxes) out.cox.push(x);
   }
@@ -2440,12 +2440,11 @@ function raceWhoModal(r, data, filter) {
   const count = (k) => r.responses.filter((x) => RACE_FILTER[k].includes(x.status)).length;
   const person = (x, col) => {
     const side = col !== "cox" && col !== "no" && x.side ? SIDE_SHORT[x.side] || x.side : "";
-    const also = x.role === "both" && x.status !== "cox" && col !== "no" ? (col === "cox" ? "also rows" : "also coxes") : "";
-    const tag = x.status === "cox" ? "cox only" : "";
+    const also = x.role === "both" && col !== "no" ? (col === "cox" ? "also rows" : "also coxes") : "";
     const el = committee ? `button type="button" data-race-set="${x.member_id}"` : "div";
     return `<${el} class="race-person ${x.member_id === S.me ? "me" : ""}">
       <span class="race-person-name">${esc(x.name)}</span>
-      <span class="race-person-meta"><span class="chip ${x.category === "Novice" ? "accent" : ""}" title="${esc(x.category || "Category not set")}">${esc(x.category || "?")}</span>${[side, also, tag].filter(Boolean).map((t) => `<span>${esc(t)}</span>`).join("")}${x.problems?.length ? `<span class="chip bad" title="${esc(x.problems.join(". "))}">${I.alert}Not eligible</span>` : ""}</span>
+      <span class="race-person-meta"><span class="chip ${x.category === "Novice" ? "accent" : ""}" title="${esc(x.category || "Category not set")}">${esc(x.category || "?")}</span>${[side, also].filter(Boolean).map((t) => `<span>${esc(t)}</span>`).join("")}${x.problems?.length ? `<span class="chip bad" title="${esc(x.problems.join(". "))}">${I.alert}Not eligible</span>` : ""}</span>
       ${x.comment && committee ? `<span class="small muted race-comment">“${esc(x.comment)}”</span>` : ""}</${committee ? "button" : "div"}>`;
   };
   const body = () => {
@@ -2487,7 +2486,7 @@ function raceCard(r, data) {
       ${mine && raceRespSummary(mine, data) ? `<div class="small muted">You: ${esc(raceRespSummary(mine, data))}${mine.comment ? ` · “${esc(mine.comment)}”` : ""}</div>` : ""}
       ${me && !mine && r.me_problems.length ? `<div class="small race-warn">${I.alert}${esc(youify(r.me_problems[0]))}.</div>` : ""}`;
   const avail = r.responses.filter((x) => RACE_FILTER.yes.includes(x.status));
-  const crew = raceCrew(avail), flex = avail.filter((x) => x.status === "yes" && x.role === "both").length;
+  const crew = raceCrew(avail), flex = avail.filter((x) => x.role === "both").length;
   const n = (k) => r.responses.filter((x) => RACE_FILTER[k].includes(x.status)).length;
   const crewLine = avail.length ? `<div class="race-crew">${[["open", "Open rowers"], ["women", "Women's rowers"], ["unset", "Squad not set"], ["cox", "Coxes"]].filter(([k]) => k !== "unset" || crew.unset.length)
       .map(([k, l]) => `<button type="button" class="race-crew-n" data-race-who="yes"><b>${crew[k].length}</b><span>${esc(l)}</span></button>`).join("")}</div>
@@ -2549,7 +2548,6 @@ function raceResponseModal(r, data, memberId, presetStatus) {
   const prof = memberId === S.me ? data.me : null;
   const st = { member_id: memberId, status: presetStatus || cur?.status || "yes", squad: cur?.squad || prof?.squad || "", role: cur?.role && cur.role !== "cox" ? cur.role : cur?.role || "rower",
     side: cur?.side || prof?.side || "", problems: [] };
-  if (st.status === "cox") st.role = "cox";
   let picker = null, checkSeq = 0;
   const pills = (name, opts, v) => `<div class="pills" data-name="${name}">${opts.map(([k, l]) => `<button type="button" class="pill ${v === k ? "on" : ""}" data-v="${esc(k)}">${esc(l)}</button>`).join("")}</div>`;
   const whoName = memberId != null ? (S.boot.members.find((m) => m.id === memberId)?.name || cur?.name || "") : "";
@@ -2567,11 +2565,10 @@ function raceResponseModal(r, data, memberId, presetStatus) {
     foot: `${cur ? `<button class="btn danger" id="rr-del">Remove response</button>` : ""}<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="rr-save">Save</button></div>`,
     onMount: (m, close) => {
       const show = () => {
-        const no = st.status === "no", coxOnly = st.status === "cox";
+        const no = st.status === "no";
         $("#rr-details", m).classList.toggle("hidden", no);
-        $("#rr-role-f", m).classList.toggle("hidden", coxOnly);
-        $("#rr-squad-f", m).classList.toggle("hidden", coxOnly || st.role === "cox");   // coxes cox either squad
-        $("#rr-side-f", m).classList.toggle("hidden", coxOnly || st.role === "cox");
+        $("#rr-squad-f", m).classList.toggle("hidden", st.role === "cox");   // coxes cox either squad
+        $("#rr-side-f", m).classList.toggle("hidden", st.role === "cox");
       };
       const drawElig = () => {
         const save = $("#rr-save", m), p = st.problems;
@@ -2584,7 +2581,7 @@ function raceResponseModal(r, data, memberId, presetStatus) {
         if (st.member_id == null) { st.problems = []; return drawElig(); }
         const seq = ++checkSeq;
         try {
-          const res = await api(`/api/races/${r.id}/check`, { method: "POST", body: { member_id: st.member_id, status: st.status, squad: st.squad, role: st.status === "cox" ? "cox" : st.role } });
+          const res = await api(`/api/races/${r.id}/check`, { method: "POST", body: { member_id: st.member_id, status: st.status, squad: st.squad, role: st.role } });
           if (seq !== checkSeq) return;
           st.problems = res.problems; drawElig();
           return res.profile;
@@ -2614,11 +2611,11 @@ function raceResponseModal(r, data, memberId, presetStatus) {
       show(); check();
       $("#rr-save", m).onclick = async () => {
         if (st.member_id == null) return toast("Pick who to add", true);
-        if (st.status !== "no" && st.status !== "cox" && st.role !== "cox") {
+        if (st.status !== "no" && st.role !== "cox") {
           if (!st.squad) return toast(self ? "Choose your squad" : "Choose their squad", true);
           if (!st.side) return toast("Choose a side preference", true);
         }
-        const body = { member_id: st.member_id, status: st.status, squad: st.squad, role: st.status === "cox" ? "cox" : st.role, side: st.side, comment: $("#rr-c", m).value, override: committee && st.problems.length > 0 };
+        const body = { member_id: st.member_id, status: st.status, squad: st.squad, role: st.role, side: st.side, comment: $("#rr-c", m).value, override: committee && st.problems.length > 0 };
         try { await api(`/api/races/${r.id}/response`, { method: "PUT", body }); close(); toast("Response saved"); pageRaces(); }
         catch (e) { if (e.status === 409 && e.detail?.problems) { st.problems = e.detail.problems; drawElig(); } else fail(e); }
       };

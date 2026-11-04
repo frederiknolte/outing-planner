@@ -2,15 +2,15 @@
 
 The committee creates races (title, date, term, city, expected time slot, who should
 enter, which squad, race type, notes and source links). Members then say whether
-they're available, maybe, available to cox only, or not available, plus whether
-they'd row, cox or both, and (if they'd row) their squad (Open / Women's) and side.
-Squad and side are saved back to the member's profile.
+they're available, maybe or not available, plus whether they'd row, cox or both,
+and (if they'd row) their squad (Open / Women's) and side. Squad and side are
+saved back to the member's profile.
 
 Eligibility (race_problems) is checked on the server: a novice race is for novices,
 a senior race for seniors (but senior coxes can cox novice races), and an Open or
 Women's race needs a rower from that squad. Coxes have no squad and aren't held to
-the squad rule (anyone can cox either squad's crew). Rowers
-can't submit an ineligible response; the committee is warned and can override.
+the squad rule (anyone can cox either squad's crew). Rowers can't submit an ineligible
+response; the committee is warned and can override.
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ router = APIRouter()
 
 ENTRY = {"all": "Everyone", "novice": "Novices", "senior": "Seniors"}
 RACE_SQUADS = {"any": "Any squad", **SQUADS}
-STATUSES = {"yes": "Available", "maybe": "Maybe", "cox": "Cox only", "no": "Not available"}
+STATUSES = {"yes": "Available", "maybe": "Maybe", "no": "Not available"}
 ROLES = {"rower": "Rower", "cox": "Cox", "both": "Rower or cox"}
 MAX_LINKS = 10
 
@@ -81,7 +81,7 @@ def race_problems(race, category: str, squad: str, role: str, status: str) -> li
     if status == "no":
         return []
     out = []
-    coxing = status == "cox" or role == "cox"
+    coxing = role == "cox"
     entry = race["entry"]
     cat = (category or "").lower()
     if entry != "all" and entry != cat and not (coxing and entry == "novice" and cat == "senior"):
@@ -226,12 +226,12 @@ def _check_can_respond(conn, race_id: int, member_id: int, committee: bool):
 
 
 def _clean_response(b: ResponseIn) -> tuple[str, str, str]:
-    """(squad, role, side), validated. Not available needs none of them; cox only implies the cox role."""
+    """(squad, role, side), validated. Not available needs none of them."""
     if b.status not in STATUSES:
-        raise HTTPException(400, "Choose available, maybe, cox only or not available")
+        raise HTTPException(400, "Choose available, maybe or not available")
     if b.status == "no":
         return (b.squad if b.squad in SQUADS else ""), "", ""
-    role = "cox" if b.status == "cox" else b.role
+    role = b.role
     if role not in ROLES:
         raise HTTPException(400, "Choose whether you'd row, cox or both")
     if role == "cox":                       # coxes cox either squad's crew
