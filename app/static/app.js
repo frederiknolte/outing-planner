@@ -371,6 +371,13 @@ function flagBanner(f, actions = true) {
   </div>`;
 }
 
+/* Compact flag indicator for the schedule's tab row; click opens the full details. */
+function flagPill(f) {
+  if (!f) return "";
+  return `<button class="flag-pill" id="flag-rules" style="--flag:${esc(f.colour)}" title="Isis flag: ${esc(f.name)}${f.stale ? " (may be out of date)" : ""}. Tap for details and river rules.">
+    <span class="flag-swatch" aria-hidden="true"></span>Isis flag${f.stale ? ` <span class="flag-stale" aria-label="may be out of date">!</span>` : ""}</button>`;
+}
+
 async function riverModal() {
   let d;
   try { d = await api("/api/river"); } catch (e) { return fail(e); }
@@ -519,12 +526,14 @@ async function pageSchedule() {
         ` : ""}
       </div>
     </div>
-    ${flagBanner(data.river && data.river.flag)}
     <div class="filters">
       <div class="seg" id="flt">
         ${[["all", "All"], ["water", "Water"], ["land", "Land"], ["open", "Open spots"], ["mine", `Mine${S.me ? ` (${myCount})` : ""}`], ["subs", "Needs sub"]].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? "on" : ""}">${l}</button>`).join("")}
       </div>
-      ${committee ? `<div style="margin-left:auto" class="toolbar"><button class="btn" data-new="land">${I.plus}Land session</button><button class="btn primary" data-new="water">${I.plus}Water outing</button></div>` : ""}
+      <div class="filters-right">
+        ${committee ? `<div class="toolbar"><button class="btn" data-new="land">${I.plus}Land session</button><button class="btn primary" data-new="water">${I.plus}Water outing</button></div>` : ""}
+        ${flagPill(data.river && data.river.flag)}
+      </div>
     </div>
     ${!committee && data.outings.length === 0 ? `<div class="card empty">${I.calendar}<h3>Nothing published yet</h3><p>The schedule for this week hasn't been released. Check back soon.</p></div>` : `
     <div class="days">${data.days.map((d) => {

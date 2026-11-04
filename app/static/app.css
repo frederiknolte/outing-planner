@@ -646,6 +646,12 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
 .flag-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .flag-actions { display: flex; gap: 6px; flex: none; }
 @media (max-width: 640px) { .flag-banner { flex-wrap: wrap; } .flag-actions { width: 100%; } }
+.filters-right { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.flag-pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 10px; cursor: pointer; font: inherit; font-weight: 600;
+  color: var(--text); background: var(--surface); border: 1px solid var(--border); border-left: 5px solid var(--flag); }
+.flag-pill:hover { background: var(--surface-3); }
+.flag-pill .flag-swatch { width: 20px; height: 14px; }
+.flag-stale { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--warn-soft); color: var(--warn); font-size: 11px; font-weight: 800; }
 .flag-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; flex: none; vertical-align: -1px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); }
 .day-sun { font-size: 11.5px; color: var(--text-3); padding: 0 4px 8px; margin-top: -4px; }
 .river-list { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
