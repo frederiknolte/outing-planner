@@ -35,6 +35,7 @@ from .tasks import router as tasks_router
 from .autofill import router as autofill_router
 from .usage import router as usage_router
 from .handover import router as handover_router
+from .incidents import router as incidents_router
 from .logic import (BOAT_TYPES, CANCEL_REASONS, SUBS_PLANS, TERMS, TZ, Rules, monday_of, outing_payload,
                     seat_label, seat_list)
 
@@ -1469,6 +1470,7 @@ app.include_router(tasks_router)
 app.include_router(autofill_router)
 app.include_router(usage_router)
 app.include_router(handover_router)
+app.include_router(incidents_router)
 app.include_router(push.router)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 

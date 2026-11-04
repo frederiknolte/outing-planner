@@ -149,6 +149,8 @@ def issue_detail(issue_id: int, _: str = Depends(require_member)):
         i["boat_name"] = conn.execute("SELECT name FROM boats WHERE id = ?", (i["boat_id"],)).fetchone()[0]
         i["updates"] = [dict(r) for r in conn.execute(
             "SELECT * FROM issue_updates WHERE issue_id = ? ORDER BY created_at, id", (issue_id,))]
+        from .incidents import linked_to_issue   # incidents imports this module
+        i["incidents"] = linked_to_issue(conn, issue_id)
         i["photos"] = [{"id": r["id"], "uploaded_by": r["uploaded_by"], "created_at": r["created_at"], "size": r["size"]}
                        for r in conn.execute("SELECT * FROM issue_photos WHERE issue_id = ? ORDER BY id", (issue_id,))]
         return i

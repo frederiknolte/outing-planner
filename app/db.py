@@ -215,6 +215,34 @@ CREATE TABLE IF NOT EXISTS issue_photos (             -- files live in DATA_DIR/
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Incident and capsize log (see incidents.py). Anyone can report; only the committee can read it.
+CREATE TABLE IF NOT EXISTS incidents (
+    id INTEGER PRIMARY KEY,
+    date TEXT NOT NULL,                            -- YYYY-MM-DD
+    time TEXT NOT NULL DEFAULT '',                 -- HH:MM or ''
+    kind TEXT NOT NULL DEFAULT 'capsize',          -- capsize | collision | injury | near_miss | equipment | other
+    outing_id INTEGER REFERENCES outings(id) ON DELETE SET NULL,
+    boat_id INTEGER REFERENCES boats(id) ON DELETE SET NULL,
+    boat_name TEXT NOT NULL DEFAULT '',            -- kept if the boat is later deleted
+    crew TEXT NOT NULL DEFAULT '',                 -- names as written at the time (free text)
+    location TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',          -- what happened
+    injury TEXT NOT NULL DEFAULT 'none',           -- none | first_aid | medical | hospital
+    injury_details TEXT NOT NULL DEFAULT '',
+    action_taken TEXT NOT NULL DEFAULT '',         -- what was done at the time
+    follow_up TEXT NOT NULL DEFAULT '',            -- committee: lessons, changes made afterwards
+    status TEXT NOT NULL DEFAULT 'open',           -- open (follow-up needed) | closed
+    br_reported INTEGER NOT NULL DEFAULT 0,        -- reported to British Rowing
+    br_reference TEXT NOT NULL DEFAULT '',
+    br_reported_on TEXT NOT NULL DEFAULT '',       -- YYYY-MM-DD or ''
+    issue_id INTEGER REFERENCES boat_issues(id) ON DELETE SET NULL,   -- boat issue for damaged equipment
+    reported_by TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_incidents_date ON incidents(date);
+CREATE INDEX IF NOT EXISTS idx_incidents_issue ON incidents(issue_id);
+
 -- Races: the committee lists them, members say whether they're available
 CREATE TABLE IF NOT EXISTS races (
     id INTEGER PRIMARY KEY,

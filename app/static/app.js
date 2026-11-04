@@ -57,6 +57,7 @@ const I = {
   chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15v2"/><path d="M11 10v7"/><path d="M15 6v11"/><path d="M19 12v5"/></svg>',
   bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
   history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>',
+  lifebuoy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M5.6 5.6l3.6 3.6M14.8 14.8l3.6 3.6M14.8 9.2l3.6-3.6M5.6 18.4l3.6-3.6"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
 };
 
@@ -220,6 +221,7 @@ const ROUTES = [
   { id: "boats", label: "Boat park", tab: "Boats", icon: I.boat },
   { id: "issues", label: "Issues", parent: "boats", icon: I.alert, count: "issues" },
   { id: "usage", label: "Usage", parent: "boats", icon: I.chart },
+  { id: "incidents", label: "Incidents", parent: "boats", icon: I.lifebuoy, count: "incidents" },
   { id: "committee", label: "Committee", tab: "Overview", icon: I.users },
   { id: "todo", label: "To-do", parent: "committee", icon: I.todo, committee: true, count: "todo" },
   { id: "handbook", label: "Handbook", parent: "committee", icon: I.info, committee: true },
@@ -1374,6 +1376,7 @@ async function refreshCounts() {
   get("issues", "/api/issues", (d) => d.issues.filter((i) => d.active.includes(i.status)).length);
   if (isCommittee()) get("reminders", "/api/committee/subs-reminders", (d) => d.members.length);
   if (isCommittee()) get("todo", "/api/committee/tasks", taskAttention);
+  if (isCommittee()) get("incidents", "/api/committee/incidents/summary", (d) => d.open);
 }
 const refreshSubsCount = refreshCounts;
 
@@ -2070,6 +2073,7 @@ async function openIssue(id, boats) {
     title: esc(i.title), wide: true,
     body: `<div class="issue-chips"><span class="chip">${I.boat}${esc(i.boat_name)}</span><span class="chip ${ISSUE_SEV[i.severity][1]}">${esc(ISSUE_SEV[i.severity][0])}</span><span class="chip ${ISSUE_ST[i.status]}">${esc(st[i.status])}</span></div>
       ${i.description ? `<div class="issue-desc">${esc(i.description)}</div>` : `<div class="faint small">No description.</div>`}
+      ${(i.incidents || []).length ? `<div class="issue-chips">${i.incidents.map((x) => committee ? `<button class="chip chip-btn warn" data-inc-open="${x.id}">${I.lifebuoy}${esc(x.kind_label)}, ${esc(fmtShort(x.date))}</button>` : `<span class="chip warn">${I.lifebuoy}From a ${esc(x.kind_label.toLowerCase())}, ${esc(fmtShort(x.date))}</span>`).join("")}</div>` : ""}
       ${i.photos.length ? `<div class="photo-grid">${i.photos.map((p) => `<div class="photo"><a href="/api/issues/photos/${p.id}" target="_blank" rel="noopener"><img src="/api/issues/photos/${p.id}" loading="lazy" alt="Photo${p.uploaded_by ? ` from ${esc(p.uploaded_by)}` : ""}"></a>${committee ? `<button class="btn icon sm photo-del" data-del-photo="${p.id}" title="Delete photo" aria-label="Delete photo">${I.x}</button>` : ""}</div>`).join("")}</div>` : ""}
       <div class="section-title" style="margin-top:6px">Progress</div>
       <div class="timeline">${timeline}</div>
@@ -2107,6 +2111,7 @@ async function openIssue(id, boats) {
       };
       const ed = $("#iu-edit", m);
       if (ed) ed.onclick = () => editIssue(i, boats);
+      $$("[data-inc-open]", m).forEach((b) => b.onclick = async () => { close(); await go("incidents"); openIncident(+b.dataset.incOpen); });
     },
   });
 }
@@ -2127,6 +2132,189 @@ function editIssue(i, boats) {
         const body = { boat_id: +$("#ei-boat", m).value, title: $("#ei-title", m).value.trim(), severity: sev, description: $("#ei-desc", m).value };
         if (!body.title) return toast("Title is required", true);
         try { await api(`/api/issues/${i.id}`, { method: "PUT", body }); await rerender(); openIssue(i.id, boats); } catch (e) { fail(e); }
+      };
+    },
+  });
+}
+
+// -------------------------------------------------------------- incidents --
+/* Incident and capsize log. Anyone can report; only the committee sees the log (names, injuries). */
+const INC_KIND = { capsize: "bad", collision: "bad", injury: "warn", near_miss: "accent", equipment: "warn", other: "" };
+const INC_INJ = { none: "", first_aid: "warn", medical: "bad", hospital: "bad" };
+let incMeta = null;
+async function loadIncMeta() { if (!incMeta) incMeta = await api("/api/incidents/meta"); return incMeta; }
+const incWhen = (i) => `${fmtLong(i.date)}${i.time ? ` ${i.time}` : ""}`;
+
+/* Report form (rowers and committee) or full edit (committee, `i` given). */
+async function incidentForm(i = null) {
+  let meta, boats;
+  try { [meta, boats] = await Promise.all([loadIncMeta(), api("/api/committee/boats").then((d) => d.boats)]); } catch (e) { return fail(e); }
+  const edit = !!i, v = i || { date: S.boot.today, time: "", kind: "capsize", outing_id: null, boat_id: null, crew: "", location: "", description: "", injury: "none", injury_details: "", action_taken: "", reported_by: meName() || "" };
+  let kind = v.kind, outings = [];
+  const opts = (o, sel) => Object.entries(o).map(([k, l]) => `<option value="${k}" ${k === sel ? "selected" : ""}>${esc(l)}</option>`).join("");
+  modal({
+    title: edit ? "Edit incident" : "Report an incident", wide: true,
+    body: `${edit ? "" : `<div class="callout warn">${I.alert}<div>Someone hurt or still in the water? Call <b>999</b> (ask for the coastguard on tidal water) before filling this in.</div></div>`}
+      <div class="field"><span>What happened?</span><div class="seg seg-wrap" id="in-kind">${Object.entries(meta.kinds).map(([k, l]) => `<button type="button" data-v="${k}" class="${k === kind ? "on" : ""}">${esc(l)}</button>`).join("")}</div></div>
+      <div class="grid-3"><label class="field"><span>Date</span><input class="input" type="date" id="in-date" max="${esc(S.boot.today)}" value="${esc(v.date)}"></label>
+        <label class="field"><span>Time (roughly)</span><input class="input" type="time" id="in-time" value="${esc(/^\d\d:\d\d$/.test(v.time) ? v.time : "")}"></label>
+        <label class="field"><span>Outing</span><select class="input" id="in-outing"><option value="">Not part of an outing</option></select></label></div>
+      <div class="grid-2"><label class="field"><span>Boat</span><select class="input" id="in-boat"><option value="">No boat / not listed</option>${boats.map((b) => `<option value="${b.id}" ${b.id === v.boat_id ? "selected" : ""}>${esc(b.name)}</option>`).join("")}</select>${edit && !v.boat_id && v.boat_name ? `<span class="hint">Was: ${esc(v.boat_name)} (since deleted)</span>` : ""}</label>
+        <label class="field"><span>Where</span><input class="input" id="in-loc" maxlength="200" value="${esc(v.location)}" placeholder="e.g. Gut bend, near the boathouse"></label></div>
+      <label class="field"><span>Crew (and coach / launch driver)</span><textarea class="input" id="in-crew" rows="2" maxlength="2000" placeholder="Names of everyone involved">${esc(v.crew)}</textarea><span class="hint">Picking the outing fills this in.</span></label>
+      <label class="field"><span>What happened</span><textarea class="input" id="in-desc" rows="4" maxlength="8000" placeholder="Conditions, what led up to it, what happened">${esc(v.description)}</textarea></label>
+      <div class="grid-2"><label class="field"><span>Was anyone hurt?</span><select class="input" id="in-inj">${opts(meta.injuries, v.injury)}</select></label>
+        <label class="field ${v.injury === "none" ? "hidden" : ""}" id="in-injd-f"><span>Injury details</span><input class="input" id="in-injd" maxlength="4000" value="${esc(v.injury_details)}" placeholder="Who, what, any treatment"></label></div>
+      <label class="field"><span>What was done about it</span><textarea class="input" id="in-act" rows="3" maxlength="8000" placeholder="e.g. Crew swam the boat to the bank, launch took the cox back, everyone checked for cold, boat taken out">${esc(v.action_taken)}</textarea></label>
+      ${edit ? `<div class="section-title" style="margin-top:4px">Committee</div>
+        <label class="field"><span>Follow-up</span><textarea class="input" id="in-fu" rows="3" maxlength="8000" placeholder="Lessons learned, changes made (e.g. briefing on the Gut, extra launch cover)">${esc(v.follow_up)}</textarea></label>
+        <div class="grid-2"><label class="field"><span>Status</span><select class="input" id="in-st">${opts(meta.statuses, v.status)}</select></label>
+          <label class="field"><span>Boat issue</span><select class="input" id="in-issue"><option value="">None</option>${(v.boat_issues || []).map((x) => `<option value="${x.id}" ${x.id === v.issue_id ? "selected" : ""}>${esc(x.title)}</option>`).join("")}</select></label></div>
+        <label class="check"><input type="checkbox" id="in-br" ${v.br_reported ? "checked" : ""}> Reported to British Rowing</label>
+        <div class="grid-2 ${v.br_reported ? "" : "hidden"}" id="in-br-f"><label class="field"><span>Reported on</span><input class="input" type="date" id="in-br-on" value="${esc(v.br_reported_on || S.boot.today)}"></label>
+          <label class="field"><span>Reference</span><input class="input" id="in-br-ref" maxlength="120" value="${esc(v.br_reference)}" placeholder="Incident number from British Rowing"></label></div>`
+      : `<label class="check"><input type="checkbox" id="in-dmg"> Equipment was damaged: also report a boat issue</label>
+        <div class="hidden" id="in-dmg-f"><div class="grid-2"><label class="field"><span>Damage</span><input class="input" id="in-dmg-t" maxlength="150" placeholder="e.g. Bow ball snapped, 4 seat rigger bent"></label>
+          <div class="field"><span>Can the boat still be used?</span><div class="seg" id="in-dmg-s">${Object.entries(ISSUE_SEV).map(([k, [l]]) => `<button type="button" data-v="${k}" class="${k === "caution" ? "on" : ""}">${esc(l)}</button>`).join("")}</div></div></div></div>
+        <label class="field"><span>Your name</span><input class="input" id="in-who" value="${esc(v.reported_by)}" autocomplete="name"></label>
+        <p class="small muted" style="margin:0">Only the committee can see incident reports. They follow up and report to British Rowing.</p>`}`,
+    foot: `<div class="r"><button class="btn" ${edit ? `id="in-cancel"` : "data-close"}>Cancel</button><button class="btn primary" id="in-save">${edit ? "Save" : `${I.send}Report incident`}</button></div>`,
+    onMount: (m, close) => {
+      const pick = (sel, cb) => $$(`${sel} button`, m).forEach((b) => b.onclick = () => { $$(`${sel} button`, m).forEach((x) => x.classList.toggle("on", x === b)); cb(b.dataset.v); });
+      let sev = "caution", autoCrew = "";
+      pick("#in-kind", (k) => { kind = k; });
+      pick("#in-dmg-s", (k) => { sev = k; });
+      const outSel = $("#in-outing", m), boatSel = $("#in-boat", m), crew = $("#in-crew", m);
+      const loadOutings = async (keep) => {
+        const day = $("#in-date", m).value;
+        outings = [];
+        if (day) { try { outings = (await api(`/api/incidents/outings?day=${day}`)).outings; } catch {} }
+        outSel.innerHTML = `<option value="">Not part of an outing</option>${outings.map((o) => `<option value="${o.id}" ${o.id === keep ? "selected" : ""}>${esc(`${o.time || "?"} ${o.kind === "water" ? o.boat_name || "Water outing" : o.title || "Land session"}`)}</option>`).join("")}`;
+        if (keep && !outings.some((o) => o.id === keep)) outSel.insertAdjacentHTML("beforeend", `<option value="${keep}" selected>Linked outing</option>`);
+      };
+      loadOutings(v.outing_id);
+      $("#in-date", m).onchange = () => loadOutings(null);
+      outSel.onchange = () => {
+        const o = outings.find((x) => x.id === +outSel.value);
+        if (!o) return;
+        if (o.boat_id) boatSel.value = o.boat_id;
+        if (!$("#in-time", m).value && /^\d\d:\d\d$/.test(o.time)) $("#in-time", m).value = o.time;
+        if (o.crew.length && (!crew.value.trim() || crew.value === autoCrew)) crew.value = autoCrew = o.crew.join(", ");
+      };
+      $("#in-inj", m).onchange = (e) => $("#in-injd-f", m).classList.toggle("hidden", e.target.value === "none");
+      const tog = (cb, f) => { const c = $(cb, m); if (c) c.onchange = () => $(f, m).classList.toggle("hidden", !c.checked); };
+      tog("#in-dmg", "#in-dmg-f"); tog("#in-br", "#in-br-f");
+      const cancel = $("#in-cancel", m); if (cancel) cancel.onclick = () => openIncident(i.id);
+      $("#in-save", m).onclick = async () => {
+        const body = { date: $("#in-date", m).value, time: $("#in-time", m).value, kind, outing_id: +outSel.value || null, boat_id: +boatSel.value || null,
+          crew: crew.value, location: $("#in-loc", m).value, description: $("#in-desc", m).value, injury: $("#in-inj", m).value,
+          injury_details: $("#in-injd", m).value, action_taken: $("#in-act", m).value, reported_by: edit ? v.reported_by : $("#in-who", m).value.trim() };
+        if (!body.date) return toast("Add the date", true);
+        if (!body.description.trim()) return toast("Describe what happened", true);
+        const btn = $("#in-save", m); btn.disabled = true;
+        try {
+          if (edit) {
+            Object.assign(body, { follow_up: $("#in-fu", m).value, status: $("#in-st", m).value, issue_id: +$("#in-issue", m).value || null,
+              br_reported: $("#in-br", m).checked, br_reported_on: $("#in-br-on", m).value, br_reference: $("#in-br-ref", m).value });
+            await api(`/api/committee/incidents/${i.id}`, { method: "PUT", body });
+            await rerender(); openIncident(i.id);
+          } else {
+            if (!body.reported_by) { btn.disabled = false; return toast("Add your name", true); }
+            const dmg = $("#in-dmg", m).checked;
+            if (dmg && !body.boat_id) { btn.disabled = false; return toast("Pick the boat that was damaged", true); }
+            Object.assign(body, { boat_issue: dmg, issue_title: $("#in-dmg-t", m).value, issue_severity: sev });
+            const r = await api("/api/incidents", { method: "POST", body });
+            close(); refreshCounts();
+            if (r.issue_id) {
+              toast("Incident reported and boat issue opened. Add photos of the damage there");
+              await go("issues"); openIssue(r.issue_id, boats);
+            } else { toast("Incident reported. Thank you"); rerender(); }
+          }
+        } catch (e) { fail(e); btn.disabled = false; }
+      };
+    },
+  });
+}
+
+async function pageIncidents() {
+  const committee = isCommittee();
+  const head = (extra = "") => `<div class="page-head"><div><h1>Incidents</h1><p>Capsizes, collisions, injuries and near misses. ${committee ? "Only the committee can see this log." : "Reports go to the committee only."}</p></div>
+      <div class="toolbar">${extra}<button class="btn primary" id="in-new">${I.plus}Report an incident</button></div></div>`;
+  if (!committee) {
+    $("#main").innerHTML = `${head()}
+      <div class="card empty">${I.lifebuoy}<h3>Had a capsize or a close call?</h3>
+        <p>Report every capsize, collision, injury or near miss, even if nobody was hurt. The committee uses the reports to make outings safer and to report to British Rowing, as the club has to.</p>
+        <button class="btn primary" id="in-new2">${I.plus}Report an incident</button></div>`;
+    $("#in-new").onclick = $("#in-new2").onclick = () => incidentForm();
+    return;
+  }
+  let d;
+  try { d = await api("/api/committee/incidents"); } catch (e) { return fail(e); }
+  setCount("incidents", d.incidents.filter((i) => i.status === "open").length);
+  const years = [...new Set([d.this_year, ...d.incidents.map((i) => i.year)])].sort().reverse();
+  if (!years.includes(S.incYear)) S.incYear = d.this_year;
+  S.incFilter = S.incFilter || "all";
+  const inYear = d.incidents.filter((i) => S.incYear === "all" || i.year === S.incYear);
+  const shown = inYear.filter((i) => S.incFilter === "all" || (S.incFilter === "open" ? i.status === "open" : !i.br_reported));
+  const n = (f) => inYear.filter(f).length, notRep = n((i) => !i.br_reported);
+  $("#main").innerHTML = `${head(`<button class="btn" id="in-csv">${I.download}Export CSV</button>`)}
+    <div class="stats" style="margin-bottom:16px">
+      <div class="card stat"><div class="k">Incidents</div><div class="v">${inYear.length}</div><div class="s">${S.incYear === "all" ? "all time" : esc(S.incYear)}</div></div>
+      <div class="card stat"><div class="k">Capsizes</div><div class="v">${n((i) => i.kind === "capsize")}</div><div class="s">${n((i) => i.kind === "near_miss")} near miss${n((i) => i.kind === "near_miss") === 1 ? "" : "es"}</div></div>
+      <div class="card stat"><div class="k">Injuries</div><div class="v">${n((i) => i.injury !== "none")}</div><div class="s">${n((i) => i.injury === "medical" || i.injury === "hospital")} needed treatment</div></div>
+      <div class="card stat"><div class="k">Not reported to BR</div><div class="v" style="color:${notRep ? "var(--warn)" : "var(--ok)"}">${notRep}</div><div class="s">British Rowing</div></div>
+    </div>
+    <div class="filters">
+      <div class="seg" id="in-f">${[["all", "All"], ["open", "Follow-up needed"], ["br", "Not reported to BR"]].map(([k, l]) => `<button data-f="${k}" class="${S.incFilter === k ? "on" : ""}">${l}</button>`).join("")}</div>
+      <select class="input" id="in-year" style="width:auto">${years.map((y) => `<option value="${y}" ${S.incYear === y ? "selected" : ""}>${esc(y)}</option>`).join("")}<option value="all" ${S.incYear === "all" ? "selected" : ""}>All years</option></select>
+    </div>
+    ${shown.length ? `<div class="issue-list">${shown.map((i) => `<button class="card issue-row" data-inc="${i.id}">
+        <div class="issue-main"><div class="issue-title">${esc(d.kinds[i.kind])}${i.boat_name ? ` · ${esc(i.boat_name)}` : ""}</div>
+          <div class="o-sub"><span>${I.calendar}${esc(incWhen(i))}</span>${i.location ? `<span>${I.pin}${esc(i.location)}</span>` : ""}<span>Reported by ${esc(i.reported_by)}</span>${i.issue_id ? `<span>${I.boat}Boat issue: ${esc(i.issue_title)}</span>` : ""}</div>
+          <div class="task-latest small">${esc(i.description.length > 160 ? i.description.slice(0, 160) + "…" : i.description)}</div></div>
+        <div class="issue-chips">${i.injury !== "none" ? `<span class="chip ${INC_INJ[i.injury]}">${esc(d.injuries[i.injury])}</span>` : ""}${i.br_reported ? `<span class="chip ok">${I.check}BR</span>` : `<span class="chip warn">Not reported to BR</span>`}<span class="chip ${i.status === "open" ? "accent" : ""}">${esc(d.statuses[i.status])}</span></div>
+      </button>`).join("")}</div>`
+      : `<div class="card empty">${I.lifebuoy}<h3>${d.incidents.length ? "Nothing here" : "No incidents logged"}</h3><p>${d.incidents.length ? "No incidents match these filters." : "Capsizes, collisions, injuries and near misses reported by anyone in the club appear here."}</p></div>`}`;
+  $("#in-new").onclick = () => incidentForm();
+  $("#in-csv").onclick = () => { location.href = `/api/committee/incidents.csv${S.incYear === "all" ? "" : `?year=${encodeURIComponent(S.incYear)}`}`; };
+  $$("#in-f button").forEach((b) => b.onclick = () => { S.incFilter = b.dataset.f; pageIncidents(); });
+  $("#in-year").onchange = (e) => { S.incYear = e.target.value; pageIncidents(); };
+  $$("[data-inc]").forEach((b) => b.onclick = () => openIncident(+b.dataset.inc));
+}
+
+async function openIncident(id) {
+  let i, meta;
+  try { [i, meta] = await Promise.all([api(`/api/committee/incidents/${id}`), loadIncMeta()]); } catch (e) { return fail(e); }
+  const sec = (t, body, empty = "Not recorded.") => `<div><div class="section-title" style="margin:4px 0 6px">${t}</div>${body ? `<div class="issue-desc">${richText(body)}</div>` : `<div class="faint small">${empty}</div>`}</div>`;
+  modal({
+    title: `${esc(meta.kinds[i.kind])}, ${esc(incWhen(i))}`, wide: true,
+    body: `<div class="issue-chips">${i.boat_name ? `<span class="chip">${I.boat}${esc(i.boat_name)}</span>` : ""}${i.location ? `<span class="chip">${I.pin}${esc(i.location)}</span>` : ""}<span class="chip ${INC_INJ[i.injury]}">${esc(meta.injuries[i.injury])}</span><span class="chip ${i.status === "open" ? "accent" : ""}">${esc(meta.statuses[i.status])}</span></div>
+      <dl class="kv">
+        <dt>Crew</dt><dd>${esc(i.crew) || `<span class="faint">Not recorded</span>`}</dd>
+        ${i.outing ? `<dt>Outing</dt><dd>${esc(fmtLong(i.outing.date))} ${esc(tRange(i.outing))} ${esc(i.outing.kind === "water" ? "water outing" : i.outing.title || "land session")}</dd>` : ""}
+        <dt>Reported by</dt><dd>${esc(i.reported_by)} <span class="faint">· ${esc(utcStamp(i.created_at))}</span></dd>
+        <dt>British Rowing</dt><dd>${i.br_reported ? `Reported${i.br_reported_on ? ` on ${esc(fmtShort(i.br_reported_on))} ${pd(i.br_reported_on).getUTCFullYear()}` : ""}${i.br_reference ? ` · ref. ${esc(i.br_reference)}` : ""}` : `<span style="color:var(--warn)">Not reported yet</span>`}</dd>
+        <dt>Boat issue</dt><dd>${i.issue ? `<a href="#/issues" id="io-issue">${esc(i.issue.title)}</a>` : `<span class="faint">None</span>`}</dd>
+      </dl>
+      ${sec("What happened", i.description)}
+      ${i.injury !== "none" ? sec("Injury", i.injury_details) : ""}
+      ${sec("What was done about it", i.action_taken)}
+      ${sec("Follow-up", i.follow_up, "No follow-up recorded yet. Use Edit to add lessons learned and close the incident.")}`,
+    foot: `<button class="btn danger" id="io-del">Delete</button><button class="btn" id="io-edit">Edit</button>${!i.issue && i.boat_id ? `<button class="btn" id="io-mk">${I.boat}Open boat issue</button>` : ""}<div class="r"><button class="btn" data-close>Close</button></div>`,
+    onMount: (m, close) => {
+      $("#io-edit", m).onclick = () => incidentForm(i);
+      const li = $("#io-issue", m);
+      if (li) li.onclick = async (e) => { e.preventDefault(); close(); const boats = (await api("/api/committee/boats")).boats; await go("issues"); openIssue(i.issue.id, boats); };
+      const mk = $("#io-mk", m);
+      if (mk) mk.onclick = async () => {
+        try {
+          const r = await api(`/api/committee/incidents/${id}/boat-issue`, { method: "POST", body: { author: me4() } });
+          toast("Boat issue opened"); refreshCounts(); const boats = (await api("/api/committee/boats")).boats; await go("issues"); openIssue(r.issue_id, boats);
+        } catch (e) { fail(e); }
+      };
+      $("#io-del", m).onclick = async () => {
+        if (!await confirmBox("Delete this incident?", "It's removed from the log for good, including for the safety audit. To keep it on record, close it instead.", "Delete", true)) return openIncident(id);
+        try { await api(`/api/committee/incidents/${id}`, { method: "DELETE" }); toast("Incident deleted"); refreshCounts(); rerender(); } catch (e) { fail(e); }
       };
     },
   });
@@ -2323,9 +2511,19 @@ function richText(text) {
 }
 const me4 = () => meName() || "Committee";
 
+/* Incident log summary for the to-do list (the yearly safety audit asks for it). */
+function incidentCallout(inc, always = false) {
+  if (!inc || (!always && !inc.open && !inc.not_reported)) return "";
+  const bits = [`${inc.this_year} incident${inc.this_year === 1 ? "" : "s"} logged in ${esc(inc.year)}`];
+  if (inc.not_reported) bits.push(`<b>${inc.not_reported} not yet reported to British Rowing</b>`);
+  if (inc.open) bits.push(`${inc.open} need${inc.open === 1 ? "s" : ""} follow-up`);
+  return `<div class="callout ${inc.not_reported ? "warn" : ""}" style="margin-bottom:14px">${I.lifebuoy}<div>${bits.join(", ")}. See <a href="#/incidents">Boat park → Incidents</a>; its CSV export is the incident record for the safety audit.</div></div>`;
+}
+const isSafetyAudit = (t) => /safety\s*audit|incident/i.test(t.title);
+
 async function pageTasks() {
-  let d;
-  try { d = await api("/api/committee/tasks"); } catch (e) { return fail(e); }
+  let d, inc = null;
+  try { [d, inc] = await Promise.all([api("/api/committee/tasks"), api("/api/committee/incidents/summary").catch(() => null)]); } catch (e) { return fail(e); }
   setCount("todo", taskAttention(d));
   S.taskFilter = S.taskFilter || "open";
   const q = fold(S.taskQ);
@@ -2335,6 +2533,7 @@ async function pageTasks() {
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>Committee to-do</h1><p>${nOpen} open task${nOpen === 1 ? "" : "s"}. Only the committee can see this list.</p></div>
       <div class="toolbar"><button class="btn primary" id="tk-new">${I.plus}New task</button></div></div>
+    ${incidentCallout(inc)}
     ${d.open_boat_issues ? `<div class="callout" style="margin-bottom:14px">${I.boat}<div>Problems with a specific boat are tracked under <a href="#/issues">Boat park → Issues</a> (${d.open_boat_issues} open). Use <b>Move to boat issues</b> on a task that's really about one boat.</div></div>` : ""}
     <div class="filters">
       <input class="input" id="tk-q" placeholder="Search tasks…" style="max-width:240px" value="${esc(S.taskQ || "")}">
@@ -2357,8 +2556,9 @@ async function pageTasks() {
 }
 
 async function openTask(id, d) {
-  let t;
+  let t, inc = null;
   try { t = await api(`/api/committee/tasks/${id}`); } catch (e) { return fail(e); }
+  if (isSafetyAudit(t)) inc = await api("/api/committee/incidents/summary").catch(() => null);
   const st = d.statuses;
   const timeline = t.updates.map((u, k) => `<div class="tl-item"><div class="tl-dot ${u.status ? TASK_ST[u.status] || "" : ""}"></div><div>
       <div class="small"><b>${esc(u.author || "Someone")}</b> ${k === 0 ? "added this task" : u.status ? `set it to <span class="chip ${TASK_ST[u.status]}">${esc(st[u.status])}</span>` : "posted an update"} <span class="faint">· ${esc(utcStamp(u.created_at))}</span></div>
@@ -2366,6 +2566,7 @@ async function openTask(id, d) {
   modal({
     title: esc(t.title), wide: true,
     body: `<div class="issue-chips">${t.priority ? `<span class="chip ${TASK_PRI[t.priority]}">${esc(d.priorities[t.priority])} priority</span>` : ""}<span class="chip ${TASK_ST[t.status]}">${esc(st[t.status])}</span>${dueChip(t)}${t.repeat_yearly ? `<span class="chip">${I.repeat}Every year</span>` : ""}${t.owner ? `<span class="chip">${I.user}${esc(t.owner)}</span>` : ""}</div>
+      ${incidentCallout(inc, true)}
       <div><div class="section-title" style="margin:4px 0 6px">Plan of action</div>${t.plan ? `<div class="issue-desc">${richText(t.plan)}</div>` : `<div class="faint small">No plan written yet.</div>`}</div>
       <div class="section-title" style="margin:6px 0 0">Updates</div>
       <div class="timeline">${timeline}</div>
@@ -3312,7 +3513,7 @@ function route() {
   const r = ROUTES.find((x) => x.id === id && routeAllowed(x)) || ROUTES[0];
   shell(r.id);
   S.page = ({ schedule: pageSchedule, signup: pageSignup, subs: pageSubs, races: pageRaces, me: pageMe, stats: pageStats, rowers: pageRowers,
-    committee: pageCommittee, todo: pageTasks, handbook: pageHandbook, reminders: pageSubsReminders, coaches: pageCoaches, handover: pageHandover, boats: pageBoats, issues: pageIssues, usage: pageUsage, settings: pageSettings })[r.id];
+    committee: pageCommittee, todo: pageTasks, handbook: pageHandbook, reminders: pageSubsReminders, coaches: pageCoaches, handover: pageHandover, boats: pageBoats, issues: pageIssues, usage: pageUsage, incidents: pageIncidents, settings: pageSettings })[r.id];
   window.scrollTo(0, 0);
   return S.page();
 }
