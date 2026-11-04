@@ -1645,7 +1645,7 @@ async function pageCommittee() {
   const held = (key) => d.holders.filter((h) => h.position === key);
   const card = (p) => {
     const hs = held(p.key);
-    const people = hs.length ? hs.map((h) => `<div class="cm-person"><span class="avatar">${esc(initials(h.name))}</span><span><b>${esc(h.name)}</b>${h.member_id === S.me ? ` <span class="chip accent">you</span>` : ""}</span></div>`).join("")
+    const people = hs.length ? hs.map((h) => `<div class="cm-person"><span class="avatar">${esc(initials(h.name))}</span><span><b>${esc(h.name)}</b>${S.me && h.member_id === S.me ? ` <span class="chip accent">you</span>` : ""}</span></div>`).join("")
       : `<div class="cm-person vacant"><span class="avatar">?</span><span class="faint">Vacant</span></div>`;
     return `<div class="card cm-card"><div class="cm-role">${esc(p.max > 1 && hs.length > 1 ? positionPlural(p.label) : p.label)}</div>${people}</div>`;
   };
@@ -1656,13 +1656,16 @@ async function pageCommittee() {
   const e = $("#cm-edit"); if (e) e.onclick = () => editCommittee(d);
 }
 
-function editCommittee(d) {
+async function editCommittee(d) {
+  let all;
+  try { all = (await api("/api/committee/members")).members.map((m) => ({ id: m.id, name: m.name, active: !!m.active })).sort((a, b) => a.name.localeCompare(b.name)); }
+  catch (e) { return fail(e); }
   // one name field per seat: Men's and Women's Captain have two
   const seats = d.positions.flatMap((p) => Array.from({ length: p.max }, (_, slot) => ({ p, slot })));
   const state = seats.map(({ p, slot }) => { const h = d.holders.find((x) => x.position === p.key && x.slot === slot); return { member_id: h?.member_id ?? null, new_name: h && !h.member_id ? h.name : "" }; });
   modal({
     title: "Edit committee", wide: true,
-    body: `<p class="muted small" style="margin:0">Pick a club member, or type a name for someone who isn't in the club list (e.g. the Senior Member). Leave a position empty if it's vacant.</p>
+    body: `<p class="muted small" style="margin:0">Pick a club member (inactive members are included), or type a name for someone who isn't in the club list (e.g. the Senior Member). Leave a position empty if it's vacant.</p>
       <div class="cm-edit">${d.positions.map((p) => {
         const idx = seats.map((x, i) => (x.p === p ? i : -1)).filter((i) => i >= 0);
         return p.max > 1
@@ -1671,7 +1674,7 @@ function editCommittee(d) {
       }).join("")}</div>`,
     foot: `<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="cm-save">Save</button></div>`,
     onMount: (m, close) => {
-      $$("[data-seat]", m).forEach((el) => nameField(el, state[+el.dataset.seat], null, { placeholder: "Vacant — type a name…", newLabel: "Not in the club list:", newChip: "Use this name", empty: "Keep typing the full name…" }));
+      $$("[data-seat]", m).forEach((el) => nameField(el, state[+el.dataset.seat], null, { members: all, placeholder: "Vacant — type a name…", newLabel: "Not in the club list:", newChip: "Use this name", empty: "Keep typing the full name…" }));
       $("#cm-save", m).onclick = async () => {
         const holders = seats.map(({ p, slot }, i) => ({ position: p.key, slot, member_id: state[i].member_id, name: state[i].member_id ? "" : state[i].new_name || "" }))
           .filter((h) => h.member_id || h.name.trim());
@@ -2155,7 +2158,7 @@ function nameField(container, st, onPick, opts = {}) {
   container.innerHTML = `<input class="input" autocomplete="off" placeholder="${esc(o.placeholder)}"><button type="button" class="clear" tabindex="-1" aria-label="Clear">×</button>`;
   const inp = $("input", container), clr = $(".clear", container);
   let list = null, hl = 0, shown = [];
-  const members = () => S.boot.members;
+  const members = () => o.members || S.boot.members;
   const cur = () => st.member_id ? members().find((m) => m.id === st.member_id)?.name || "" : st.new_name;
   const sync = () => { inp.value = cur(); clr.style.display = inp.value ? "" : "none"; };
   const close = () => { list?.remove(); list = null; };
@@ -2163,11 +2166,11 @@ function nameField(container, st, onPick, opts = {}) {
     const q = inp.value.trim().toLowerCase();
     const matches = members().filter((m) => !q || m.name.toLowerCase().includes(q)).slice(0, 8);
     const exact = members().some((m) => m.name.toLowerCase() === q);
-    shown = matches.map((m) => ({ id: m.id, label: m.name }));
+    shown = matches.map((m) => ({ id: m.id, label: m.name, inactive: m.active === false }));
     if (q.length >= 3 && !exact) shown.push({ id: null, label: inp.value.trim().replace(/\s+/g, " "), isNew: true });
     hl = Math.min(hl, Math.max(0, shown.length - 1));
     if (!list) { list = document.createElement("div"); list.className = "combo-list"; container.appendChild(list); }
-    list.innerHTML = shown.length ? shown.map((i, k) => `<div class="combo-item ${k === hl ? "hl" : ""}" data-k="${k}">${i.isNew ? `<span class="nm"><b>${esc(o.newLabel)}</b> “${esc(i.label)}”</span><span class="why"><span class="chip accent">${I.plus}${esc(o.newChip)}</span></span>` : `<span class="nm">${esc(i.label)}</span>`}</div>`).join("")
+    list.innerHTML = shown.length ? shown.map((i, k) => `<div class="combo-item ${k === hl ? "hl" : ""}" data-k="${k}">${i.isNew ? `<span class="nm"><b>${esc(o.newLabel)}</b> “${esc(i.label)}”</span><span class="why"><span class="chip accent">${I.plus}${esc(o.newChip)}</span></span>` : `<span class="nm">${esc(i.label)}</span>${i.inactive ? `<span class="why"><span class="chip">inactive</span></span>` : ""}`}</div>`).join("")
       : `<div class="combo-empty">${esc(o.empty)}</div>`;
     $$(".combo-item", list).forEach((el) => el.addEventListener("mousedown", (e) => { e.preventDefault(); pick(shown[+el.dataset.k]); }));
   };
