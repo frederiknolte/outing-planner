@@ -129,7 +129,7 @@ def signup_prefill(week_start: str, member_id: int, role: str = Depends(require_
             "college": college,
             "side": m["side"] or (last["side"] if last else ""),
             "squad": m["squad"] or (last["squad"] if last else ""),
-            "role": last["role"] if last else "rower",
+            "role": last["role"] if last else ("cox" if m["cox_status"] else "rower"),
             "want_row": last["want_row"] if last else None,
             "want_cox": last["want_cox"] if last else None,
             "max_outings": last["max_outings"] if last else None,
