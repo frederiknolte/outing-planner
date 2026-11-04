@@ -1186,7 +1186,7 @@ async function pageRowers() {
   const allOut = rows.reduce((a, r) => a + r.total, 0);
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>${committee ? "Members" : "Rowers"}</h1><p>${committee ? "Manage the squad, subs and swim tests. Outing counts update automatically from the schedule." : "Outing counts across the squad."}</p></div>
-      ${committee ? `<div class="toolbar"><button class="btn" id="rw-export">${I.download}Export CSV</button><button class="btn primary" id="rw-add">${I.plus}Add member</button></div>` : ""}</div>
+      ${committee ? `<div class="toolbar"><button class="btn" id="rw-export">${I.download}Export CSV</button><button class="btn primary" id="rw-add">${I.plus}Add member</button></div>` : `<div class="toolbar"><button class="btn primary" id="rw-add">${I.plus}Add rower</button></div>`}</div>
     <div class="stats" style="margin-bottom:16px">
       <div class="card stat"><div class="k">Members</div><div class="v">${rows.filter((r) => r.active !== false).length}</div><div class="s">${novices} novice · ${rows.filter((r) => r.active !== false).length - novices} senior</div></div>
       <div class="card stat"><div class="k">Coxes</div><div class="v">${rows.filter((r) => r.cox_status && r.active !== false).length}</div><div class="s">with a cox status</div></div>
@@ -1202,7 +1202,32 @@ async function pageRowers() {
   $("#rw-q").oninput = (e) => { rowerQ = e.target.value.trim().toLowerCase(); draw(); };
   $$("#rw-cat button").forEach((b) => b.onclick = () => { rowerCat = b.dataset.c; $$("#rw-cat button").forEach((x) => x.classList.toggle("on", x === b)); draw(); });
   if (committee) { $("#rw-add").onclick = () => editMember(null, meta); $("#rw-export").onclick = () => exportModal("/api/committee/members.csv", "all members"); }
+  else $("#rw-add").onclick = addRower;
   draw();
+}
+
+// Any rower can add a name; subs, swim test, category etc. are left for the committee to set.
+function addRower() {
+  modal({
+    title: "Add rower",
+    body: `
+      <label class="field"><span>Full name</span><input class="input" id="ar-name" placeholder="First and last name" required></label>
+      <div class="grid-2">
+        <label class="field"><span>College</span><input class="input" id="ar-college" list="ar-colleges"><datalist id="ar-colleges"><option value="Reuben"><option value="Blackfriars"><option value="St Stephen's House"></datalist></label>
+        <label class="field"><span>Side preference</span><select class="input" id="ar-side">${["", ...Object.keys(SIDE_SHORT)].map((x) => `<option value="${esc(x)}">${x || "—"}</option>`).join("")}</select></label>
+      </div>
+      <div class="callout">${I.info}<div>They're added as a novice. The committee will check their category, cox status, swim test and subs.</div></div>`,
+    foot: `<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="ar-save">Add</button></div>`,
+    onMount: (el, close) => {
+      $("#ar-name", el).focus();
+      $("#ar-save", el).onclick = async () => {
+        const body = { name: $("#ar-name", el).value.trim(), college: $("#ar-college", el).value.trim(), side: $("#ar-side", el).value };
+        if (!body.name) return toast("Name is required", true);
+        try { await api("/api/rowers", { method: "POST", body }); close(); toast(`${body.name} added`); await reboot(); pageRowers(); }
+        catch (e) { fail(e); }
+      };
+    },
+  });
 }
 
 function editMember(m, meta) {
