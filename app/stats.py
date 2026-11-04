@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends
 
 from . import db
 from .auth import require_member
-from .logic import Rules, monday_of
+from .logic import CANCEL_REASONS, Rules, monday_of, outing_status
 
 router = APIRouter()
 
@@ -29,6 +29,47 @@ def _season_start(rules: Rules) -> date:
     except ValueError:
         t = rules.today
         return date(t.year if t.month >= 9 else t.year - 1, 10, 1)
+
+
+def _term_start(rules: Rules, season: date) -> date:
+    """Start of "this term" for the attendance summary: two weeks before 1st week (pre-term training),
+    but never before the season start."""
+    try:
+        t = date.fromisoformat(rules.settings.get("term_start") or "") - timedelta(days=14)
+    except ValueError:
+        return season
+    return max(t, season) if t <= rules.today else season
+
+
+def _outcomes(conn, rules: Rules, since: date) -> dict:
+    """What became of the published sessions from `since` on: how many happened, how many were
+    cancelled and why. Past sessions the committee hasn't marked yet count as "unconfirmed" (they
+    still count as having happened everywhere else). Cancellations count even if they're in the future."""
+    rows = conn.execute("""SELECT id, kind, date, cancelled, happened, cancel_category FROM outings
+                           WHERE published = 1 AND date >= ?""", (since.isoformat(),)).fetchall()
+    n = Counter()
+    kinds = {"water": Counter(), "land": Counter()}
+    reasons = {k: Counter() for k in (*CANCEL_REASONS, "")}
+    for r in rows:
+        st = outing_status(dict(r), rules.today)
+        if st == "scheduled":
+            continue
+        n[st] += 1
+        kinds[r["kind"]][st] += 1
+        if st == "cancelled":
+            reasons[r["cancel_category"] if r["cancel_category"] in CANCEL_REASONS else ""][r["kind"]] += 1
+    by_reason = [{"key": k, "label": CANCEL_REASONS.get(k, "No reason given"),
+                  "count": sum(c.values()), "water": c["water"], "land": c["land"]}
+                 for k, c in reasons.items() if c]
+    by_reason.sort(key=lambda x: -x["count"])
+    return {
+        "since": since.isoformat(),
+        "happened": n["happened"] + n["unconfirmed"],   # not cancelled = assumed to have happened
+        "confirmed": n["happened"], "unconfirmed": n["unconfirmed"], "cancelled": n["cancelled"],
+        "water": {"happened": kinds["water"]["happened"] + kinds["water"]["unconfirmed"], "cancelled": kinds["water"]["cancelled"]},
+        "land": {"happened": kinds["land"]["happened"] + kinds["land"]["unconfirmed"], "cancelled": kinds["land"]["cancelled"]},
+        "by_reason": by_reason,
+    }
 
 
 def _longest_week_streak(weeks: set[date], this_week: date) -> tuple[int, int]:
@@ -170,6 +211,11 @@ def season_stats(role: str = Depends(require_member)):
                                for (a, b), v in sorted(pairs.items(), key=lambda x: -x[1]) if mid in (a, b)), None),
             }
 
+        term_from = _term_start(rules, start)
+        outcomes = {"term_name": rules.settings.get("current_term") or "Term",
+                    "term": _outcomes(conn, rules, term_from),
+                    "season": _outcomes(conn, rules, start)}
+
         busiest = max(dow_counts.items(), key=lambda x: x[1])[0] if dow_counts else None
         return {
             "season_start": start.isoformat(),
@@ -184,5 +230,6 @@ def season_stats(role: str = Depends(require_member)):
             },
             "boards": boards,
             "pairs": top_pairs,
+            "outcomes": outcomes,
             "people": people,
         }

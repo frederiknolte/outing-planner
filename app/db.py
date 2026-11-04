@@ -236,7 +236,9 @@ MIGRATIONS = {
     "outings": {
         "end_time": "TEXT NOT NULL DEFAULT ''",
         "cancelled": "INTEGER NOT NULL DEFAULT 0",     # kept on the schedule but doesn't count
-        "cancel_reason": "TEXT NOT NULL DEFAULT ''",
+        "cancel_reason": "TEXT NOT NULL DEFAULT ''",   # free-text note shown with the cancellation
+        "cancel_category": "TEXT NOT NULL DEFAULT ''", # flag | weather | bankrider | numbers | other (see logic.CANCEL_REASONS)
+        "happened": "INTEGER NOT NULL DEFAULT 0",      # committee confirmed the session took place
     },
     "races": {"squad": "TEXT NOT NULL DEFAULT 'any'"},             # any | open | women
     "race_responses": {

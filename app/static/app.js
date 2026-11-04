@@ -387,6 +387,40 @@ async function riverModal() {
   });
 }
 
+// Why a session was cancelled — keep in sync with logic.CANCEL_REASONS.
+const CANCEL_REASONS = [["flag", "Red flag"], ["weather", "Weather"], ["bankrider", "No bankrider"], ["numbers", "Too few people"], ["other", "Other"]];
+const LOST_TO = { flag: "the Red flag", weather: "the weather", bankrider: "having no bankrider", numbers: "too few people", other: "other reasons" };
+const cancelText = (o) => [o.cancel_label, o.cancel_reason].filter(Boolean).join(" · ");
+
+async function setOutingStatus(o, status, extra = {}) {
+  await api(`/api/committee/outings/${o.id}/status`, { method: "POST", body: { status, ...extra } });
+  toast(status === "cancelled" ? "Session cancelled" : status === "happened" ? "Marked as happened" : "Session restored");
+  pageSchedule();
+}
+
+/* Committee: cancel a session with a reason (red flag, weather, ...). It stays on the schedule. */
+function cancelOuting(o) {
+  const flag = S.weekData && S.weekData.river && S.weekData.river.flag;
+  let cat = o.kind === "water" && flag && ["red", "black"].includes(flag.key) ? "flag" : "";
+  modal({
+    title: "Cancel this session?",
+    body: `<p style="margin:0 0 12px">It stays on the schedule marked as cancelled, with its crew, but won't count towards anyone's outings or the stats. Open sub requests are closed.</p>
+      <div class="field"><span>Reason</span><div class="reason-pick" id="oc-cat">${CANCEL_REASONS.map(([k, l]) => `<button type="button" data-k="${k}" class="${cat === k ? "on" : ""}">${esc(l)}</button>`).join("")}</div></div>
+      <label class="field"><span>Note</span><input class="input" id="oc-reason" maxlength="200" placeholder="Optional, shown to rowers. E.g. stream too strong"></label>`,
+    foot: `<div class="r"><button class="btn" data-close>Keep session</button><button class="btn danger" id="oc-ok" ${cat ? "" : "disabled"}>${I.x}Cancel session</button></div>`,
+    onMount: (m, close) => {
+      $$("#oc-cat button", m).forEach((b) => b.onclick = () => {
+        cat = b.dataset.k;
+        $$("#oc-cat button", m).forEach((x) => x.classList.toggle("on", x === b));
+        $("#oc-ok", m).disabled = false;
+      });
+      $("#oc-ok", m).onclick = async () => {
+        try { await setOutingStatus(o, "cancelled", { category: cat, reason: $("#oc-reason", m).value }); close(); } catch (e) { fail(e); }
+      };
+    },
+  });
+}
+
 function outingCard(o) {
   const committee = isCommittee();
   const kindChip = o.kind === "water" ? `<span class="chip water">${I.water}Water</span>` : `<span class="chip land">${I.land}Land</span>`;
@@ -394,8 +428,8 @@ function outingCard(o) {
   const coxChip = o.cox_check && o.cox_check !== o.spots_text ? `<span class="chip ${o.cox_check === "Bankrider needed" ? "bad" : o.cox_check.startsWith("Cox needed") || o.cox_check === "Cox status not set" ? "warn" : "ok"}">${esc(o.cox_check)}</span>` : "";
   return `<article class="card outing ${o.kind} ${o.published ? "" : "draft"} ${o.past ? "past" : ""} ${o.cancelled ? "cancelled" : ""} clickable" data-oid="${o.id}">
     <div class="o-top"><div>${o.time ? `<div class="o-time tnum">${esc(tRange(o))}</div><div class="o-title">${esc(o.title || (o.kind === "water" ? "Water outing" : "Land training"))}</div>` : `<div class="o-time">${esc(o.title || (o.kind === "water" ? "Water outing" : "Land training"))}</div><div class="o-title faint small">Time TBC</div>`}</div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${kindChip}${o.cancelled ? `<span class="chip bad">Cancelled</span>` : ""}${committee && !o.published ? `<span class="chip">Draft</span>` : ""}</div></div>
-    ${o.cancelled ? `<div class="o-cancel">${I.x}<span>${o.cancel_reason ? esc(o.cancel_reason) : "This session has been cancelled"}</span></div>` : ""}
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${kindChip}${o.cancelled ? `<span class="chip bad">Cancelled</span>` : ""}${committee && o.happened ? `<span class="chip ok" title="Confirmed as happened">${I.check}Happened</span>` : ""}${committee && !o.published ? `<span class="chip">Draft</span>` : ""}</div></div>
+    ${o.cancelled ? `<div class="o-cancel">${I.x}<span>${esc(cancelText(o) || "This session has been cancelled")}</span></div>` : ""}
     <div class="o-sub">
       ${o.boat ? `<span>${I.boat}${esc(o.boat.name)} <span class="faint">${esc(o.boat.type)}</span></span>` : o.kind === "water" ? `<span class="faint">${I.boat}${o.capacity}${o.coxed ? "+" : ""} · no boat set</span>` : ""}
       ${o.location ? (o.maps_url ? `<a href="${esc(o.maps_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open in maps">${I.pin}${esc(o.location)}</a>` : `<span>${I.pin}${esc(o.location)}</span>`) : ""}
@@ -406,6 +440,9 @@ function outingCard(o) {
     ${o.notes ? `<div class="small muted" style="margin-top:6px">${esc(o.notes)}</div>` : ""}
     ${committee && o.warnings.length ? `<div class="warnings">${o.warnings.map((w) => `<div>${I.alert}<span>${esc(w)}</span></div>`).join("")}</div>` : ""}
     ${riverList((o.river || []).filter((r) => !o.past && (committee || r.level === "stop")))}
+    ${committee && o.status === "unconfirmed" ? `<div class="o-confirm"><span>Did it happen?</span>
+      <button class="btn sm" data-act="happened" title="Confirm this session took place">${I.check}Yes</button>
+      <button class="btn sm" data-act="cancel" title="It didn't go ahead: record why">${I.x}Cancelled</button></div>` : ""}
   </article>`;
 }
 
@@ -424,6 +461,7 @@ async function pageSchedule() {
     : `<span class="status-pill" style="background:var(--warn-soft);color:var(--warn)"><span class="dot"></span>${data.published}/${data.total} published</span>`;
   const outs = data.outings.filter((o) => S.filter === "all" || (S.filter === "mine" ? o.seats.some((s) => s.member && s.member.id === S.me) : S.filter === "subs" ? o.open_subs > 0 : S.filter === "open" ? (o.kind === "land" && o.spots > 0 && !o.past && !o.cancelled) : o.kind === S.filter));
   const myCount = data.outings.filter((o) => o.seats.some((s) => s.member && s.member.id === S.me)).length;
+  const unconfirmed = committee ? data.outings.filter((o) => o.status === "unconfirmed" && o.published).length : 0;
   main.innerHTML = `
     <div class="page-head">
       <div><h1>${isThis ? "This week" : data.start > S.boot.this_week ? (addDays(S.boot.this_week, 7) === data.start ? "Next week" : "Upcoming week") : "Past week"}</h1>
@@ -437,6 +475,7 @@ async function pageSchedule() {
         <button class="btn" id="wk-cal" title="Add your outings to your phone's calendar">${I.calendar}Add to calendar</button>
         ${committee ? `
           <button class="btn" id="wk-copy">${I.copy}Copy last week</button>
+          ${unconfirmed ? `<button class="btn" id="wk-confirm" title="Mark this week's past sessions as happened. Cancel any that didn't go ahead first">${I.check}Confirm ${plural(unconfirmed, "past sessions")}</button>` : ""}
           ${data.total ? `<button class="btn" id="wk-auto" title="Suggest crews for empty seats from this week's sign-ups">${I.wand}Auto-fill crews</button>` : ""}
           ${data.total ? (data.published === data.total ? `<button class="btn" id="wk-unpub">${I.eye}Unpublish</button>` : `<button class="btn primary" id="wk-pub">${I.send}Publish week</button>`) : ""}
         ` : ""}
@@ -479,6 +518,11 @@ async function pageSchedule() {
     if (unpub) unpub.onclick = async () => { await api("/api/committee/week/publish", { method: "POST", body: { start: data.start, published: false } }).catch(fail); toast("Week set back to draft"); pageSchedule(); };
     $("#wk-copy").onclick = () => copyWeek(data.start);
     const auto = $("#wk-auto"); if (auto) auto.onclick = () => autofillWeek(data.start);
+    const conf = $("#wk-confirm");
+    if (conf) conf.onclick = async () => {
+      if (!await confirmBox(`Confirm ${plural(unconfirmed, "past sessions")}?`, "They're marked as having happened. Cancel any session that didn't go ahead first, so the stats stay accurate.", "Confirm")) return;
+      try { const r = await api("/api/committee/week/confirm", { method: "POST", body: { start: data.start } }); toast(`${plural(r.confirmed, "sessions")} confirmed`); pageSchedule(); } catch (e) { fail(e); }
+    };
   }
   if (committee && S.pendingNew) { const d = S.pendingNew; S.pendingNew = null; editOuting(null, d); }
   $$(".outing").forEach((card) => card.addEventListener("click", (e) => {
@@ -494,6 +538,8 @@ function outingAct(t, o) {
   if (t.dataset.act === "fill") return fillSub(+t.dataset.sub, o);
   if (t.dataset.act === "join") return joinLand(o);
   if (t.dataset.act === "leave") return leaveLand(o);
+  if (t.dataset.act === "happened") return setOutingStatus(o, "happened").catch(fail);
+  if (t.dataset.act === "cancel") return cancelOuting(o);
 }
 
 /* Rowers' read-only view of an outing: full names, who's subbing for whom, and the same seat actions as the card. */
@@ -514,7 +560,7 @@ function viewOuting(o) {
       <div class="o-detail">
         <div><b>${fmtLong(o.date)}</b>${o.time ? ` · <span class="tnum">${esc(tRange(o))}</span>` : ` · <span class="faint">Time TBC</span>`}
           ${o.kind === "water" ? `<span class="chip water">${I.water}Water</span>` : `<span class="chip land">${I.land}Land</span>`}${o.cancelled ? ` <span class="chip bad">Cancelled</span>` : ""}</div>
-        ${o.cancelled ? `<div class="callout bad">${I.x}<div><b>This session has been cancelled.</b>${o.cancel_reason ? ` ${esc(o.cancel_reason)}` : ""}</div></div>` : ""}
+        ${o.cancelled ? `<div class="callout bad">${I.x}<div><b>This session has been cancelled.</b>${cancelText(o) ? ` ${esc(cancelText(o))}` : ""}</div></div>` : ""}
         ${o.boat ? `<div>${I.boat}${esc(o.boat.name)} <span class="faint">${esc(o.boat.type)}</span></div>` : ""}
         ${o.location ? `<div>${I.pin}${o.maps_url ? `<a href="${esc(o.maps_url)}" target="_blank" rel="noopener">${esc(o.location)}</a>` : esc(o.location)}</div>` : ""}
         ${o.coach ? `<div>${I.whistle}Coach: ${esc(o.coach)}</div>` : ""}
@@ -664,15 +710,17 @@ async function editOuting(o, defaults = {}) {
     <label class="field"><span>Notes</span><textarea class="input" id="oe-notes" rows="2" placeholder="Optional — visible to rowers">${esc(st.notes)}</textarea></label>
     <div id="oe-warn"></div>
     <div id="oe-river"></div>`;
+  const canConfirm = o && !o.cancelled && !o.happened && S.weekData && o.date <= S.weekData.today;
   const foot = `${o ? `<button class="btn danger" id="oe-del">Delete</button>${o.cancelled
-      ? `<button class="btn" id="oe-uncancel" title="Put this session back on">Restore</button>`
-      : `<button class="btn" id="oe-cancel" title="Keep it on the schedule, marked as cancelled">Cancel session</button>`}` : ""}<div class="r">
-      <button class="btn" data-close>Cancel</button>
+      ? `<button class="btn" id="oe-uncancel" title="Put this session back on">Restore session</button>`
+      : `<button class="btn" id="oe-cancel" title="Keep it on the schedule, marked as cancelled, with a reason">${I.x}Cancel session</button>`}${canConfirm
+      ? `<button class="btn" id="oe-happened" title="Confirm this session took place">${I.check}Mark happened</button>` : ""}` : ""}<div class="r">
+      <button class="btn" data-close>Close</button>
       ${o && o.published ? "" : `<button class="btn" id="oe-save-draft">${o ? "Save draft" : "Save as draft"}</button>`}
       <button class="btn primary" id="oe-save">${o && o.published ? "Save" : "Save & publish"}</button></div>`;
 
   modal({
-    title: o ? (o.cancelled ? "Edit session · cancelled" : "Edit session") : st.kind === "water" ? "New water outing" : "New land session", body, foot, wide: "xl",
+    title: o ? (o.cancelled ? "Edit session · cancelled" : o.happened ? "Edit session · happened" : "Edit session") : st.kind === "water" ? "New water outing" : "New land session", body, foot, wide: "xl",
     onMount: (m, close) => {
       const boatSel = $("#oe-boat", m), capSel = $("#oe-cap", m);
       let target = null, loaded = false;
@@ -981,25 +1029,10 @@ async function editOuting(o, defaults = {}) {
         if (!await confirmBox("Delete this session?", "Crew assignments and sub requests for it will be removed. Outing counts update automatically.", "Delete", true)) return;
         try { await api(`/api/committee/outings/${o.id}`, { method: "DELETE" }); toast("Session deleted"); pageSchedule(); } catch (e) { fail(e); }
       };
-      const setCancelled = async (cancelled, reason = "") => {
-        try {
-          await api(`/api/committee/outings/${o.id}/cancel`, { method: "POST", body: { cancelled, reason } });
-          close(); toast(cancelled ? "Session cancelled" : "Session restored"); pageSchedule();
-        } catch (e) { fail(e); }
-      };
-      const cancelBtn = $("#oe-cancel", m);
-      if (cancelBtn) cancelBtn.onclick = () => modal({
-        title: "Cancel this session?",
-        body: `<p style="margin:0 0 10px">It stays on the schedule marked as cancelled, with its crew, but won't count towards anyone's outings. Open sub requests are closed.</p>
-          <label class="field"><span>Reason</span><input class="input" id="oc-reason" maxlength="200" placeholder="Optional — e.g. red flag, coach ill"></label>`,
-        foot: `<div class="r"><button class="btn" data-close>Keep session</button><button class="btn danger" id="oc-ok">Cancel session</button></div>`,
-        onMount: (cm, cclose) => {
-          $("#oc-reason", cm).focus();
-          $("#oc-ok", cm).onclick = () => { const r = $("#oc-reason", cm).value; cclose(); setCancelled(true, r); };
-        },
-      });
-      const uncancel = $("#oe-uncancel", m);
-      if (uncancel) uncancel.onclick = () => setCancelled(false);
+      const markAs = async (st) => { try { await setOutingStatus(o, st); close(); } catch (e) { fail(e); } };
+      const cancelBtn = $("#oe-cancel", m); if (cancelBtn) cancelBtn.onclick = () => cancelOuting(o);
+      const uncancel = $("#oe-uncancel", m); if (uncancel) uncancel.onclick = () => markAs("scheduled");
+      const happened = $("#oe-happened", m); if (happened) happened.onclick = () => markAs("happened");
       syncKind(); drawSeats(); loadCand();
     },
   });
@@ -1262,6 +1295,31 @@ const BOARD_ICON = { water: "🚣", land: "🏋️", total: "⭐", early: "🌅"
 const MEDAL = ["🥇", "🥈", "🥉"];
 const plural = (n, unit) => `${n} ${n === 1 ? unit.replace(/s$/, "") : unit}`;
 
+/* Term attendance: how many sessions went ahead, how many were lost and why. */
+function outcomesCard(oc) {
+  if (!oc) return "";
+  const t = oc.term, ss = oc.season, total = t.happened + t.cancelled;
+  if (!total) return "";
+  const pct = Math.round((t.happened / total) * 100);
+  const top = t.by_reason[0];
+  const unit = (r) => (r.land ? "sessions" : "outings");
+  const head = !top ? `Every session went ahead this term`
+    : top.key ? `${plural(top.count, unit(top))} lost to ${LOST_TO[top.key]} this term` : `${plural(top.count, unit(top))} cancelled this term`;
+  const max = Math.max(1, ...t.by_reason.map((r) => r.count));
+  const seasonLine = ss.since !== t.since ? `<div class="small faint oc-season">Whole season since ${esc(fmtShort(ss.since))}: ${ss.happened} went ahead · ${ss.cancelled} cancelled</div>` : "";
+  return `<div class="section-title">${esc(oc.term_name)} so far</div>
+    <div class="card oc-card">
+      <div class="oc-head"><div class="oc-line">${top ? I.x : I.check}<b>${esc(head)}</b></div>
+        <div class="small faint">${t.happened} of ${plural(total, "sessions")} went ahead (${pct}%) since ${esc(fmtShort(t.since))}</div></div>
+      <div class="oc-split" role="img" aria-label="${t.happened} went ahead, ${t.cancelled} cancelled"><i class="ok" style="flex:${t.happened}"></i><i class="bad" style="flex:${t.cancelled}"></i></div>
+      <div class="oc-legend small"><span><i class="sw" style="background:var(--ok)"></i>Went ahead ${t.happened} <span class="faint">(${t.water.happened} water · ${t.land.happened} land)</span></span>
+        <span><i class="sw" style="background:var(--bad)"></i>Cancelled ${t.cancelled}${t.cancelled ? ` <span class="faint">(${t.water.cancelled} water · ${t.land.cancelled} land)</span>` : ""}</span></div>
+      ${t.by_reason.length ? `<div class="oc-reasons">${t.by_reason.map((r) => `<div class="oc-r"><span>${esc(r.label)}</span><div class="bar bad"><i style="width:${(r.count / max) * 100}%"></i></div><b class="tnum">${r.count}</b></div>`).join("")}</div>` : ""}
+      ${isCommittee() && t.unconfirmed ? `<div class="small faint oc-season">${plural(t.unconfirmed, "past sessions")} not confirmed yet. Mark them on the schedule.</div>` : ""}
+      ${seasonLine}
+    </div>`;
+}
+
 function meStatsCard(p, boards) {
   if (!p) return "";
   const ms = p.milestone;
@@ -1296,7 +1354,7 @@ async function pageStats() {
     </div>`;
   };
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>Leaderboard</h1><p>Season awards since ${esc(fmtShort(d.season_start))}. Sessions count once they've happened.</p></div>
+    <div class="page-head"><div><h1>Leaderboard</h1><p>Season awards since ${esc(fmtShort(d.season_start))}. Sessions count once they've happened; cancelled ones don't.</p></div>
       ${!me ? `<div class="toolbar"><button class="btn" id="lb-pick">${I.user}Show my stats</button></div>` : ""}</div>
     <div class="stats" style="margin-bottom:16px">
       <div class="card stat"><div class="k">Seats filled</div><div class="v">${c.seat_sessions}</div><div class="s">across ${plural(c.sessions, "sessions")}</div></div>
@@ -1304,6 +1362,7 @@ async function pageStats() {
       <div class="card stat"><div class="k">Rowers out</div><div class="v">${c.active_rowers}</div><div class="s">at least one session</div></div>
       <div class="card stat"><div class="k">Subs filled</div><div class="v">${c.subs_filled}</div><div class="s">${c.busiest_day != null ? `busiest day: ${DAYL[c.busiest_day]}` : "teamwork!"}</div></div>
     </div>
+    ${outcomesCard(d.outcomes)}
     ${me ? meStatsCard(me, d.boards) : ""}
     <div class="section-title">Awards</div>
     <div class="lb-grid">${d.boards.map(boardCard).join("")}

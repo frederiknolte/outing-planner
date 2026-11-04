@@ -18,7 +18,7 @@ from fastapi.responses import Response
 
 from . import db
 from .auth import require_member
-from .logic import TZ, real_today, seat_label
+from .logic import CANCEL_REASONS, TZ, real_today, seat_label
 from .timeutil import parse_time
 
 router = APIRouter()
@@ -107,7 +107,8 @@ def build_feed(conn, member: dict, base_url: str) -> str:
         crew = sorted(crews.get(oid, []), key=lambda a: (a["seat"] != 0, -a["seat"] if o["kind"] == "water" else a["seat"]))
         desc = [f"{club} · {kind}"]
         if o["cancelled"]:
-            desc.append("CANCELLED" + (f": {o['cancel_reason']}" if o["cancel_reason"] else ""))
+            why = " · ".join(x for x in (CANCEL_REASONS.get(o["cancel_category"] or "", ""), o["cancel_reason"]) if x)
+            desc.append("CANCELLED" + (f": {why}" if why else ""))
         if o["boat_id"] and o["boat_id"] in boats:
             desc.append(f"Boat: {boats[o['boat_id']]['name']} ({boats[o['boat_id']]['boat_type']})")
         if o["coach"]:

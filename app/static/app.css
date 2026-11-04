@@ -248,6 +248,14 @@ textarea.input { resize: vertical; min-height: 64px; }
 .outing.cancelled .seats { opacity: .6; }
 .o-cancel { display: flex; gap: 6px; align-items: center; margin: 6px 0 4px; padding: 5px 8px; border-radius: 8px; background: var(--bad-soft); color: var(--bad); font-size: 12.5px; font-weight: 600; }
 .o-cancel svg { width: 13px; height: 13px; flex: none; }
+.o-confirm { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); font-size: 12.5px; color: var(--text-2); }
+.o-confirm > span { margin-right: auto; font-weight: 600; }
+.o-confirm .btn svg { width: 13px; height: 13px; }
+.outing.past:has(.o-confirm) { opacity: 1; }
+.reason-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+.reason-pick button { border: 1px solid var(--border); background: var(--surface); color: var(--text-2); padding: 6px 12px; border-radius: 99px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.reason-pick button:hover { background: var(--surface-3); }
+.reason-pick button.on { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
 .outing.clickable { cursor: pointer; }
 .outing.clickable:hover { box-shadow: var(--shadow-lg); transform: translateY(-1px); }
 .o-top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
@@ -780,3 +788,18 @@ button.race-person:hover { border-color: var(--accent); }
 .af-more summary { list-style-position: inside; }
 .af-people tr.af-short td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 @media (max-width: 640px) { .af-grid { grid-template-columns: 1fr; } }
+
+/* Leaderboard: term attendance & cancellations */
+.oc-card { padding: 16px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 10px; }
+.oc-line { display: flex; gap: 8px; align-items: center; font-size: 16px; }
+.oc-line svg { width: 16px; height: 16px; flex: none; color: var(--bad); }
+.oc-split { display: flex; gap: 2px; height: 10px; border-radius: 99px; overflow: hidden; background: var(--surface-3); }
+.oc-split i.ok { background: var(--ok); }
+.oc-split i.bad { background: var(--bad); }
+.oc-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--text-2); }
+.oc-legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.oc-reasons { display: flex; flex-direction: column; gap: 6px; max-width: 520px; }
+.oc-r { display: grid; grid-template-columns: 120px 1fr 32px; gap: 10px; align-items: center; font-size: 13px; }
+.oc-r b { text-align: right; }
+.bar.bad i { background: var(--bad); }
+.oc-season { border-top: 1px solid var(--border); padding-top: 8px; }
