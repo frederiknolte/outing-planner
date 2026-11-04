@@ -23,6 +23,7 @@ from .auth import require_committee, require_member, role_of
 from . import privacy
 from . import river
 from . import push
+from . import crewlog
 from .timeutil import normalize as norm_time, to_minutes
 from .calendar import router as calendar_router
 from .signup import availability_for_outing, week_counts, router as signup_router
@@ -202,6 +203,7 @@ def _outings_payload(conn, rules: Rules, where: str, params: tuple, committee: b
     boat_slot = defaultdict(list)
     for o in conn.execute(f"SELECT id, date, time, boat_id FROM outings WHERE date IN ({dq}) AND boat_id IS NOT NULL AND cancelled = 0", dates):
         boat_slot[(o["date"], o["time"], o["boat_id"])].append(o["id"])
+    logs = crewlog.for_outings(conn, outings)
     out = []
     for o in outings:
         p = outing_payload(rules, o, assigns[o["id"]], subs[o["id"]], boats,
@@ -211,6 +213,7 @@ def _outings_payload(conn, rules: Rules, where: str, params: tuple, committee: b
                                         rules.today, TZ, [x for x in day_water[o["date"]] if x["id"] != o["id"]])
         if committee and o["boat_id"] and o["time"] and len(boat_slot[(o["date"], o["time"], o["boat_id"])]) > 1:
             p["warnings"].append(f"{boats[o['boat_id']]['name']} is booked twice at this time")
+        p["log"] = logs.get(o["id"], [])
         out.append(p)
     return out
 
@@ -428,7 +431,7 @@ def _candidate_status(conn, rules: Rules, member_id: int, outing_id: int, seat: 
 
 
 @app.post("/api/subs")
-def request_sub(body: SubRequestIn, role: str = Depends(require_member)):
+def request_sub(body: SubRequestIn, request: Request, role: str = Depends(require_member)):
     msgs: list = []
     with db.get_conn() as conn:
         rules = Rules(conn)
@@ -455,21 +458,26 @@ def request_sub(body: SubRequestIn, role: str = Depends(require_member)):
             if not st["ok"]:
                 raise HTTPException(400, "Can't sub: " + "; ".join(st["problems"]))
             before = push.snapshot(conn, ids=[body.outing_id])
+            crew_before = crewlog.state(conn, body.outing_id)
             conn.execute("UPDATE assignments SET member_id=? WHERE outing_id=? AND seat=? AND member_id=?",
                          (body.sub_id, body.outing_id, a["seat"], body.member_id))
-            conn.execute("""INSERT INTO sub_requests(outing_id, seat, requester_id, reason, status, sub_id, resolved_at)
+            sr_id = conn.execute("""INSERT INTO sub_requests(outing_id, seat, requester_id, reason, status, sub_id, resolved_at)
                             VALUES (?, ?, ?, ?, 'filled', ?, datetime('now'))""",
-                         (body.outing_id, a["seat"], body.member_id, body.reason.strip(), body.sub_id))
+                         (body.outing_id, a["seat"], body.member_id, body.reason.strip(), body.sub_id)).lastrowid
+            crewlog.record(conn, body.outing_id, crew_before, crewlog.actor(request, conn, body.member_id),
+                           "sub_handover", sr_id, body.reason.strip())
             msgs = push.crew_changes(conn, before, actor=body.member_id)
         else:
-            conn.execute("INSERT INTO sub_requests(outing_id, seat, requester_id, reason) VALUES (?, ?, ?, ?)",
-                         (body.outing_id, a["seat"], body.member_id, body.reason.strip()))
+            sr_id = conn.execute("INSERT INTO sub_requests(outing_id, seat, requester_id, reason) VALUES (?, ?, ?, ?)",
+                                 (body.outing_id, a["seat"], body.member_id, body.reason.strip())).lastrowid
+            crewlog.sub_event(conn, body.outing_id, "sub_request", sr_id, crewlog.actor(request, conn, body.member_id),
+                              note=body.reason.strip())
     push.dispatch(msgs)
     return {"ok": True}
 
 
 @app.post("/api/subs/{sub_id}/fill")
-def fill_sub(sub_id: int, body: SubFillIn, role: str = Depends(require_member)):
+def fill_sub(sub_id: int, body: SubFillIn, request: Request, role: str = Depends(require_member)):
     with db.get_conn() as conn:
         rules = Rules(conn)
         s = conn.execute("SELECT * FROM sub_requests WHERE id = ?", (sub_id,)).fetchone()
@@ -485,6 +493,7 @@ def fill_sub(sub_id: int, body: SubFillIn, role: str = Depends(require_member)):
         if not st["ok"]:
             raise HTTPException(400, "Can't sub: " + "; ".join(st["problems"]))
         before = push.snapshot(conn, ids=[s["outing_id"]])
+        crew_before = crewlog.state(conn, s["outing_id"])
         cur = conn.execute("UPDATE assignments SET member_id=? WHERE outing_id=? AND seat=? AND member_id=?",
                            (body.member_id, s["outing_id"], s["seat"], s["requester_id"]))
         if cur.rowcount != 1:
@@ -492,6 +501,7 @@ def fill_sub(sub_id: int, body: SubFillIn, role: str = Depends(require_member)):
         conn.execute("UPDATE sub_requests SET status='filled', sub_id=?, resolved_at=datetime('now') WHERE id=?",
                      (body.member_id, sub_id))
         by = body.by if body.by is not None else (None if role == "committee" else body.member_id)
+        crewlog.record(conn, s["outing_id"], crew_before, crewlog.actor(request, conn, by), "sub_fill", sub_id)
         msgs = push.crew_changes(conn, before, actor=by)
         if by != s["requester_id"]:
             msgs += push.sub_filled(conn, s["outing_id"], s["requester_id"], body.member_id)
@@ -500,7 +510,7 @@ def fill_sub(sub_id: int, body: SubFillIn, role: str = Depends(require_member)):
 
 
 @app.post("/api/subs/{sub_id}/cancel")
-def cancel_sub(sub_id: int, body: SubCancelIn, role: str = Depends(require_member)):
+def cancel_sub(sub_id: int, body: SubCancelIn, request: Request, role: str = Depends(require_member)):
     with db.get_conn() as conn:
         s = conn.execute("SELECT * FROM sub_requests WHERE id = ?", (sub_id,)).fetchone()
         if not s or s["status"] != "open":
@@ -508,6 +518,7 @@ def cancel_sub(sub_id: int, body: SubCancelIn, role: str = Depends(require_membe
         if role != "committee" and body.member_id != s["requester_id"]:
             raise HTTPException(403, "Only the person who asked (or an committee) can cancel this")
         conn.execute("UPDATE sub_requests SET status='cancelled', resolved_at=datetime('now') WHERE id=?", (sub_id,))
+        crewlog.sub_event(conn, s["outing_id"], "sub_cancel", sub_id, crewlog.actor(request, conn, body.member_id))
         return {"ok": True}
 
 
@@ -530,7 +541,7 @@ def _land_outing(conn, rules: Rules, oid: int, role: str):
 
 
 @app.post("/api/outings/{oid}/join")
-def outing_join(oid: int, b: JoinIn, role: str = Depends(require_member)):
+def outing_join(oid: int, b: JoinIn, request: Request, role: str = Depends(require_member)):
     """A rower takes a free spot in a land session."""
     with db.get_conn() as conn:
         rules = Rules(conn)
@@ -544,15 +555,17 @@ def outing_join(oid: int, b: JoinIn, role: str = Depends(require_member)):
         free = [s for s in range(1, o["capacity"] + 1) if s not in taken]
         if not free:
             raise HTTPException(400, "Sorry, this session is full")
+        crew_before = crewlog.state(conn, oid)
         try:
             conn.execute("INSERT INTO assignments(outing_id, seat, member_id) VALUES (?, ?, ?)", (oid, free[0], b.member_id))
         except db.sqlite3.IntegrityError:
             raise HTTPException(409, "Someone just took that spot. Please try again")
+        crewlog.record(conn, oid, crew_before, crewlog.actor(request, conn, b.member_id), "join")
         return {"ok": True}
 
 
 @app.post("/api/outings/{oid}/leave")
-def outing_leave(oid: int, b: JoinIn, role: str = Depends(require_member)):
+def outing_leave(oid: int, b: JoinIn, request: Request, role: str = Depends(require_member)):
     """A rower gives up their spot in a land session (no sub needed; the spot just reopens)."""
     with db.get_conn() as conn:
         rules = Rules(conn)
@@ -560,7 +573,9 @@ def outing_leave(oid: int, b: JoinIn, role: str = Depends(require_member)):
         a = conn.execute("SELECT seat FROM assignments WHERE outing_id = ? AND member_id = ?", (oid, b.member_id)).fetchone()
         if not a:
             raise HTTPException(400, "You're not in this session")
+        crew_before = crewlog.state(conn, oid)
         conn.execute("DELETE FROM assignments WHERE outing_id = ? AND member_id = ?", (oid, b.member_id))
+        crewlog.record(conn, oid, crew_before, crewlog.actor(request, conn, b.member_id), "leave")
         conn.execute("""UPDATE sub_requests SET status = 'cancelled', resolved_at = datetime('now')
                         WHERE outing_id = ? AND seat = ? AND status = 'open'""", (oid, a["seat"]))
         return {"ok": True}
@@ -1052,9 +1067,12 @@ def _times(start_text: str, end_text: str = "") -> tuple[str, str]:
     return start, end
 
 
-def _save_outing(conn, rules: Rules, oid: Optional[int], b: OutingIn, msgs: Optional[list] = None) -> int:
-    """Create or update an outing and its crew. Notifications for the change are added to `msgs`."""
+def _save_outing(conn, rules: Rules, oid: Optional[int], b: OutingIn, msgs: Optional[list] = None,
+                 who: Optional[dict] = None) -> int:
+    """Create or update an outing and its crew. Notifications for the change are added to `msgs`;
+    crew changes to an already-published outing are logged as made by `who`."""
     before = push.snapshot(conn, ids=[oid] if oid else [])
+    crew_before = crewlog.state(conn, oid)
     if b.kind not in ("water", "land"):
         raise HTTPException(400, "Kind must be water or land")
     try:
@@ -1117,6 +1135,8 @@ def _save_outing(conn, rules: Rules, oid: Optional[int], b: OutingIn, msgs: Opti
                     msgs += push.sub_filled(conn, oid, sr["requester_id"], new)
             else:
                 conn.execute("UPDATE sub_requests SET status='cancelled', resolved_at=datetime('now') WHERE id=?", (sr["id"],))
+    if who is not None:
+        crewlog.record(conn, oid, crew_before, who, "committee")
     if msgs is not None:
         msgs += push.crew_changes(conn, before, extra_ids=[oid])
     return oid
@@ -1126,16 +1146,16 @@ def _save_outing(conn, rules: Rules, oid: Optional[int], b: OutingIn, msgs: Opti
 def outing_create(b: OutingIn, _: str = Depends(require_committee)):
     msgs: list = []
     with db.get_conn() as conn:
-        oid = _save_outing(conn, Rules(conn), None, b, msgs)
+        oid = _save_outing(conn, Rules(conn), None, b, msgs)  # new outings have no crew to change yet
     push.dispatch(msgs)
     return {"id": oid}
 
 
 @app.put("/api/committee/outings/{oid}")
-def outing_update(oid: int, b: OutingIn, _: str = Depends(require_committee)):
+def outing_update(oid: int, b: OutingIn, request: Request, _: str = Depends(require_committee)):
     msgs: list = []
     with db.get_conn() as conn:
-        oid = _save_outing(conn, Rules(conn), oid, b, msgs)
+        oid = _save_outing(conn, Rules(conn), oid, b, msgs, crewlog.actor(request, conn))
     push.dispatch(msgs)
     return {"id": oid}
 
@@ -1439,6 +1459,7 @@ async def http_exc(_, exc: HTTPException):
 
 
 app.include_router(signup_router)
+app.include_router(crewlog.router)
 app.include_router(calendar_router)
 app.include_router(stats_router)
 app.include_router(races_router)

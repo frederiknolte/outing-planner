@@ -79,6 +79,30 @@ CREATE TABLE IF NOT EXISTS sub_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_subs_status ON sub_requests(status);
 
+-- Change log for published crews and sub requests (see crewlog.py). Rowers only pick a name, so this
+-- records who did what and when, and lets the committee undo a bad edit.
+CREATE TABLE IF NOT EXISTS crew_log (
+    id INTEGER PRIMARY KEY,
+    outing_id INTEGER NOT NULL REFERENCES outings(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,                          -- join | leave | replace | move | swap | sub_request | sub_cancel
+    member_id INTEGER REFERENCES members(id) ON DELETE SET NULL,   -- whose seat changed
+    member_name TEXT NOT NULL DEFAULT '',
+    other_id INTEGER REFERENCES members(id) ON DELETE SET NULL,    -- replace: who left; swap: the other rower
+    other_name TEXT NOT NULL DEFAULT '',
+    seat INTEGER,                                  -- the seat now (leave: the seat given up)
+    from_seat INTEGER,                             -- move / swap: the seat before
+    sub_request_id INTEGER,
+    note TEXT NOT NULL DEFAULT '',                 -- e.g. the reason given for a sub request
+    source TEXT NOT NULL DEFAULT '',               -- join | leave | sub_fill | sub_handover | sub_request | committee | autofill | undo
+    by_id INTEGER REFERENCES members(id) ON DELETE SET NULL,       -- the name picked on the device that made the change
+    by_name TEXT NOT NULL DEFAULT '',
+    by_role TEXT NOT NULL DEFAULT '',              -- member | committee
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    undone_at TEXT,
+    undone_by TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_crew_log_outing ON crew_log(outing_id);
+
 -- Weekly availability sign-up (replaces the old Google Form)
 CREATE TABLE IF NOT EXISTS signup_weeks (
     week_start TEXT PRIMARY KEY,                   -- Monday, YYYY-MM-DD

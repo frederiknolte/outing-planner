@@ -55,10 +55,10 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from . import db, push
+from . import crewlog, db, push
 from .auth import require_committee
 from .logic import Rules, monday_of, seat_label, seat_list
 from .signup import availability_for_outing
@@ -578,7 +578,7 @@ class ApplyIn(BaseModel):
 
 
 @router.post("/api/committee/week/autofill/apply")
-def autofill_apply(b: ApplyIn, _: str = Depends(require_committee)):
+def autofill_apply(b: ApplyIn, request: Request, _: str = Depends(require_committee)):
     """Save the proposal the committee saw. Only seats that are still empty are filled, and only
     with people who aren't already in that outing; a bankrider is only set if the field is still empty."""
     ws = _monday(b.start)
@@ -587,12 +587,14 @@ def autofill_apply(b: ApplyIn, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         before = push.snapshot(conn, ids=[x.id for x in b.outings])
         members = {r["id"] for r in conn.execute("SELECT id FROM members")}
+        who = crewlog.actor(request, conn)
         for x in b.outings:
             o = conn.execute("SELECT * FROM outings WHERE id = ?", (x.id,)).fetchone()
             if not o or o["kind"] != "water" or o["cancelled"] or not (ws.isoformat() <= o["date"] <= we):
                 skipped += len(x.seats) + bool(x.coach)
                 continue
             valid = set(seat_list("water", o["capacity"], bool(o["coxed"])))
+            crew_before = crewlog.state(conn, x.id)
             cur = {a["seat"]: a["member_id"] for a in conn.execute("SELECT seat, member_id FROM assignments WHERE outing_id = ?", (x.id,))}
             inboat = set(cur.values())
             for k, mid in x.seats.items():
@@ -614,6 +616,7 @@ def autofill_apply(b: ApplyIn, _: str = Depends(require_committee)):
                 else:
                     conn.execute("UPDATE outings SET coach = ? WHERE id = ?", (x.coach.strip(), x.id))
                     coaches += 1
+            crewlog.record(conn, x.id, crew_before, who, "autofill")
         msgs = push.crew_changes(conn, before)
     push.dispatch(msgs)
     return {"added": added, "coaches": coaches, "skipped": skipped}

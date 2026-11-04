@@ -56,6 +56,7 @@ const I = {
   wand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5"/></svg>',
   chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15v2"/><path d="M11 10v7"/><path d="M15 6v11"/><path d="M19 12v5"/></svg>',
   bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
+  history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
 };
 
@@ -77,6 +78,7 @@ const isCommittee = () => S.role === "committee";
 async function api(path, opts = {}) {
   const init = { method: opts.method || "GET", headers: {}, credentials: "same-origin" };
   if (S.realRole === "committee" && S.viewAsRower) init.headers["X-View-As"] = "member";
+  if (S.me) init.headers["X-Acting-As"] = String(S.me); // the name picked on this device, for the crew change log
   if (opts.body instanceof FormData) init.body = opts.body;
   else if (opts.body instanceof Blob) { init.body = opts.body; init.headers["Content-Type"] = opts.body.type || "application/octet-stream"; }
   else if (opts.body !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(opts.body); }
@@ -439,6 +441,32 @@ function waterFoot(o) {
   return tags.length ? `<div class="o-foot">${tags.join("")}</div>` : "";
 }
 
+/* Crew change log: who left, joined or swapped a seat, and when ("Alex left seat 3 · Tue 21:04"). */
+const logWhen = (s) => {
+  if (!s) return "";
+  const d = new Date(s.replace(" ", "T") + "Z");
+  if (isNaN(d)) return "";
+  const hm = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const days = (Date.now() - d) / 86400000;
+  return days < 6 ? `${DAY[(d.getDay() + 6) % 7]} ${hm}` : `${d.getDate()} ${MON[d.getMonth()]} ${hm}`;
+};
+const logBy = (e) => !e.by ? "" : e.source === "undo" ? `undo by ${e.by}` : `by ${e.by}`;
+const logLine = (e) => [esc(e.text), e.note ? `“${esc(e.note)}”` : "", esc(logBy(e)), esc(logWhen(e.created_at))].filter(Boolean).join(" · ");
+function crewLogList(o, undo = false) {
+  const log = (o.log || []).slice().reverse();
+  if (!log.length) return "";
+  return `<div class="section-title" style="margin:16px 0 6px">${I.history}Changes</div>
+    <ul class="crew-log">${log.map((e) => `<li class="${e.undone_at ? "undone" : ""}">
+      <span class="cl-text">${logLine(e)}${e.undone_at ? ` <span class="chip">Undone${e.undone_by ? ` by ${esc(e.undone_by)}` : ""}</span>` : ""}</span>
+      ${undo && !e.undone_at ? `<button type="button" class="btn sm ghost" data-undo="${e.id}" title="Reverse this change">Undo</button>` : ""}</li>`).join("")}</ul>`;
+}
+const crewLogLatest = (o) => {
+  const log = o.log || [];
+  if (!log.length) return "";
+  const e = log[log.length - 1];
+  return `<div class="o-log small" title="Tap the session to see all changes">${I.history}<span>${logLine(e)}${log.length > 1 ? ` <span class="faint">· ${log.length} changes</span>` : ""}</span></div>`;
+};
+
 function outingCard(o) {
   const committee = isCommittee();
   const kindChip = o.kind === "water" ? `<span class="chip water">${I.water}Water</span>` : `<span class="chip land">${I.land}Land</span>`;
@@ -453,6 +481,7 @@ function outingCard(o) {
     </div>
     ${o.kind === "land" ? landSpots(o) : `<div class="seats">${o.seats.map((s) => seatRow(o, s)).join("")}</div>
     ${o.cancelled ? "" : waterFoot(o)}`}
+    ${crewLogLatest(o)}
     ${o.notes ? `<div class="small muted" style="margin-top:6px">${esc(o.notes)}</div>` : ""}
     ${committee && o.warnings.length ? `<div class="warnings">${o.warnings.map((w) => `<div>${I.alert}<span>${esc(w)}</span></div>`).join("")}</div>` : ""}
     ${riverList((o.river || []).filter((r) => !o.past && (committee || r.level === "stop")))}
@@ -568,7 +597,8 @@ function viewOuting(o) {
       <div class="seats seats-detail">${seats.map(row).join("") || `<div class="seat open"><span class="sl"></span><span class="sn">No one yet. Be the first!</span></div>`}</div>
       ${o.cancelled ? "" : o.kind === "land" ? (o.spots ? `<div class="o-foot"><span class="chip accent">${esc(o.spots_text)} of ${o.capacity}</span></div>` : "") : waterFoot(o)}
       ${o.notes ? `<div class="callout">${I.info}<div>${esc(o.notes)}</div></div>` : ""}
-      ${riverList((o.river || []).filter((r) => !o.past && r.level === "stop"))}`,
+      ${riverList((o.river || []).filter((r) => !o.past && r.level === "stop"))}
+      ${crewLogList(o)}`,
     foot: `<div class="r">${join ? `<button class="btn primary" data-act="join">${I.plus}Join</button>` : ""}<button class="btn" data-close>Close</button></div>`,
     onMount: (el, close) => {
       $$("[data-act]", el).forEach((b) => b.onclick = (e) => { e.stopPropagation(); close(); outingAct(b, o); });
@@ -715,7 +745,8 @@ async function editOuting(o, defaults = {}) {
     </div>
     <label class="field"><span>Notes</span><textarea class="input" id="oe-notes" rows="2" placeholder="Optional — visible to rowers">${esc(st.notes)}</textarea></label>
     <div id="oe-warn"></div>
-    <div id="oe-river"></div>`;
+    <div id="oe-river"></div>
+    ${o ? crewLogList(o, true) : ""}`;
   const foot = `${o ? `<button class="btn danger" id="oe-del">Delete</button>${o.cancelled
       ? `<button class="btn" id="oe-uncancel" title="Put this session back on">Restore session</button>`
       : `<button class="btn" id="oe-cancel" title="Keep it on the schedule, marked as cancelled, with a reason">${I.x}Cancel session</button>`}` : ""}<div class="r">
@@ -1034,6 +1065,20 @@ async function editOuting(o, defaults = {}) {
         try { await api(`/api/committee/outings/${o.id}`, { method: "DELETE" }); toast("Session deleted"); pageSchedule(); } catch (e) { fail(e); }
       };
       const markAs = async (st) => { try { await setOutingStatus(o, st); close(); } catch (e) { fail(e); } };
+      $$("[data-undo]", m).forEach((b) => b.onclick = async () => {
+        const e = (o.log || []).find((x) => x.id === +b.dataset.undo);
+        if (!e) return;
+        const yes = await confirmBox("Undo this change?", `<b>${esc(e.text)}</b><br>The crew is put back as it was before this change, straight away. Anything else you've changed in this form and not saved is lost.`, "Undo");
+        close(); // the confirm box replaced the editor
+        if (!yes) return editOuting(o);
+        try {
+          await api(`/api/committee/crew-log/${e.id}/undo`, { method: "POST" });
+          toast("Change undone");
+          await pageSchedule();
+          const fresh = S.weekData && S.weekData.outings.find((x) => x.id === o.id);
+          if (fresh) editOuting(fresh);
+        } catch (err) { fail(err); }
+      });
       const cancelBtn = $("#oe-cancel", m); if (cancelBtn) cancelBtn.onclick = () => cancelOuting(o);
       const uncancel = $("#oe-uncancel", m); if (uncancel) uncancel.onclick = () => markAs("scheduled");
       syncKind(); drawSeats(); loadCand();
