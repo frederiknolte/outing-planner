@@ -5,6 +5,9 @@
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// Case- and accent-insensitive key for name search: "Zoë"/"Zoe", "Îsla"/"isla" match.
+const FOLD_EXTRA = { "ł": "l", "ø": "o", "đ": "d", "ß": "ss", "æ": "ae", "œ": "oe", "þ": "th", "ı": "i" };
+const fold = (v) => String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[łøđßæœþı]/g, (c) => FOLD_EXTRA[c]);
 const tRange = (o) => (o && o.time ? (o.end_time ? `${o.time}–${o.end_time}` : o.time) : "");
 async function loadPlaces(force = false) { if (!S.places || force) { try { S.places = await api("/api/places"); } catch { S.places = []; } } return S.places; }
 const placesDatalist = (id) => `<datalist id="${id}">${(S.places || []).map((p) => `<option value="${esc(p.name)}">${esc(p.address)}</option>`).join("")}</datalist>`;
@@ -138,10 +141,10 @@ function combo(container, { items, value, placeholder = "Search…", onChange, r
   };
   const close = () => { list?.remove(); list = null; };
   const draw = () => {
-    const q = inp.value.trim().toLowerCase();
-    const curLabel = cur != null ? byId().get(cur)?.label?.toLowerCase() : null;
+    const q = fold(inp.value.trim());
+    const curLabel = cur != null ? fold(byId().get(cur)?.label) : null;
     const query = q && q !== curLabel ? q : "";
-    shown = items().filter((i) => !query || i.label.toLowerCase().includes(query))
+    shown = items().filter((i) => !query || fold(i.label).includes(query))
       .sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0) || a.label.localeCompare(b.label)).slice(0, 80);
     hl = Math.min(hl, Math.max(0, shown.length - 1));
     if (!list) { list = document.createElement("div"); list.className = "combo-list"; container.appendChild(list); }
@@ -273,8 +276,8 @@ function pickIdentity(after) {
     foot: S.me ? `<button class="btn ghost" id="pi-clear">Forget me on this device</button>` : "",
     onMount: (m, close) => {
       const draw = () => {
-        const q = $("#pi-q", m).value.trim().toLowerCase();
-        $("#pi-list", m).innerHTML = members.filter((x) => !q || x.name.toLowerCase().includes(q)).map((x) =>
+        const q = fold($("#pi-q", m).value.trim());
+        $("#pi-list", m).innerHTML = members.filter((x) => !q || fold(x.name).includes(q)).map((x) =>
           `<button data-id="${x.id}"><span>${esc(x.name)}</span><span class="chip ${x.category === "Novice" ? "accent" : ""}">${esc(x.category)}</span></button>`).join("")
           || `<div class="faint" style="padding:10px">No one found — ask a committee member to add you.</div>`;
         $$("#pi-list button", m).forEach((b) => b.onclick = () => { setMe(+b.dataset.id); close(); toast(`Hi, ${meName().split(" ")[0]}!`); after ? after() : route(); });
@@ -798,13 +801,13 @@ async function editOuting(o, defaults = {}) {
         let list = null, hl = 0, shown = [];
         const parts = () => inp.value.split(/\s*,\s*/);
         const build = () => {
-          const ps = parts(), q = (ps[ps.length - 1] || "").trim().toLowerCase();
-          const taken = new Set(ps.slice(0, -1).map((x) => x.trim().toLowerCase()));
+          const ps = parts(), q = fold((ps[ps.length - 1] || "").trim());
+          const taken = new Set(ps.slice(0, -1).map((x) => fold(x.trim())));
           const byName = new Map();
-          coaches.forEach((c) => byName.set(c.name.toLowerCase(), { name: c.name, coach: true }));
-          members.forEach((mm) => { const k = mm.name.toLowerCase(); byName.set(k, { ...(byName.get(k) || { name: mm.name }), mid: mm.id }); });
+          coaches.forEach((c) => byName.set(fold(c.name), { name: c.name, coach: true }));
+          members.forEach((mm) => { const k = fold(mm.name); byName.set(k, { ...(byName.get(k) || { name: mm.name }), mid: mm.id }); });
           return [...byName.values()]
-            .filter((e) => !taken.has(e.name.toLowerCase()) && (!q || e.name.toLowerCase().includes(q)))
+            .filter((e) => !taken.has(fold(e.name)) && (!q || fold(e.name).includes(q)))
             .map((e) => {
               const c = e.mid != null ? cand[e.mid] || {} : {}, su = c.signup;
               const br = !!(su && su.can_bankride), free = !!(su && su.available), inBoat = e.mid != null && seatOf(e.mid) != null;
@@ -1191,7 +1194,7 @@ async function pageRowers() {
     else rows = await api("/api/rowers");
   } catch (e) { return fail(e); }
   const draw = () => {
-    let list = rows.filter((r) => (!rowerQ || r.name.toLowerCase().includes(rowerQ)) && (rowerCat === "all" || (rowerCat === "inactive" ? !r.active : rowerCat === "issues" ? (r.active !== false && (!r.water_ok || !r.land_ok)) : r.category === rowerCat && r.active !== false)));
+    let list = rows.filter((r) => (!rowerQ || fold(r.name).includes(rowerQ)) && (rowerCat === "all" || (rowerCat === "inactive" ? !r.active : rowerCat === "issues" ? (r.active !== false && (!r.water_ok || !r.land_ok)) : r.category === rowerCat && r.active !== false)));
     if (rowerCat !== "inactive" && committee) list = list.filter((r) => rowerCat === "all" || r.active);
     const k = rowerSort.k;
     list.sort((a, b) => (typeof a[k] === "string" ? a[k].localeCompare(b[k]) : (a[k] ?? -1) - (b[k] ?? -1)) * rowerSort.dir || a.name.localeCompare(b.name));
@@ -1233,7 +1236,7 @@ async function pageRowers() {
       <span class="faint small" id="rw-count" style="margin-left:auto"></span>
     </div>
     <div class="card table-wrap" id="rw-table"></div>`;
-  $("#rw-q").oninput = (e) => { rowerQ = e.target.value.trim().toLowerCase(); draw(); };
+  $("#rw-q").oninput = (e) => { rowerQ = fold(e.target.value.trim()); draw(); };
   $$("#rw-cat button").forEach((b) => b.onclick = () => { rowerCat = b.dataset.c; $$("#rw-cat button").forEach((x) => x.classList.toggle("on", x === b)); draw(); });
   if (committee) { $("#rw-add").onclick = () => editMember(null, meta); $("#rw-export").onclick = () => exportModal("/api/committee/members.csv", "all members"); }
   else $("#rw-add").onclick = addRower;
@@ -1782,9 +1785,9 @@ async function pageTasks() {
   try { d = await api("/api/committee/tasks"); } catch (e) { return fail(e); }
   setCount("todo", taskAttention(d));
   S.taskFilter = S.taskFilter || "open";
-  const q = (S.taskQ || "").toLowerCase();
+  const q = fold(S.taskQ);
   const shown = d.tasks.filter((t) => (S.taskFilter === "all" || (S.taskFilter === "done") === (t.status === "done"))
-    && (!S.taskOwner || t.owner === S.taskOwner) && (!q || `${t.title} ${t.plan} ${t.owner}`.toLowerCase().includes(q)));
+    && (!S.taskOwner || t.owner === S.taskOwner) && (!q || fold(`${t.title} ${t.plan} ${t.owner}`).includes(q)));
   const nOpen = d.tasks.filter((t) => t.status !== "done").length;
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>Committee to-do</h1><p>${nOpen} open task${nOpen === 1 ? "" : "s"}. Only the committee can see this list.</p></div>
@@ -2233,9 +2236,9 @@ function nameField(container, st, onPick, opts = {}) {
   const sync = () => { inp.value = cur(); clr.style.display = inp.value ? "" : "none"; };
   const close = () => { list?.remove(); list = null; };
   const draw = () => {
-    const q = inp.value.trim().toLowerCase();
-    const matches = members().filter((m) => !q || m.name.toLowerCase().includes(q)).slice(0, 8);
-    const exact = members().some((m) => m.name.toLowerCase() === q);
+    const q = fold(inp.value.trim());
+    const matches = members().filter((m) => !q || fold(m.name).includes(q)).slice(0, 8);
+    const exact = members().some((m) => fold(m.name) === q);
     shown = matches.map((m) => ({ id: m.id, label: m.name, inactive: m.active === false }));
     if (q.length >= 3 && !exact) shown.push({ id: null, label: inp.value.trim().replace(/\s+/g, " "), isNew: true });
     hl = Math.min(hl, Math.max(0, shown.length - 1));
@@ -2255,7 +2258,7 @@ function nameField(container, st, onPick, opts = {}) {
   inp.addEventListener("blur", () => setTimeout(() => {
     close();
     const v = inp.value.trim();
-    if (v && v !== cur()) { const m = members().find((x) => x.name.toLowerCase() === v.toLowerCase()); if (m) return pick({ id: m.id }); st.member_id = null; st.new_name = v; }
+    if (v && v !== cur()) { const m = members().find((x) => fold(x.name) === fold(v)); if (m) return pick({ id: m.id }); st.member_id = null; st.new_name = v; }
     if (!v) { st.member_id = null; st.new_name = ""; }
     sync();
   }, 120));
