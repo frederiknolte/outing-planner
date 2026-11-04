@@ -1420,16 +1420,15 @@ async function pageCoaches() {
     <div class="page-head"><div><h1>Coaches</h1><p>Sessions per coach per month, counted from the Coach / bankrider field on every session.</p></div>
       <div class="toolbar"><button class="btn primary" id="c-add">${I.plus}Add coach</button></div></div>
     <div class="card table-wrap"><table class="t"><thead><tr><th>Coach</th>${stats.months.map((m) => `<th class="num">${mlabel(m)}</th>`).join("")}<th class="num">Total</th></tr></thead>
-      <tbody>${stats.rows.map((r) => { const c = coaches.find((x) => x.name === r.name); return `<tr class="clickable" data-id="${c?.id}"><td><b>${esc(r.name)}</b>${c?.search_text ? ` <span class="faint small">matches “${esc(c.search_text)}”</span>` : ""}</td>${stats.months.map((m) => `<td class="num ${r.months[m] ? "" : "faint"}">${r.months[m] || "·"}</td>`).join("")}<td class="num"><b>${r.total}</b></td></tr>`; }).join("") || `<tr><td colspan="14" class="faint" style="text-align:center;padding:30px">No coaches yet.</td></tr>`}</tbody></table></div>
-    ${stats.uncounted.length ? `<div class="section-title">Not matched to a coach</div><div class="callout warn">${I.alert}<div>These coach entries don't match anyone above, so they aren't counted: ${stats.uncounted.map((u) => `<b>${esc(u.coach)}</b> (${u.n})`).join(", ")}. Add the coach, or set “Text to find” for short names.</div></div>` : ""}`;
+      <tbody>${stats.rows.map((r) => { const c = coaches.find((x) => x.name === r.name); return `<tr class="clickable" data-id="${c?.id}"><td><b>${esc(r.name)}</b></td>${stats.months.map((m) => `<td class="num ${r.months[m] ? "" : "faint"}">${r.months[m] || "·"}</td>`).join("")}<td class="num"><b>${r.total}</b></td></tr>`; }).join("") || `<tr><td colspan="14" class="faint" style="text-align:center;padding:30px">No coaches yet.</td></tr>`}</tbody></table></div>
+    ${stats.uncounted.length ? `<div class="section-title">Not matched to a coach</div><div class="callout warn">${I.alert}<div>These coach entries don't match anyone above, so they aren't counted: ${stats.uncounted.map((u) => `<b>${esc(u.coach)}</b> (${u.n})`).join(", ")}. Add the coach, or use their full name in the Coach / bankrider field.</div></div>` : ""}`;
   const edit = (c) => modal({
     title: c ? "Edit coach" : "Add coach",
-    body: `<label class="field"><span>Name</span><input class="input" id="c-name" value="${esc(c?.name || "")}"></label>
-      <label class="field"><span>Text to find (optional)</span><input class="input" id="c-st" value="${esc(c?.search_text || "")}" placeholder="e.g. Maddie"><span class="hint">Use a short name that appears in entries like “Maddie or Henry”. Defaults to the full name.</span></label>`,
+    body: `<label class="field"><span>Name</span><input class="input" id="c-name" value="${esc(c?.name || "")}"></label>`,
     foot: `${c ? `<button class="btn danger" id="c-del">Delete</button>` : ""}<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="c-save">Save</button></div>`,
     onMount: (m, close) => {
       $("#c-save", m).onclick = async () => {
-        const body = { name: $("#c-name", m).value.trim(), search_text: $("#c-st", m).value.trim() };
+        const body = { name: $("#c-name", m).value.trim() };
         if (!body.name) return toast("Name is required", true);
         try { await api(c ? `/api/admin/coaches/${c.id}` : "/api/admin/coaches", { method: c ? "PUT" : "POST", body }); close(); pageCoaches(); } catch (e) { fail(e); }
       };

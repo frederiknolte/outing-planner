@@ -119,7 +119,7 @@ Every private, LAN and Tailscale target should show `BLOCKED`, the internet chec
 - **Subs**: a rower taps **Can't go** on their own seat to post a request to the **Sub board**. Another rower takes it with **I'll sub**, and the seat and the outing count move to them. People who aren't eligible (no swim test, unpaid after the cutoff, double-booked, not a cox for the cox seat) are blocked from taking a seat.
 - **Races**: admins add races under **Races** with a title, date, term, city, expected time slot, who should enter (everyone, novices or seniors), race type (free text, with earlier types suggested), notes, and any number of source links (web links only). Rowers mark themselves **Available**, **Maybe** or **Not available** (tap again to clear) and can add a note, which only admins see. Everyone can see who has responded. Rowers can only respond to races they're eligible for, while the race is open and hasn't happened yet. Admins can close responses, and set or change anyone's response. Past races move to the **Past** tab.
 - **Rowers database**: Novice/Senior category, swim test, subs plan, cox status (N/X/S), and water/land outing totals. Totals are worked out from the schedule plus a baseline of earlier outings, so there's no weekly roll-over to do. Admins can export members as CSV.
-- **Coaches**: sessions per coach per month, matched on the Coach/bankrider field (with an optional short "text to find", like the spreadsheet).
+- **Coaches**: sessions per coach per month, matched by the coach's name appearing in the Coach/bankrider field.
 
 ### River rules and the OURCs flag (Isis)
 

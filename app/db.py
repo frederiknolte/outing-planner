@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS members (
 CREATE TABLE IF NOT EXISTS coaches (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    search_text TEXT NOT NULL DEFAULT ''
+    search_text TEXT NOT NULL DEFAULT ''           -- no longer used (coaches match on name only)
 );
 
 CREATE TABLE IF NOT EXISTS outings (

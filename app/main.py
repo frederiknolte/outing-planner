@@ -858,20 +858,19 @@ def members_csv(include_phone: bool = False, _: str = Depends(require_admin)):
 # -------------------------------------------------------------- coaches ----
 class CoachIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
-    search_text: str = Field("", max_length=100)
 
 
 @app.get("/api/admin/coaches")
 def coaches_list(role: str = Depends(require_member)):
     with db.get_conn() as conn:
-        return [dict(r) for r in conn.execute("SELECT * FROM coaches ORDER BY name")]
+        return [dict(r) for r in conn.execute("SELECT id, name FROM coaches ORDER BY name")]
 
 
 @app.post("/api/admin/coaches")
 def coach_create(c: CoachIn, _: str = Depends(require_admin)):
     with db.get_conn() as conn:
         try:
-            cur = conn.execute("INSERT INTO coaches(name, search_text) VALUES (?, ?)", (c.name.strip(), c.search_text.strip()))
+            cur = conn.execute("INSERT INTO coaches(name) VALUES (?)", (c.name.strip(),))
         except db.sqlite3.IntegrityError:
             raise HTTPException(400, "Coach already exists")
         return {"id": cur.lastrowid}
@@ -880,7 +879,7 @@ def coach_create(c: CoachIn, _: str = Depends(require_admin)):
 @app.put("/api/admin/coaches/{coach_id}")
 def coach_update(coach_id: int, c: CoachIn, _: str = Depends(require_admin)):
     with db.get_conn() as conn:
-        conn.execute("UPDATE coaches SET name=?, search_text=? WHERE id=?", (c.name.strip(), c.search_text.strip(), coach_id))
+        conn.execute("UPDATE coaches SET name=? WHERE id=?", (c.name.strip(), coach_id))
         return {"ok": True}
 
 
@@ -914,7 +913,7 @@ def coaching_stats(_: str = Depends(require_admin)):
         rows, uncounted = [], defaultdict(int)
         counted_any = [False] * len(outings)
         for c in coaches:
-            key = (c["search_text"] or c["name"]).lower()
+            key = c["name"].lower()
             per = {m: 0 for m in months}
             for i, o in enumerate(outings):
                 if key and key in o["coach"].lower():

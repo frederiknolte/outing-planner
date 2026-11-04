@@ -102,10 +102,7 @@ def import_workbook(conn, data: bytes, include_schedule: bool = False) -> dict:
             name = _s(c.cell(r, 1).value)
             if not name:
                 break
-            conn.execute(
-                "INSERT INTO coaches(name, search_text) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET search_text = excluded.search_text",
-                (name, _s(c.cell(r, 2).value)),
-            )
+            conn.execute("INSERT INTO coaches(name) VALUES (?) ON CONFLICT(name) DO NOTHING", (name,))
             report["coaches"] += 1
 
     if include_schedule and "Schedule" in wb.sheetnames and "Settings" in wb.sheetnames:
