@@ -813,3 +813,22 @@ button.race-person:hover { border-color: var(--accent); }
 .oc-r b { text-align: right; }
 .bar.bad i { background: var(--bad); }
 .oc-season { border-top: 1px solid var(--border); padding-top: 8px; }
+
+/* ---------- year-end handover ---------- */
+.ho-steps { display: grid; gap: 14px; }
+.ho-step { display: flex; flex-direction: column; gap: 12px; }
+.ho-step h3 { margin: 0; display: flex; align-items: center; gap: 10px; }
+.ho-n { width: 26px; height: 26px; flex: none; border-radius: 99px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 800; }
+.ho-novs { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 16px; max-height: 360px; overflow-y: auto; }
+.ho-nov { display: flex; align-items: flex-start; gap: 10px; padding: 4px 0; cursor: pointer; }
+.ho-nov input { width: 16px; height: 16px; margin-top: 3px; flex: none; accent-color: var(--accent); }
+.ho-nov-name { font-weight: 600; }
+.ho-nov-tools a { color: var(--accent); }
+.ho-go { display: flex; justify-content: flex-end; margin: 16px 0 24px; }
+.ho-confirm { margin: 0 0 10px; padding-left: 20px; }
+.ho-dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+.ho-dl dt { color: var(--text-2); }
+.ho-dl dd { margin: 0; }
+.ho-past td { white-space: nowrap; }
+.ho-acts { display: flex; gap: 6px; justify-content: flex-end; }
+@media (max-width: 640px) { .ho-past .ho-when { display: none; } .ho-acts { flex-direction: column; align-items: flex-end; } }

@@ -224,6 +224,16 @@ CREATE TABLE IF NOT EXISTS race_responses (
     PRIMARY KEY (race_id, member_id)
 );
 
+-- Year-end handover: a snapshot of each finished season (see handover.py)
+CREATE TABLE IF NOT EXISTS season_archives (
+    id INTEGER PRIMARY KEY,
+    academic_year TEXT NOT NULL UNIQUE,            -- the year that was handed over, e.g. 2026-27
+    season_start TEXT NOT NULL DEFAULT '',
+    season_end TEXT NOT NULL DEFAULT '',           -- last day counted
+    data TEXT NOT NULL DEFAULT '{}',               -- JSON: leaderboard, boat usage, roster, handbook, subs, promotions
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS signup_availability (
     signup_id INTEGER NOT NULL REFERENCES signups(id) ON DELETE CASCADE,
     slot_id INTEGER NOT NULL REFERENCES signup_slots(id) ON DELETE CASCADE,

@@ -217,6 +217,7 @@ const ROUTES = [
   { id: "todo", label: "To-do", parent: "committee", icon: I.todo, committee: true, count: "todo" },
   { id: "handbook", label: "Handbook", parent: "committee", icon: I.info, committee: true },
   { id: "coaches", label: "Coaches", parent: "committee", icon: I.whistle, committee: true },
+  { id: "handover", label: "Handover", parent: "committee", icon: I.repeat, committee: true },
   { id: "settings", label: "Settings", icon: I.gear, committee: true, gear: true },
 ];
 S.counts = {};
@@ -1293,18 +1294,20 @@ const MEDAL = ["🥇", "🥈", "🥉"];
 const plural = (n, unit) => `${n} ${n === 1 ? unit.replace(/s$/, "") : unit}`;
 
 /* Term attendance: how many sessions went ahead, how many were lost and why. */
-function outcomesCard(oc) {
+function outcomesCard(oc, archived) {
   if (!oc) return "";
-  const t = oc.term, ss = oc.season, total = t.happened + t.cancelled;
+  // An archived season shows the whole season rather than its last term.
+  const t = archived ? oc.season : oc.term, ss = oc.season, total = t.happened + t.cancelled;
+  const when = archived ? "this season" : "this term";
   if (!total) return "";
   const pct = Math.round((t.happened / total) * 100);
   const top = t.by_reason[0];
   const unit = (r) => (r.land ? "sessions" : "outings");
-  const head = !top ? `Every session went ahead this term`
-    : top.key ? `${plural(top.count, unit(top))} lost to ${LOST_TO[top.key]} this term` : `${plural(top.count, unit(top))} cancelled this term`;
+  const head = !top ? `Every session went ahead ${when}`
+    : top.key ? `${plural(top.count, unit(top))} lost to ${LOST_TO[top.key]} ${when}` : `${plural(top.count, unit(top))} cancelled ${when}`;
   const max = Math.max(1, ...t.by_reason.map((r) => r.count));
-  const seasonLine = ss.since !== t.since ? `<div class="small faint oc-season">Whole season since ${esc(fmtShort(ss.since))}: ${ss.happened} went ahead · ${ss.cancelled} cancelled</div>` : "";
-  return `<div class="section-title">${esc(oc.term_name)} so far</div>
+  const seasonLine = !archived && ss.since !== t.since ? `<div class="small faint oc-season">Whole season since ${esc(fmtShort(ss.since))}: ${ss.happened} went ahead · ${ss.cancelled} cancelled</div>` : "";
+  return `<div class="section-title">${archived ? `The ${esc(archived)} season` : `${esc(oc.term_name)} so far`}</div>
     <div class="card oc-card">
       <div class="oc-head"><div class="oc-line">${top ? I.x : I.check}<b>${esc(head)}</b></div>
         <div class="small faint">${t.happened} of ${plural(total, "sessions")} went ahead (${pct}%) since ${esc(fmtShort(t.since))}</div></div>
@@ -1316,16 +1319,17 @@ function outcomesCard(oc) {
     </div>`;
 }
 
-function meStatsCard(p, boards) {
+function meStatsCard(p, boards, archived) {
   if (!p) return "";
   const ms = p.milestone;
   const pct = ms.next ? Math.round(((p.all_time - ms.reached) / (ms.next - ms.reached)) * 100) : 100;
   const ranks = boards.map((b) => ({ b, r: b.me[String(S.me)] })).filter((x) => x.r && x.r.rank <= 10).sort((a, b) => a.r.rank - b.r.rank).slice(0, 4);
   return `<div class="card card-pad lb-me">
-    <div class="lb-me-head"><span class="avatar">${esc(initials(meName()))}</span><div><b>${esc(meName())}</b><div class="small faint">${plural(p.season_total, "sessions")} this season · ${plural(p.all_time, "sessions")} all time</div></div></div>
+    <div class="lb-me-head"><span class="avatar">${esc(initials(meName()))}</span><div><b>${esc(meName())}</b><div class="small faint">${plural(p.season_total, "sessions")} ${archived ? `in ${esc(archived)}` : "this season"} · ${plural(p.all_time, "sessions")} all time${archived ? " by then" : ""}</div></div></div>
     <div class="lb-progress"><div class="small"><b>${ms.next ? `${plural(ms.to_go, "sessions")} to your ${ms.next}${ms.next === 1 ? "st" : "th"} session` : "Every milestone reached. Legend!"}</b></div><div class="bar"><i style="width:${pct}%"></i></div></div>
     <div class="lb-me-grid">
-      <div><div class="k">Current streak</div><div class="v">${p.current_streak ? "🔥 " : ""}${plural(p.current_streak, "weeks")}</div><div class="s">best ${plural(p.streak, "weeks")}</div></div>
+      ${archived ? `<div><div class="k">Best streak</div><div class="v">${plural(p.streak, "weeks")}</div><div class="s">in a row with a session</div></div>`
+        : `<div><div class="k">Current streak</div><div class="v">${p.current_streak ? "🔥 " : ""}${plural(p.current_streak, "weeks")}</div><div class="s">best ${plural(p.streak, "weeks")}</div></div>`}
       <div><div class="k">Early starts</div><div class="v">${p.early}</div><div class="s">before 08:00</div></div>
       <div><div class="k">Subs filled</div><div class="v">${p.subs}</div><div class="s">seats saved</div></div>
       <div><div class="k">Boat buddy</div><div class="v lb-small">${p.buddy ? esc(p.buddy.name) : "–"}</div><div class="s">${p.buddy ? `${plural(p.buddy.value, "outings")} together` : "row more to find one"}</div></div>
@@ -1335,8 +1339,16 @@ function meStatsCard(p, boards) {
 }
 
 async function pageStats() {
-  let d;
-  try { d = await api("/api/stats"); } catch (e) { return fail(e); }
+  let d, archives = [];
+  try {
+    [d, archives] = await Promise.all([
+      api(S.statsArchive ? `/api/stats/archives/${S.statsArchive}` : "/api/stats"),
+      api("/api/stats/archives").then((r) => r.archives).catch(() => [])]);
+  } catch (e) {
+    if (S.statsArchive) { S.statsArchive = null; return pageStats(); }   // archive gone: back to this season
+    return fail(e);
+  }
+  const arch = d.archive, archived = arch ? arch.academic_year : null;
   const c = d.club, me = S.me && meName() ? d.people[String(S.me)] : null;
   const diff = c.this_week - c.last_week;
   const boardCard = (b) => {
@@ -1350,16 +1362,20 @@ async function pageStats() {
     </div>`;
   };
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>Leaderboard</h1><p>Season awards since ${esc(fmtShort(d.season_start))}. Sessions count once they've happened; cancelled ones don't.</p></div>
-      ${!me ? `<div class="toolbar"><button class="btn" id="lb-pick">${I.user}Show my stats</button></div>` : ""}</div>
+    <div class="page-head"><div><h1>Leaderboard${archived ? ` <span class="faint">${esc(archived)}</span>` : ""}</h1><p>${arch
+        ? `Awards from the ${esc(archived)} season, ${esc(fmtShort(arch.season_start))} to ${esc(fmtShort(arch.season_end))}, as they stood at the handover.`
+        : `Season awards since ${esc(fmtShort(d.season_start))}. Sessions count once they've happened; cancelled ones don't.`}</p></div>
+      ${!me || archives.length ? `<div class="toolbar">${archives.length ? `<select class="input" id="lb-season" style="width:auto" aria-label="Season"><option value="">This season</option>${archives.map((a) => `<option value="${a.id}" ${a.id === S.statsArchive ? "selected" : ""}>${esc(a.academic_year)}</option>`).join("")}</select>` : ""}
+        ${!me ? `<button class="btn" id="lb-pick">${I.user}Show my stats</button>` : ""}</div>` : ""}</div>
     <div class="stats" style="margin-bottom:16px">
       <div class="card stat"><div class="k">Seats filled</div><div class="v">${c.seat_sessions}</div><div class="s">across ${plural(c.sessions, "sessions")}</div></div>
-      <div class="card stat"><div class="k">This week so far</div><div class="v">${c.this_week}</div><div class="s">${diff > 0 ? `▲ ${diff} on last week` : diff < 0 ? `${c.last_week} last week, catch up!` : `same as last week`}</div></div>
+      ${archived ? `<div class="card stat"><div class="k">Sessions</div><div class="v">${c.sessions}</div><div class="s">went ahead all season</div></div>`
+        : `<div class="card stat"><div class="k">This week so far</div><div class="v">${c.this_week}</div><div class="s">${diff > 0 ? `▲ ${diff} on last week` : diff < 0 ? `${c.last_week} last week, catch up!` : `same as last week`}</div></div>`}
       <div class="card stat"><div class="k">Rowers out</div><div class="v">${c.active_rowers}</div><div class="s">at least one session</div></div>
       <div class="card stat"><div class="k">Subs filled</div><div class="v">${c.subs_filled}</div><div class="s">${c.busiest_day != null ? `busiest day: ${DAYL[c.busiest_day]}` : "teamwork!"}</div></div>
     </div>
-    ${outcomesCard(d.outcomes)}
-    ${me ? meStatsCard(me, d.boards) : ""}
+    ${outcomesCard(d.outcomes, archived)}
+    ${me ? meStatsCard(me, d.boards, archived) : ""}
     <div class="section-title">Awards</div>
     <div class="lb-grid">${d.boards.map(boardCard).join("")}
       <div class="card lb-board">
@@ -1368,6 +1384,7 @@ async function pageStats() {
       </div>
     </div>`;
   const pk = $("#lb-pick"); if (pk) pk.onclick = () => pickIdentity();
+  const sel = $("#lb-season"); if (sel) sel.onchange = () => { S.statsArchive = +sel.value || null; pageStats(); };
 }
 
 // ----------------------------------------------------------------- rowers --
@@ -1987,34 +2004,143 @@ async function pageCommittee() {
   const e = $("#cm-edit"); if (e) e.onclick = () => editCommittee(d);
 }
 
-async function editCommittee(d) {
-  let all;
-  try { all = (await api("/api/committee/members")).members.map((m) => ({ id: m.id, name: m.name, active: !!m.active })).sort((a, b) => a.name.localeCompare(b.name)); }
-  catch (e) { return fail(e); }
-  // one name field per seat: Men's and Women's Captain have two
+/* Roster editor shared by "Edit committee" and the year-end handover: one name field per seat
+   (Men's and Women's Captain have two), prefilled from d.holders. */
+async function rosterEditor(d) {
+  const all = (await api("/api/committee/members")).members.map((m) => ({ id: m.id, name: m.name, active: !!m.active })).sort((a, b) => a.name.localeCompare(b.name));
   const seats = d.positions.flatMap((p) => Array.from({ length: p.max }, (_, slot) => ({ p, slot })));
   const state = seats.map(({ p, slot }) => { const h = d.holders.find((x) => x.position === p.key && x.slot === slot); return { member_id: h?.member_id ?? null, new_name: h && !h.member_id ? h.name : "" }; });
-  modal({
-    title: "Edit committee", wide: true,
-    body: `<p class="muted small" style="margin:0">Pick a club member (inactive members are included), or type a name for someone who isn't in the club list (e.g. the Senior Member). Leave a position empty if it's vacant.</p>
-      <div class="cm-edit">${d.positions.map((p) => {
+  return {
+    html: `<div class="cm-edit">${d.positions.map((p) => {
         const idx = seats.map((x, i) => (x.p === p ? i : -1)).filter((i) => i >= 0);
         return p.max > 1
           ? `<div class="field cm-multi"><span>${esc(positionPlural(p.label))} <span class="faint">(up to ${p.max})</span></span><div class="cm-multi-row">${idx.map((i) => `<div data-seat="${i}" aria-label="${esc(p.label)}"></div>`).join("")}</div></div>`
           : `<label class="field"><span>${esc(p.label)}</span><div data-seat="${idx[0]}"></div></label>`;
       }).join("")}</div>`,
+    mount: (root) => $$("[data-seat]", root).forEach((el) => nameField(el, state[+el.dataset.seat], null, { members: all, placeholder: "Vacant — type a name…", newLabel: "Not in the club list:", newChip: "Use this name", empty: "Keep typing the full name…" })),
+    holders: () => {
+      const holders = seats.map(({ p, slot }, i) => ({ position: p.key, slot, member_id: state[i].member_id, name: state[i].member_id ? "" : state[i].new_name || "" }))
+        .filter((h) => h.member_id || h.name.trim());
+      // captains are equal: store whoever is filled in from slot 0 upwards, with no gaps
+      const bySlot = {};
+      holders.forEach((h) => { h.slot = bySlot[h.position] = (bySlot[h.position] ?? -1) + 1; });
+      return holders;
+    },
+  };
+}
+
+async function editCommittee(d) {
+  let ed;
+  try { ed = await rosterEditor(d); } catch (e) { return fail(e); }
+  modal({
+    title: "Edit committee", wide: true,
+    body: `<p class="muted small" style="margin:0">Pick a club member (inactive members are included), or type a name for someone who isn't in the club list (e.g. the Senior Member). Leave a position empty if it's vacant.</p>
+      ${ed.html}`,
     foot: `<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="cm-save">Save</button></div>`,
     onMount: (m, close) => {
-      $$("[data-seat]", m).forEach((el) => nameField(el, state[+el.dataset.seat], null, { members: all, placeholder: "Vacant — type a name…", newLabel: "Not in the club list:", newChip: "Use this name", empty: "Keep typing the full name…" }));
+      ed.mount(m);
       $("#cm-save", m).onclick = async () => {
-        const holders = seats.map(({ p, slot }, i) => ({ position: p.key, slot, member_id: state[i].member_id, name: state[i].member_id ? "" : state[i].new_name || "" }))
-          .filter((h) => h.member_id || h.name.trim());
-        // captains are equal: store whoever is filled in from slot 0 upwards, with no gaps
-        const bySlot = {};
-        holders.forEach((h) => { h.slot = bySlot[h.position] = (bySlot[h.position] ?? -1) + 1; });
-        try { await api("/api/committee/club-committee", { method: "PUT", body: { holders } }); close(); toast("Committee saved"); rerender(); } catch (e) { fail(e); }
+        try { await api("/api/committee/club-committee", { method: "PUT", body: { holders: ed.holders() } }); close(); toast("Committee saved"); rerender(); } catch (e) { fail(e); }
       };
     },
+  });
+}
+
+// --------------------------------------------------------- year-end handover --
+/* Close the academic year and set up the next one in one go (see handover.py). */
+async function pageHandover() {
+  let d, ed;
+  try { d = await api("/api/committee/handover"); ed = await rosterEditor(d); } catch (e) { return fail(e); }
+  const cur = d.current, pr = d.proposed, ss = d.season, subs = d.subs;
+  const done = d.already_archived || d.not_started;
+  const lateStart = pr.season_start && d.today >= pr.season_start;
+  const nov = d.novices;
+  const novRow = (n) => `<label class="ho-nov"><input type="checkbox" data-nov="${n.id}" ${n.suggest ? "checked" : ""}>
+      <span><span class="ho-nov-name">${esc(n.name)}</span>${!n.active ? ` <span class="chip">Inactive</span>` : !n.all_time ? ` <span class="chip warn">Never rowed</span>` : ""}
+      <span class="faint small" style="display:block">${plural(n.season, "sessions")} this season · ${n.all_time} all time</span></span></label>`;
+  const step = (n, title, body) => `<section class="card card-pad ho-step"><h3><span class="ho-n">${n}</span>${title}</h3>${body}</section>`;
+  $("#main").innerHTML = `
+    <div class="page-head"><div><h1>Year-end handover</h1><p>${d.not_started ? "Close one academic year and set up the next, once a year." : `Close ${esc(cur.academic_year || "this year")} and set up ${esc(pr.academic_year || "the next one")}. Nothing changes until you press <b>Hand over</b> at the bottom.`}</p></div></div>
+    ${d.not_started ? `<div class="callout" style="margin-bottom:16px">${I.check}<div><b>${esc(cur.academic_year)} is set up and starts on ${esc(fmtShort(cur.season_start))}.</b> The next handover opens once that season is under way.</div></div>`
+      : d.already_archived ? `<div class="callout warn" style="margin-bottom:16px">${I.alert}<div><b>${esc(cur.academic_year)} has already been handed over.</b> Change the academic year under <a href="#/settings">Settings</a> if it should have moved on.</div></div>` : ""}
+    ${d.not_started ? "" : `<div class="ho-steps">
+    ${step(1, "Archive the season", `<p class="muted" style="margin:0">Since ${esc(fmtShort(ss.start))}: <b>${plural(ss.sessions, "sessions")}</b> went ahead, ${plural(ss.seat_sessions, "seats")} filled by ${plural(ss.active_rowers, "rowers")}, ${ss.cancelled} cancelled.
+        The leaderboard, boat usage, committee and handbook are saved. Everyone can still look back at the leaderboard (Leaderboard → season picker). Outing history and all-time totals stay as they are.</p>
+      ${lateStart ? `<div class="callout warn">${I.alert}<div>The new season starts on ${esc(fmtShort(pr.season_start))}, but today is later. Outings since then will be counted in ${esc(cur.academic_year)}'s archive.</div></div>` : ""}`)}
+    ${step(2, "Roll over the dates", `<div class="grid-2">
+        <label class="field"><span>New academic year</span><input class="input" id="ho-ay" value="${esc(pr.academic_year)}" placeholder="e.g. 2027-28"><span class="hint">Now ${esc(cur.academic_year || "not set")}. Term goes back to Michaelmas.</span></label>
+        <label class="field"><span>Season starts</span><input class="input" type="date" id="ho-season" value="${esc(pr.season_start)}"><span class="hint">Now ${cur.season_start ? esc(fmtShort(cur.season_start)) : "not set"}. Leaderboard and coaching year count from here.</span></label>
+        <label class="field"><span>Full Term starts</span><input class="input" type="date" id="ho-term" value="${esc(pr.term_start)}"><span class="hint">Sunday of 1st week. Suggested: 52 weeks after this year's. Check the University's dates.</span></label>
+        <label class="field"><span>Subs cutoff</span><input class="input" type="date" id="ho-cut" value="${esc(pr.subs_cutoff)}"><span class="hint">${cur.subs_cutoff ? `Now ${esc(fmtShort(cur.subs_cutoff))}.` : "Not set now."} Blank = none.</span></label>
+      </div><p class="small faint" style="margin:0">The regatta end date (river rules) is cleared, so peak term runs to the end of 8th week until you set it.</p>`)}
+    ${step(3, "Reset subs", `<label class="check"><input type="checkbox" id="ho-subs" checked> Set everyone's subs back to <b>Unpaid</b></label>
+      <p class="small muted" style="margin:0">Now: ${subs.full_year} full year · ${subs.single_term} single term · ${subs.unpaid} unpaid (active members). Anyone already marked as paid for the new year keeps it. Subs reminders start afresh.</p>`)}
+    ${step(4, "Move novices to senior", nov.length ? `<p class="small muted" style="margin:0">Ticked: active novices who have rowed. Novices who never came out stay Novice, so they keep their free outings if they return.</p>
+      <div class="ho-nov-tools small"><a href="#" id="ho-all">Tick all</a> · <a href="#" id="ho-none">Untick all</a> · <span id="ho-nov-n"></span></div>
+      <div class="ho-novs">${nov.map(novRow).join("")}</div>` : `<p class="muted" style="margin:0">There are no novices to move.</p>`)}
+    ${step(5, "Carry the committee forward", `<p class="small muted" style="margin:0">Prefilled with the current committee. Change whoever is leaving; empty = vacant. This year's committee is kept in the archive.</p>
+      <div id="ho-roster">${ed.html}</div>
+      <div class="callout">${I.info}<div>The <a href="#/handbook">handbook</a> carries over as it is${d.handbook_chars ? "" : " (it's empty at the moment)"}. A copy is saved in the archive. Yearly to-dos already come back by themselves.</div></div>`)}
+    </div>
+    <div class="ho-go"><button class="btn primary" id="ho-go" ${done ? "disabled" : ""}>${I.repeat}Hand over to ${esc(pr.academic_year || "next year")}</button></div>`}
+    ${d.archives.length ? `<div class="section-title">Past seasons</div>
+      <div class="card table-wrap"><table class="t ho-past"><thead><tr><th>Season</th><th>Dates</th><th class="ho-when">Handed over</th><th></th></tr></thead><tbody>
+      ${d.archives.map((a) => `<tr><td><b>${esc(a.academic_year)}</b></td><td>${a.season_start ? esc(fmtShort(a.season_start)) : "?"} – ${esc(fmtShort(a.season_end))}</td><td class="ho-when">${esc(utcStamp(a.created_at))}</td>
+        <td class="num ho-acts"><button class="btn sm" data-lb="${a.id}">${I.trophy}Leaderboard</button> <button class="btn sm" data-arch="${a.id}">Details</button></td></tr>`).join("")}
+      </tbody></table></div>` : ""}`;
+
+  $$("[data-lb]").forEach((b) => b.onclick = () => { S.statsArchive = +b.dataset.lb; go("stats"); });
+  $$("[data-arch]").forEach((b) => b.onclick = () => openArchive(+b.dataset.arch));
+  if (d.not_started) return;
+  ed.mount($("#ho-roster"));
+  const novCount = () => { const n = $$("[data-nov]:checked").length; const el = $("#ho-nov-n"); if (el) el.textContent = `${n} of ${nov.length} ticked`; };
+  novCount();
+  $$("[data-nov]").forEach((c) => c.onchange = novCount);
+  const setAll = (v) => (e) => { e.preventDefault(); $$("[data-nov]").forEach((c) => (c.checked = v)); novCount(); };
+  if ($("#ho-all")) { $("#ho-all").onclick = setAll(true); $("#ho-none").onclick = setAll(false); }
+
+  $("#ho-go").onclick = async () => {
+    const body = {
+      academic_year: $("#ho-ay").value.trim(), season_start: $("#ho-season").value, term_start: $("#ho-term").value,
+      subs_cutoff: $("#ho-cut").value, reset_subs: $("#ho-subs").checked,
+      promote: $$("[data-nov]:checked").map((c) => +c.dataset.nov), holders: ed.holders(),
+    };
+    if (!body.academic_year) return toast("Enter the new academic year", true);
+    if (!body.season_start) return toast("Pick when the new season starts", true);
+    if (body.term_start && dow(body.term_start) !== 6) return toast("Full Term starts on a Sunday (Sunday of 1st week)", true);
+    const lines = [`Archive <b>${esc(cur.academic_year)}</b> and switch to <b>${esc(body.academic_year)}</b>, Michaelmas, season from ${esc(fmtShort(body.season_start))}`,
+      body.reset_subs ? "Reset everyone's subs to Unpaid" : "Leave subs as they are",
+      `Move ${plural(body.promote.length, "novices")} to senior`, "Save the committee as entered"];
+    if (!await confirmBox(`Hand over to ${esc(body.academic_year)}?`, `<ul class="ho-confirm">${lines.map((l) => `<li>${l}</li>`).join("")}</ul>This can't be undone in one click, but the old season stays in the archive.`, "Hand over")) return;
+    try {
+      const r = await api("/api/committee/handover", { method: "POST", body });
+      await reboot();
+      toast(`Welcome to ${r.settings.academic_year}! ${r.archived} is archived.`);
+      pageHandover();
+    } catch (e) { fail(e); }
+  };
+}
+
+async function openArchive(id) {
+  let a;
+  try { a = await api(`/api/committee/archives/${id}`); } catch (e) { return fail(e); }
+  const held = (k) => a.roster.holders.filter((h) => h.position === k).map((h) => esc(h.name)).join(", ");
+  const boats = a.usage.boats.filter((b) => b.outings);
+  modal({
+    title: `${esc(a.academic_year)} season`, wide: true,
+    body: `<p class="muted small" style="margin:0">${a.season_start ? esc(fmtShort(a.season_start)) : "?"} – ${esc(fmtShort(a.season_end))} · handed over ${esc(utcStamp(a.created_at))}</p>
+      <div class="section-title" style="margin:4px 0 0">Committee</div>
+      <dl class="ho-dl">${a.roster.positions.map((p) => `<dt>${esc(p.label)}</dt><dd>${held(p.key) || `<span class="faint">Vacant</span>`}</dd>`).join("")}</dl>
+      <div class="section-title" style="margin:4px 0 0">Subs at handover</div>
+      <p style="margin:0">${a.subs.full_year} full year · ${a.subs.single_term} single term · ${a.subs.unpaid} unpaid</p>
+      <div class="section-title" style="margin:4px 0 0">Moved to senior</div>
+      <p style="margin:0">${a.promoted.length ? a.promoted.map(esc).join(", ") : `<span class="faint">Nobody</span>`}</p>
+      <div class="section-title" style="margin:4px 0 0">Boats</div>
+      ${boats.length ? `<table class="t"><thead><tr><th>Boat</th><th class="num">Outings</th><th class="num">Hours</th></tr></thead><tbody>${boats.map((b) => `<tr><td>${esc(b.name)} <span class="faint">${esc(b.boat_type)}</span></td><td class="num">${b.outings}</td><td class="num">${fmtHours(b.hours)}</td></tr>`).join("")}</tbody></table>
+        <p class="small faint" style="margin:0">${fmtHours(a.usage.totals.hours)} hours on the water across ${plural(a.usage.totals.outings, "outings")}.</p>` : `<p class="faint" style="margin:0">No boat use recorded.</p>`}
+      <details><summary class="section-title" style="cursor:pointer;margin:4px 0 0">Handbook as it was</summary><div class="handbook small">${a.handbook ? richText(a.handbook) : `<span class="faint">Empty</span>`}</div></details>`,
+    foot: `<div class="r"><button class="btn" data-close>Close</button><button class="btn primary" id="ar-lb">${I.trophy}Leaderboard</button></div>`,
+    onMount: (m, close) => { $("#ar-lb", m).onclick = () => { close(); S.statsArchive = id; go("stats"); }; },
   });
 }
 
@@ -3030,7 +3156,7 @@ function route() {
   const r = ROUTES.find((x) => x.id === id && routeAllowed(x)) || ROUTES[0];
   shell(r.id);
   S.page = ({ schedule: pageSchedule, signup: pageSignup, subs: pageSubs, races: pageRaces, me: pageMe, stats: pageStats, rowers: pageRowers,
-    committee: pageCommittee, todo: pageTasks, handbook: pageHandbook, reminders: pageSubsReminders, coaches: pageCoaches, boats: pageBoats, issues: pageIssues, usage: pageUsage, settings: pageSettings })[r.id];
+    committee: pageCommittee, todo: pageTasks, handbook: pageHandbook, reminders: pageSubsReminders, coaches: pageCoaches, handover: pageHandover, boats: pageBoats, issues: pageIssues, usage: pageUsage, settings: pageSettings })[r.id];
   window.scrollTo(0, 0);
   return S.page();
 }

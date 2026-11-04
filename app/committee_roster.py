@@ -57,11 +57,11 @@ def roster_get(_: str = Depends(require_member)):
         return {"positions": [{"key": k, "label": l, "max": n} for k, l, n in POSITIONS], "holders": roster(conn)}
 
 
-@router.put("/api/committee/club-committee")
-def roster_set(b: RosterIn, _: str = Depends(require_committee)):
+def clean_holders(holders: list[HolderIn]) -> list[tuple]:
+    """Validate a full roster; returns (position, slot, member_id, name) rows, vacancies dropped."""
     seen = set()
     clean = []
-    for h in b.holders:
+    for h in holders:
         if h.position not in SLOTS:
             raise HTTPException(400, f"Unknown position: {h.position}")
         if h.slot >= SLOTS[h.position]:
@@ -73,12 +73,23 @@ def roster_set(b: RosterIn, _: str = Depends(require_committee)):
         if h.member_id is None and not name:
             continue                                   # left empty = vacant
         clean.append((h.position, h.slot, h.member_id, "" if h.member_id else name))
+    return clean
+
+
+def save_holders(conn, clean: list[tuple]) -> None:
+    """Replace the whole roster (rows from clean_holders)."""
+    ids = {mid for _, _, mid, _ in clean if mid is not None}
+    if ids:
+        found = {r[0] for r in conn.execute(f"SELECT id FROM members WHERE id IN ({','.join('?' * len(ids))})", tuple(ids))}
+        if ids - found:
+            raise HTTPException(400, "Member not found")
+    conn.execute("DELETE FROM committee_holders")
+    conn.executemany("INSERT INTO committee_holders(position, slot, member_id, name) VALUES (?, ?, ?, ?)", clean)
+
+
+@router.put("/api/committee/club-committee")
+def roster_set(b: RosterIn, _: str = Depends(require_committee)):
+    clean = clean_holders(b.holders)
     with db.get_conn() as conn:
-        ids = {mid for _, _, mid, _ in clean if mid is not None}
-        if ids:
-            found = {r[0] for r in conn.execute(f"SELECT id FROM members WHERE id IN ({','.join('?' * len(ids))})", tuple(ids))}
-            if ids - found:
-                raise HTTPException(400, "Member not found")
-        conn.execute("DELETE FROM committee_holders")
-        conn.executemany("INSERT INTO committee_holders(position, slot, member_id, name) VALUES (?, ?, ?, ?)", clean)
+        save_holders(conn, clean)
         return {"holders": roster(conn)}
