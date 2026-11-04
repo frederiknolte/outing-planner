@@ -83,10 +83,22 @@ def availability_for_outing(conn, kind: str, d: str, time: str) -> dict:
     for r in conn.execute("SELECT * FROM signups WHERE week_start = ?", (ws,)):
         info[r["member_id"]] = {
             "signed_up": True, "available": r["member_id"] in free, "role": r["role"],
-            "side": r["side"], "squad": r["squad"], "max_outings": r["max_outings"], "want_row": r["want_row"],
+            "side": r["side"], "squad": r["squad"], "max_land": r["max_land"], "want_row": r["want_row"],
             "want_cox": r["want_cox"], "can_bankride": bool(r["can_bankride"]),
         }
     return {"has_slots": bool(slots), "members": info}
+
+
+def week_counts(conn, ws: str, exclude_outing: Optional[int] = None) -> dict:
+    """Seats each member has in the week starting ws (not counting cancelled outings):
+    {member_id: {"row": water rowing seats, "cox": coxing seats, "land": land sessions}}."""
+    out = defaultdict(lambda: {"row": 0, "cox": 0, "land": 0})
+    for r in conn.execute(
+            """SELECT a.member_id, a.seat, o.kind FROM assignments a JOIN outings o ON o.id = a.outing_id
+               WHERE o.cancelled = 0 AND o.date BETWEEN ? AND ? AND o.id != ?""",
+            (ws, (date.fromisoformat(ws) + timedelta(days=6)).isoformat(), exclude_outing or -1)):
+        out[r["member_id"]]["land" if r["kind"] == "land" else "cox" if r["seat"] == 0 else "row"] += 1
+    return dict(out)
 
 
 # ------------------------------------------------------------- rowers -----
@@ -132,7 +144,7 @@ def signup_prefill(week_start: str, member_id: int, role: str = Depends(require_
             "role": last["role"] if last else ("cox" if m["cox_status"] else "rower"),
             "want_row": last["want_row"] if last else None,
             "want_cox": last["want_cox"] if last else None,
-            "max_outings": last["max_outings"] if last else None,
+            "max_land": last["max_land"] if last else None,
             "can_bankride": bool(s["can_bankride"]) if s else True,
             "comments": s["comments"] if s else "",
             "slot_ids": slot_ids,
@@ -150,7 +162,7 @@ class SignupIn(BaseModel):
     want_cox: int = Field(0, ge=0, le=21)
     side: str = ""
     squad: str = ""
-    max_outings: int = Field(0, ge=0, le=21)
+    max_land: int = Field(0, ge=0, le=21)
     can_bankride: bool = False
     slot_ids: list[int] = []
     comments: str = Field("", max_length=500)
@@ -172,11 +184,9 @@ def signup_submit(b: SignupIn, role: str = Depends(require_member)):
         raise HTTPException(400, "Pick your squad (Open or Women's)")
     squad = b.squad if rows else ""
     if rows and b.want_row < 1:
-        raise HTTPException(400, "How many rowing outings would you like?")
+        raise HTTPException(400, "Set the maximum number of water outings for the week")
     if coxes and b.want_cox < 1:
         raise HTTPException(400, "How many coxing outings would you like?")
-    if b.role != "bankrider" and b.max_outings < 1:
-        raise HTTPException(400, "Set the maximum number of outings for the week")
     phone = " ".join(b.phone.split())
 
     with db.get_conn() as conn:
@@ -229,16 +239,16 @@ def signup_submit(b: SignupIn, role: str = Depends(require_member)):
 
         existing = conn.execute("SELECT id FROM signups WHERE week_start = ? AND member_id = ?", (ws, mid)).fetchone()
         vals = (b.role, b.want_row if rows else 0, b.want_cox if coxes else 0, b.side if rows else "", squad,
-                b.max_outings, int(b.can_bankride or b.role == "bankrider"), college, b.comments.strip())
+                b.max_land if b.role != "bankrider" else 0, int(b.can_bankride or b.role == "bankrider"), college, b.comments.strip())
         if existing:
             sid = existing["id"]
             conn.execute(
-                """UPDATE signups SET role=?, want_row=?, want_cox=?, side=?, squad=?, max_outings=?, can_bankride=?,
+                """UPDATE signups SET role=?, want_row=?, want_cox=?, side=?, squad=?, max_land=?, can_bankride=?,
                    college=?, comments=?, updated_at=datetime('now') WHERE id=?""", vals + (sid,))
             conn.execute("DELETE FROM signup_availability WHERE signup_id = ?", (sid,))
         else:
             sid = conn.execute(
-                """INSERT INTO signups(role, want_row, want_cox, side, squad, max_outings, can_bankride, college, comments,
+                """INSERT INTO signups(role, want_row, want_cox, side, squad, max_land, can_bankride, college, comments,
                    week_start, member_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)""", vals + (ws, mid)).lastrowid
         conn.executemany("INSERT INTO signup_availability(signup_id, slot_id) VALUES (?, ?)",
                          [(sid, s) for s in slot_ids])
@@ -267,14 +277,10 @@ def signup_committee(week_start: str, _: str = Depends(require_committee)):
                 "cox_status": m.get("cox_status"), "needs_review": bool(m.get("needs_review")),
                 "slot_ids": sorted(s for s, ms in avail.items() if r["member_id"] in ms),
             })
-        # scheduled outings this week per member (to compare with max_outings)
-        sched = defaultdict(int)
-        for r in conn.execute(
-                """SELECT a.member_id FROM assignments a JOIN outings o ON o.id = a.outing_id
-                   WHERE o.cancelled = 0 AND o.date BETWEEN ? AND ?""", (ws, (date.fromisoformat(ws) + timedelta(days=6)).isoformat())):
-            sched[r["member_id"]] += 1
+        # scheduled outings this week per member (to compare with their maximums)
+        sched = week_counts(conn, ws)
         for resp in responses:
-            resp["scheduled"] = sched.get(resp["member_id"], 0)
+            resp["scheduled"] = sched.get(resp["member_id"], {"row": 0, "cox": 0, "land": 0})
         roles_by_member = {r["member_id"]: r for r in responses}
         for s in slots:
             ms = avail.get(s["id"], set())
@@ -399,12 +405,12 @@ def responses_csv(week_start: str, include_phone: bool = False, _: str = Depends
     slots = data["slots"]
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["Name"] + (["Phone"] if include_phone else []) + ["College", "Signing up as", "Rowing outings wanted", "Coxing outings wanted",
-                "Squad", "Side", "Max outings", "Can bankride", "Comments", "Submitted"]
+    w.writerow(["Name"] + (["Phone"] if include_phone else []) + ["College", "Signing up as", "Max water outings", "Coxing outings wanted",
+                "Squad", "Side", "Max land outings", "Can bankride", "Comments", "Submitted"]
                + [f"{SLOT_KINDS[s['kind']]} {s['date']} {s['time']}".strip() for s in slots])
     for r in data["responses"]:
         w.writerow([r["name"]] + ([phones.get(r["member_id"], "")] if include_phone else []) + [r["college"], ROLES.get(r["role"], r["role"]), r["want_row"] or "",
-                    r["want_cox"] or "", SQUADS.get(r["squad"], ""), r["side"], r["max_outings"], "Yes" if r["can_bankride"] else "No",
+                    r["want_cox"] or "", SQUADS.get(r["squad"], ""), r["side"], r["max_land"] if r["role"] != "bankrider" else "", "Yes" if r["can_bankride"] else "No",
                     r["comments"], r["updated_at"]]
                    + ["Yes" if s["id"] in r["slot_ids"] else "" for s in slots])
     return Response(buf.getvalue(), media_type="text/csv",

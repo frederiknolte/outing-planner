@@ -102,10 +102,10 @@ CREATE TABLE IF NOT EXISTS signups (
     week_start TEXT NOT NULL,
     member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
     role TEXT NOT NULL DEFAULT 'rower',            -- rower | cox | both | bankrider
-    want_row INTEGER NOT NULL DEFAULT 0,
-    want_cox INTEGER NOT NULL DEFAULT 0,
+    want_row INTEGER NOT NULL DEFAULT 0,           -- most rowing (water) outings they want
+    want_cox INTEGER NOT NULL DEFAULT 0,           -- coxing outings wanted
     side TEXT NOT NULL DEFAULT '',
-    max_outings INTEGER NOT NULL DEFAULT 0,
+    max_land INTEGER NOT NULL DEFAULT 0,           -- most land (erg / tank) sessions they want
     can_bankride INTEGER NOT NULL DEFAULT 0,
     college TEXT NOT NULL DEFAULT '',
     comments TEXT NOT NULL DEFAULT '',
@@ -309,6 +309,7 @@ def init_db() -> None:
     try:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)
+        _migrate_max_land(conn)
         for table, cols in MIGRATIONS.items():
             have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
             for col, decl in cols.items():
@@ -324,6 +325,22 @@ def init_db() -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def _migrate_max_land(conn) -> None:
+    """The sign-up form used to ask for "max outings this week" (water + land together); it now asks
+    for max land sessions separately. Rename the column and keep what's left after the water outings."""
+    have = {r[1] for r in conn.execute("PRAGMA table_info(signups)")}
+    if "max_outings" not in have or "max_land" in have:
+        return
+    conn.execute("BEGIN")
+    try:
+        conn.execute("ALTER TABLE signups RENAME COLUMN max_outings TO max_land")
+        conn.execute("UPDATE signups SET max_land = MAX(0, max_land - want_row - want_cox)")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
 
 
 def _normalize_times(conn) -> None:

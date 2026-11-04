@@ -225,9 +225,11 @@ class Planner:
     def load(self, mid: int) -> int:
         return self.rows[mid] + self.coxes[mid] + self.land[mid] + self.br[mid]
 
-    def under_max(self, mid: int) -> bool:
-        mx = self.su[mid]["max_outings"]
-        return mx <= 0 or self.load(mid) < mx
+    def has_room(self, mid: int, cox: bool) -> bool:
+        """Below the most rowing (or coxing) outings they asked for this week."""
+        s = self.su[mid]
+        mx, given = (s["want_cox"], self.coxes[mid]) if cox else (s["want_row"], self.rows[mid])
+        return (mx or 0) <= 0 or given < mx
 
     def busy(self, mid: int, o: dict, seat: bool = True) -> bool:
         for x, how in self.sessions[mid]:
@@ -253,8 +255,8 @@ class Planner:
                 return False
         return True
 
-    def can_sit(self, mid: int, o: dict) -> bool:
-        return self.under_max(mid) and not self.busy(mid, o) and self.eligible(mid, o)
+    def can_sit(self, mid: int, o: dict, cox: bool = False) -> bool:
+        return self.has_room(mid, cox) and not self.busy(mid, o) and self.eligible(mid, o)
 
     def flex(self, mid: int) -> int:
         return sum(1 for t in self.open_targets if mid in self.avail.get(t, ()))
@@ -311,7 +313,7 @@ class Planner:
                 return (given >= want, given / max(want, 1), no_coach and r.members[m]["cox_status"] == "N",
                         s["role"] == "both", self.flex(m), self.tiebreak[m])
             cands = [m for m in avail if m not in taken and self.su[m]["role"] in COXES
-                     and r.members[m]["cox_status"] and self.can_sit(m, o)]
+                     and r.members[m]["cox_status"] and self.can_sit(m, o, cox=True)]
             if cands:
                 prop[0] = min(cands, key=cox_key)
                 taken.add(prop[0])
@@ -454,7 +456,7 @@ class Planner:
 
         def scarcity(o):
             empty = self._empty_seats(o)
-            pool = sum(1 for m in self.avail[o["id"]] if self.can_sit(m, o))
+            pool = sum(1 for m in self.avail[o["id"]] if self.can_sit(m, o) or self.can_sit(m, o, cox=True))
             return (pool / max(len(empty), 1), o["date"], o["time"], o["id"])
 
         # pass 1: outings that can be filled completely, hardest first
@@ -485,7 +487,7 @@ class Planner:
             inboat = set(self._taken(o["id"]).values())
             cands = [m for m in self.avail[o["id"]] if m not in inboat
                      and (self.su[m]["can_bankride"] or self.su[m]["role"] == "bankrider")
-                     and self.under_max(m) and not self.busy(m, o, seat=False)]
+                     and not self.busy(m, o, seat=False)]
             if cands:
                 m = min(cands, key=lambda m: (self.su[m]["role"] != "bankrider", self.br[m], self.load(m), self.tiebreak[m]))
                 self.new_coach[o["id"]] = r.members[m]["name"]
@@ -528,7 +530,7 @@ class Planner:
             m = r.members[mid]
             people.append({
                 "id": mid, "name": m["name"], "category": m["category"], "role": s["role"],
-                "want_row": s["want_row"], "want_cox": s["want_cox"], "max_outings": s["max_outings"],
+                "want_row": s["want_row"], "want_cox": s["want_cox"],
                 "rows": self.rows[mid], "rows_before": row0, "coxes": self.coxes[mid], "coxes_before": cox0,
                 "bankrides": self.br[mid], "bankrides_before": br0, "total": self.load(mid),
                 "novice_outings": self.duty[mid] if m["category"] == "Senior" else 0,

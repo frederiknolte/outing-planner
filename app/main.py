@@ -24,7 +24,7 @@ from . import privacy
 from . import river
 from .timeutil import normalize as norm_time, to_minutes
 from .calendar import router as calendar_router
-from .signup import availability_for_outing, router as signup_router
+from .signup import availability_for_outing, week_counts, router as signup_router
 from .stats import router as stats_router
 from .races import router as races_router
 from . import issues
@@ -1169,21 +1169,15 @@ def candidates(b: CandidatesIn, _: str = Depends(require_committee)):
                 """SELECT a.member_id FROM assignments a JOIN outings o ON o.id=a.outing_id
                    WHERE o.date=? AND o.id != ?""", (b.date, b.outing_id or -1)):
             same_day[r["member_id"]] += 1
-        # sign-up form answers for this week + scheduled count, to compare against max outings
+        # sign-up form answers for this week + scheduled counts, to compare against their maximums
         su = availability_for_outing(conn, b.kind, b.date, b.time)
-        ws = monday_of(d)
-        week_count = defaultdict(int)
-        for r in conn.execute(
-                """SELECT a.member_id FROM assignments a JOIN outings o ON o.id=a.outing_id
-                   WHERE o.date BETWEEN ? AND ? AND o.id != ?""",
-                (ws.isoformat(), (ws + timedelta(days=6)).isoformat(), b.outing_id or -1)):
-            week_count[r["member_id"]] += 1
+        week = week_counts(conn, monday_of(d).isoformat(), b.outing_id)
         out = {}
         for mid, m in rules.members.items():
             e = rules.check(mid, b.kind, d, key)
             out[str(mid)] = {"ok": e["ok"], "reasons": e["reasons"], "note": e["note"],
                              "busy": mid in busy, "same_day": same_day.get(mid, 0),
-                             "week_count": week_count.get(mid, 0),
+                             "week": week.get(mid, {"row": 0, "cox": 0, "land": 0}),
                              "signup": su["members"].get(mid)}
         return {"members": out, "has_slots": su["has_slots"]}
 

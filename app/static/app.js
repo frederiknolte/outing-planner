@@ -572,12 +572,12 @@ async function autofillWeek(start, includePublished = false) {
   const short = (q) => (q.role === "bankrider" ? 0 : Math.max(0, q.want_row - q.rows) + Math.max(0, q.want_cox - q.coxes));
   const people = p.people.slice().sort((a, b) => short(b) - short(a) || a.name.localeCompare(b.name));
   const given = (now, before, want) => `${now}${now > before ? ` <span class="af-new-text">(+${now - before})</span>` : ""}${want ? `<span class="faint"> / ${want}</span>` : ""}`;
-  const peopleHtml = `<div class="table-wrap"><table class="t af-people"><thead><tr><th>Name</th><th title="Rowing outings this week / wanted">Rowing</th><th title="Coxing outings this week / wanted">Coxing</th><th>Bankriding</th><th title="All sessions this week / weekly maximum">Total</th></tr></thead><tbody>
+  const peopleHtml = `<div class="table-wrap"><table class="t af-people"><thead><tr><th>Name</th><th title="Rowing outings this week / max water outings">Rowing</th><th title="Coxing outings this week / wanted">Coxing</th><th>Bankriding</th><th title="All sessions this week, including land and bankriding">Total</th></tr></thead><tbody>
     ${people.map((q) => `<tr class="${short(q) ? "af-short" : ""}"><td>${esc(q.name)} <span class="faint small">${esc(q.category || "")}${q.novice_outings ? ` · ${q.novice_outings} novice outing${q.novice_outings === 1 ? "" : "s"}` : ""}</span></td>
       <td class="tnum">${q.role === "cox" || q.role === "bankrider" ? "—" : given(q.rows, q.rows_before, q.want_row)}</td>
       <td class="tnum">${["cox", "both"].includes(q.role) ? given(q.coxes, q.coxes_before, q.want_cox) : "—"}</td>
       <td class="tnum">${q.bankrides ? given(q.bankrides, q.bankrides_before, 0) : "—"}</td>
-      <td class="tnum">${q.total}${q.max_outings ? `<span class="faint"> / ${q.max_outings}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
+      <td class="tnum">${q.total}</td></tr>`).join("")}</tbody></table></div>`;
   const nShort = people.filter(short).length;
   const changes = p.added + p.bankriders;
   const body = !p.signups
@@ -704,6 +704,14 @@ async function editOuting(o, defaults = {}) {
         } catch (e) { fail(e); }
         drawSeats();
       };
+      // This week's seats of the relevant kind vs the most they asked for (max water / coxing / land)
+      const weekCap = (c, su, cox) => {
+        if (!su || su.role === "bankrider") return null;
+        const w = c.week || {};
+        if (st.kind === "land") return { n: w.land || 0, max: su.max_land || 0, what: "land" };
+        const max = cox ? su.want_cox : su.want_row;
+        return max ? { n: cox ? w.cox || 0 : w.row || 0, max, what: cox ? "coxing" : "water" } : null;
+      };
       const items = (seat) => () => members.map((mm) => {
         const c = cand[mm.id] || { ok: true, reasons: [] };
         const taken = Object.entries(st.seats).some(([k, v]) => v === mm.id && +k !== seat);
@@ -711,8 +719,9 @@ async function editOuting(o, defaults = {}) {
         const bad = !c.ok, busy = c.busy, su = c.signup;
         const free = !!(su && su.available);
         const roleFit = !su || (seat === 0 && st.kind === "water" ? ["cox", "both"].includes(su.role) : ["rower", "both"].includes(su.role));
-        const overMax = !!(su && su.max_outings && c.week_count >= su.max_outings);
-        return { id: mm.id, label: mm.name, c, su, free, overMax, taken, notCox, mm,
+        const cap = weekCap(c, su, st.kind === "water" && seat === 0);
+        const overMax = !!(cap && cap.n >= cap.max);
+        return { id: mm.id, label: mm.name, c, su, cap, free, overMax, taken, notCox, mm,
           dim: taken || notCox || bad || busy || (hasSlots && !free),
           cls: bad || busy ? "bad" : notCox || overMax ? "warn" : "",
           rank: (taken ? 8 : 0) + (busy ? 6 : 0) + (bad ? 4 : 0) + (notCox ? 2 : 0) + (overMax ? 1 : 0)
@@ -726,7 +735,7 @@ async function editOuting(o, defaults = {}) {
         if (i.free) bits.push(`<span class="chip ok">${I.check}Free</span>`);
         if (i.su && i.su.squad) bits.push(`<span class="chip ${i.su.squad === "women" ? "violet" : "accent"}">${esc(SQUAD_SHORT[i.su.squad])}</span>`);
       if (i.su && i.su.side) bits.push(`<span class="chip" title="${esc(i.su.side)}">${esc(SIDE_SHORT[i.su.side] || i.su.side)}</span>`);
-        if (i.su && i.su.max_outings) bits.push(`<span class="chip ${i.overMax ? "warn" : ""}" title="Scheduled this week / max wanted">${i.c.week_count}/${i.su.max_outings} wk</span>`);
+        if (i.cap) bits.push(`<span class="chip ${i.overMax ? "warn" : ""}" title="${i.cap.what === "land" ? "Land sessions" : i.cap.what === "coxing" ? "Coxing outings" : "Water outings"} this week / their max">${i.cap.n}/${i.cap.max} ${i.cap.what === "land" ? "land" : "wk"}</span>`);
         if (i.mm.cox_status) bits.push(`<span class="chip violet">Cox ${esc(i.mm.cox_status)}</span>`);
         if (i.notCox) bits.push(`<span class="chip warn">not a cox</span>`);
         if (i.c.note && i.c.note.startsWith("Novice free")) bits.push(`<span class="chip accent">${esc(i.c.note.replace("Novice free outing", "Free"))}</span>`);
@@ -768,7 +777,8 @@ async function editOuting(o, defaults = {}) {
           if (st.kind === "water" && s === 0 && mm && !mm.cox_status) p.push("Not marked as a cox");
           const su = c && c.signup, soft = [];
           if (hasSlots && !(su && su.available)) soft.push(su ? "Didn't sign up as free for this slot" : "No sign-up this week");
-          if (su && su.max_outings && c.week_count >= su.max_outings) soft.push(`Already at their max of ${su.max_outings} this week`);
+          const cap = c && weekCap(c, su, st.kind === "water" && s === 0);
+          if (cap && cap.n >= cap.max) soft.push(cap.max ? `Already at their max of ${cap.max} ${cap.what} outing${cap.max === 1 ? "" : "s"} this week` : "Doesn't want land sessions this week");
           if (!p.length && soft.length) { el.innerHTML = `<span style="color:var(--warn)">${esc(soft.join(" · "))}</span>`; return; }
           if (p.length) { el.innerHTML = `<span style="color:var(--bad)">${esc(p.join(" · "))}</span>`; warns.push(`${mm?.name}: ${p.join(", ")}`); }
           else if (c && (c.note || c.signup)) el.innerHTML = `<span class="faint">${esc([c.signup && c.signup.side, c.note].filter(Boolean).join(" · "))}</span>`;
@@ -837,12 +847,14 @@ async function editOuting(o, defaults = {}) {
         const free = people.filter((x) => x.su.available), others = people.filter((x) => !x.su.available);
         const water = st.kind === "water", coxed = water && seatList().includes(0);
         const coach = $("#oe-coach", m).value.toLowerCase();
-        const rank = (x) => (x.c.busy ? 100 : 0) + (x.c.ok === false ? 50 : 0) + (x.su.max_outings && x.c.week_count >= x.su.max_outings ? 20 : 0) + (x.c.week_count || 0);
-        const sorted = (list) => list.slice().sort((a, b) => rank(a) - rank(b) || a.mm.name.localeCompare(b.mm.name));
+        const weekN = (x) => { const w = x.c.week || {}; return (w.row || 0) + (w.cox || 0) + (w.land || 0); };
+        const overCap = (x, cox) => { const cap = weekCap(x.c, x.su, cox); return !!(cap && cap.n >= cap.max); };
+        const rank = (x, intent) => (x.c.busy ? 100 : 0) + (x.c.ok === false ? 50 : 0) + (overCap(x, intent === "cox") ? 20 : 0) + weekN(x);
+        const sorted = (list, intent) => list.slice().sort((a, b) => rank(a, intent) - rank(b, intent) || a.mm.name.localeCompare(b.mm.name));
         const roleTag = { rower: "Rower", cox: "Cox", both: "Row/cox", bankrider: "Bankrider" };
         const item = (x, intent) => {
           const seat = seatOf(x.mm.id), inBoat = seat != null;
-          const over = x.su.max_outings && x.c.week_count >= x.su.max_outings;
+          const wcap = weekCap(x.c, x.su, intent === "cox"), over = !!(wcap && wcap.n >= wcap.max);
           const probs = [];
           if (x.c.busy) probs.push(`<span class="chip bad">Booked at this time</span>`);
           if (x.c.ok === false) probs.push(`<span class="chip bad">${esc(x.c.reasons.join(" · "))}</span>`);
@@ -850,10 +862,10 @@ async function editOuting(o, defaults = {}) {
           return `<button type="button" class="pool-item ${inBoat ? "in" : ""} ${x.c.busy || x.c.ok === false ? "bad" : ""}" data-pick="${x.mm.id}" data-intent="${intent}" title="${inBoat ? "Click to take out of the boat" : "Click to put in the boat"}">
             <span class="pi-main"><span class="pi-name">${esc(x.mm.name)}</span>
               <span class="pi-meta">${intent !== "cox" && x.su.squad ? `<span class="chip ${x.su.squad === "women" ? "violet" : "accent"}">${esc(SQUAD_SHORT[x.su.squad])}</span>` : ""}${intent !== "cox" && x.su.side ? `<span class="chip">${esc(SIDE_SHORT[x.su.side] || x.su.side)}</span>` : ""}${intent === "cox" && x.mm.cox_status ? `<span class="chip violet">Cox ${esc(x.mm.cox_status)}</span>` : ""}${x.su.role === "both" ? `<span class="chip accent">${roleTag.both}</span>` : ""}
-              ${x.su.max_outings ? `<span class="chip ${over ? "warn" : ""}" title="Outings given this week / most they want">${x.c.week_count}/${x.su.max_outings} wk</span>` : ""}${probs.join("")}</span></span>
+              ${wcap ? `<span class="chip ${over ? "warn" : ""}" title="${wcap.what === "land" ? "Land sessions" : wcap.what === "coxing" ? "Coxing outings" : "Water outings"} given this week / most they want">${wcap.n}/${wcap.max} ${wcap.what === "land" ? "land" : "wk"}</span>` : ""}${probs.join("")}</span></span>
             <span class="pi-state">${inBoat ? `<span class="pi-seat">${esc(label(seat, cap))}</span>` : I.plus}</span></button>`;
         };
-        const group = (title, list, intent, hint = "") => list.length ? `<div class="pool-group"><div class="pool-h">${title} <span class="faint">${list.length}</span>${hint ? `<span class="pool-hint">${hint}</span>` : ""}</div>${sorted(list).map((x) => item(x, intent)).join("")}</div>` : "";
+        const group = (title, list, intent, hint = "") => list.length ? `<div class="pool-group"><div class="pool-h">${title} <span class="faint">${list.length}</span>${hint ? `<span class="pool-hint">${hint}</span>` : ""}</div>${sorted(list, intent).map((x) => item(x, intent)).join("")}</div>` : "";
         const brs = water ? free.filter((x) => x.su.can_bankride && seatOf(x.mm.id) == null) : [];
         let html = `<div class="pool-head"><b>Signed up</b><span class="faint small">${fmtShort(st.date)}${st.time ? " · " + esc(st.time) : ""}</span></div>`;
         if (!hasSlots) html += `<div class="callout warn small" style="padding:8px 10px">${I.info}<div>No sign-up session matches this ${st.time ? "day and time" : "day"}${st.time ? "" : " (add a time)"}. Showing everyone who signed up this week.</div></div>`;
@@ -2221,7 +2233,7 @@ async function pageSignup() {
   if (!S.suFormWeek || !meta.weeks.some((w) => w.week_start === S.suFormWeek)) S.suFormWeek = meta.weeks[0].week_start;
   const wk = meta.weeks.find((w) => w.week_start === S.suFormWeek);
   const st = { member_id: S.me && meName() ? S.me : null, new_name: "", phone: "", has_phone: false, college: "", college_other: "",
-    role: "rower", want_row: 2, want_cox: 1, side: "", squad: "", max_outings: 3, can_bankride: true, slot_ids: new Set(), comments: "", existing: false };
+    role: "rower", want_row: 2, want_cox: 1, side: "", squad: "", max_land: 1, can_bankride: true, slot_ids: new Set(), comments: "", existing: false };
 
   const prefill = async () => {
     if (!st.member_id) return;
@@ -2232,7 +2244,7 @@ async function pageSignup() {
       st.side = p.side || st.side; st.squad = p.squad || st.squad; st.role = p.role || st.role;
       if (p.want_row != null) st.want_row = p.want_row || st.want_row;
       if (p.want_cox != null) st.want_cox = p.want_cox || st.want_cox;
-      if (p.max_outings) st.max_outings = p.max_outings;
+      if (p.max_land != null) st.max_land = p.max_land;
       st.can_bankride = p.can_bankride; st.comments = p.comments;
       st.slot_ids = new Set(p.slot_ids);
     } catch (e) { fail(e); }
@@ -2269,9 +2281,9 @@ async function pageSignup() {
           <div class="role-cards">${Object.entries(meta.roles).map(([k, l]) => `<button type="button" class="role-card ${st.role === k ? "on" : ""}" data-role="${k}"><b>${esc(l)}</b><span>${({ rower: "Row in a crew", cox: "Steer and call the crew", both: "Happy to row or cox", bankrider: "Coach from the bank or a launch" })[k]}</span></button>`).join("")}</div></div>
         ${st.role ? `
         <div class="grid-3">
-          ${rows ? stepper("su-wr", st.want_row, "Rowing outings wanted") : ""}
+          ${rows ? stepper("su-wr", st.want_row, "Max water outings", "Rowing outings on the river") : ""}
           ${coxes ? stepper("su-wc", st.want_cox, "Coxing outings wanted") : ""}
-          ${st.role !== "bankrider" ? stepper("su-max", st.max_outings, "Max outings this week", "Including erg and tank sessions") : ""}
+          ${st.role !== "bankrider" ? stepper("su-max", st.max_land, "Max land outings", "Erg and tank sessions") : ""}
         </div>
         ${rows ? `<div class="field"><span>Squad</span>${pills("squad", Object.entries(meta.squads), st.squad)}<span class="hint">Which crews you row in, so the captains know how many people there are for each.</span></div>
         <div class="field"><span>Side preference</span>${pills("side", meta.sides.map((x) => [x, x]), st.side)}</div>` : ""}
@@ -2316,7 +2328,7 @@ async function pageSignup() {
     if (v("#su-college-other") != null) st.college_other = v("#su-college-other");
     if (v("#su-wr") != null) st.want_row = +v("#su-wr") || 0;
     if (v("#su-wc") != null) st.want_cox = +v("#su-wc") || 0;
-    if (v("#su-max") != null) st.max_outings = +v("#su-max") || 0;
+    if (v("#su-max") != null) st.max_land = +v("#su-max") || 0;
     if (v("#su-comments") != null) st.comments = v("#su-comments");
   };
   const submit = async (e) => {
@@ -2328,7 +2340,7 @@ async function pageSignup() {
     if (["rower", "both"].includes(st.role) && !st.squad) return toast("Choose your squad (Open or Women's)", true);
     const body = { week_start: wk.week_start, member_id: st.member_id, new_name: st.member_id ? "" : st.new_name, phone: st.phone,
       college: st.college === "Other" ? st.college_other.trim() : st.college, role: st.role, want_row: st.want_row, want_cox: st.want_cox,
-      side: st.side, squad: ["rower", "both"].includes(st.role) ? st.squad : "", max_outings: st.role === "bankrider" ? 0 : st.max_outings, can_bankride: st.role === "bankrider" || st.can_bankride,
+      side: st.side, squad: ["rower", "both"].includes(st.role) ? st.squad : "", max_land: st.role === "bankrider" ? 0 : st.max_land, can_bankride: st.role === "bankrider" || st.can_bankride,
       slot_ids: [...st.slot_ids], comments: st.comments };
     const btn = $("#su-go"); btn.disabled = true;
     try {
@@ -2410,6 +2422,8 @@ async function pageSignupCommittee() {
   const nRow = R.filter((r) => ["rower", "both"].includes(r.role)).length, nCox = R.filter((r) => ["cox", "both"].includes(r.role)).length;
   const nBank = R.filter((r) => r.can_bankride).length, nNew = R.filter((r) => r.needs_review).length;
   const roleShort = { rower: "Rower", cox: "Cox", both: "Row + cox", bankrider: "Bankrider" };
+  // "scheduled / max" for one kind of outing; red when they've been given more than they asked for
+  const schedCell = (n, max, applies) => applies ? `<span class="${n > (max || 0) ? "chip bad" : ""}">${n} / ${max || 0}</span>` : (n ? `${n}` : "");
   main.innerHTML = `
     <div class="page-head"><div><h1>Sign-ups</h1><p>Week of ${fmtLong(ws)} – ${fmtShort(addDays(ws, 6))} ·
         ${d.week.open ? `<span class="status-pill" style="background:var(--ok-soft);color:var(--ok)"><span class="dot"></span>Open to rowers</span>` : `<span class="status-pill" style="background:var(--surface-3);color:var(--text-2)"><span class="dot"></span>Closed</span>`}</p></div>
@@ -2421,7 +2435,7 @@ async function pageSignupCommittee() {
     ${!d.week.open && !d.slots.length ? `<div class="callout warn" style="margin-bottom:16px">${I.info}<div><b>Next step:</b> add this week's water, erg and tank sessions so rowers can tick when they're free, then open sign-ups. <a href="#" id="sw-go-sessions">Add sessions</a> or <a href="#" id="sw-copy-top">copy last week's</a>.</div></div>` : ""}
     <div class="stats" style="margin-bottom:16px">
       <div class="card stat"><div class="k">Responses</div><div class="v">${R.length}</div><div class="s">${nNew ? `${nNew} new name${nNew === 1 ? "" : "s"} to review` : "for this week"}</div></div>
-      <div class="card stat"><div class="k">Rowers</div><div class="v">${nRow}</div><div class="s">${(() => { const rw = R.filter((r) => ["rower", "both"].includes(r.role)), o = rw.filter((r) => r.squad === "open").length, w = rw.filter((r) => r.squad === "women").length; return `${o} Open · ${w} Women's${rw.length - o - w ? ` · ${rw.length - o - w} not set` : ""} · `; })()}${R.reduce((a, r) => a + (r.want_row || 0), 0)} outings wanted</div></div>
+      <div class="card stat"><div class="k">Rowers</div><div class="v">${nRow}</div><div class="s">${(() => { const rw = R.filter((r) => ["rower", "both"].includes(r.role)), o = rw.filter((r) => r.squad === "open").length, w = rw.filter((r) => r.squad === "women").length; return `${o} Open · ${w} Women's${rw.length - o - w ? ` · ${rw.length - o - w} not set` : ""} · `; })()}${R.reduce((a, r) => a + (r.want_row || 0), 0)} water outings max</div></div>
       <div class="card stat"><div class="k">Coxes</div><div class="v">${nCox}</div><div class="s">${R.reduce((a, r) => a + (r.want_cox || 0), 0)} outings wanted</div></div>
       <div class="card stat"><div class="k">Bankriders</div><div class="v">${nBank}</div><div class="s">can bankride this week</div></div>
     </div>
@@ -2467,13 +2481,12 @@ async function pageSignupCommittee() {
       <tr class="tot"><td>Coxes</td>${d.slots.map((sl) => `<td class="gc">${sl.coxes || "·"}</td>`).join("")}</tr>
       <tr class="tot"><td>Total free</td>${d.slots.map((sl) => `<td class="gc"><b>${sl.count}</b></td>`).join("")}</tr></tbody></table></div>`;
   } else {
-    body.innerHTML = R.length ? `<div class="card table-wrap"><table class="t"><thead><tr><th>Name</th><th>Phone</th><th>College</th><th>As</th><th class="num">Row</th><th class="num">Cox</th><th>Squad</th><th>Side</th><th class="num">Sched / max</th><th>Bankride</th><th class="num">Free for</th></tr></thead>
+    body.innerHTML = R.length ? `<div class="card table-wrap"><table class="t"><thead><tr><th>Name</th><th>Phone</th><th>College</th><th>As</th><th class="num" title="Water outings scheduled / max">Water</th><th class="num" title="Coxing outings scheduled / wanted">Cox</th><th class="num" title="Land sessions scheduled / max">Land</th><th>Squad</th><th>Side</th><th>Bankride</th><th class="num">Free for</th></tr></thead>
       <tbody>${R.map((r) => `<tr class="clickable" data-id="${r.id}">
         <td><b>${esc(r.name)}</b>${r.needs_review ? ` <span class="chip warn" title="Added through the form — check their details in Rowers">New</span>` : ""}${r.comments ? ` <span title="${esc(r.comments)}">💬</span>` : ""}</td>
         <td>${phoneCell(r.member_id, r.phone_masked, r.has_phone)}</td>
         <td>${esc(r.college)}</td><td><span class="chip ${r.role === "bankrider" ? "violet" : r.role === "rower" ? "" : "accent"}">${roleShort[r.role]}</span></td>
-        <td class="num">${r.want_row || ""}</td><td class="num">${r.want_cox || ""}</td><td>${r.squad ? `<span class="chip ${r.squad === "women" ? "violet" : "accent"}">${esc(SQUAD_SHORT[r.squad])}</span>` : ""}</td><td>${r.side ? `<span class="chip">${esc(SIDE_SHORT[r.side] || r.side)}</span>` : ""}</td>
-        <td class="num"><span class="${r.max_outings && r.scheduled > r.max_outings ? "chip bad" : ""}">${r.scheduled}${r.max_outings ? ` / ${r.max_outings}` : ""}</span></td>
+        <td class="num">${schedCell(r.scheduled.row, r.want_row, ["rower", "both"].includes(r.role))}</td><td class="num">${schedCell(r.scheduled.cox, r.want_cox, ["cox", "both"].includes(r.role))}</td><td class="num">${schedCell(r.scheduled.land, r.max_land, r.role !== "bankrider")}</td><td>${r.squad ? `<span class="chip ${r.squad === "women" ? "violet" : "accent"}">${esc(SQUAD_SHORT[r.squad])}</span>` : ""}</td><td>${r.side ? `<span class="chip">${esc(SIDE_SHORT[r.side] || r.side)}</span>` : ""}</td>
         <td>${r.can_bankride ? `<span class="chip ok">${I.check}Yes</span>` : `<span class="faint">No</span>`}</td>
         <td class="num">${r.slot_ids.length}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="card empty">${I.user}<h3>No responses yet</h3><p>${d.week.open ? "The form is open — share the site link with the squad." : "Add sessions, then open sign-ups so rowers can respond."}</p></div>`;
@@ -2517,8 +2530,8 @@ function responseDetail(r, d, roleShort) {
     title: esc(r.name),
     body: `<dl class="kv"><dt>Phone</dt><dd>${phoneCell(r.member_id, r.phone_masked, r.has_phone)}${r.has_phone ? ` <button type="button" class="btn sm ghost danger" id="rd-delphone">Delete number</button>` : ""}</dd>
       <dt>College</dt><dd>${esc(r.college)}</dd><dt>Signing up as</dt><dd>${roleShort[r.role]}</dd>
-      ${r.want_row ? `<dt>Rowing outings</dt><dd>${r.want_row}</dd>` : ""}${r.want_cox ? `<dt>Coxing outings</dt><dd>${r.want_cox}</dd>` : ""}
-      ${r.squad ? `<dt>Squad</dt><dd>${esc(d.squads[r.squad])}</dd>` : ""}${r.side ? `<dt>Side</dt><dd>${esc(r.side)}</dd>` : ""}${r.max_outings ? `<dt>Max this week</dt><dd>${r.max_outings} (scheduled: ${r.scheduled})</dd>` : ""}
+      ${["rower", "both"].includes(r.role) ? `<dt>Max water outings</dt><dd>${r.want_row} (scheduled: ${r.scheduled.row})</dd>` : ""}${["cox", "both"].includes(r.role) ? `<dt>Coxing outings</dt><dd>${r.want_cox} (scheduled: ${r.scheduled.cox})</dd>` : ""}${r.role !== "bankrider" ? `<dt>Max land outings</dt><dd>${r.max_land} (scheduled: ${r.scheduled.land})</dd>` : ""}
+      ${r.squad ? `<dt>Squad</dt><dd>${esc(d.squads[r.squad])}</dd>` : ""}${r.side ? `<dt>Side</dt><dd>${esc(r.side)}</dd>` : ""}
       <dt>Can bankride</dt><dd>${r.can_bankride ? "Yes" : "No"}</dd><dt>Submitted</dt><dd>${esc(r.updated_at)} UTC</dd></dl>
       ${r.comments ? `<div class="callout">${I.info}<div>${esc(r.comments)}</div></div>` : ""}
       <div class="section-title" style="margin:6px 0 0">Free for (${slots.length})</div>
