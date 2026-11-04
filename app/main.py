@@ -332,6 +332,9 @@ class SubRequestIn(BaseModel):
     outing_id: int
     member_id: int
     reason: str = Field("", max_length=300)
+    # Set when the rower already found a sub themselves (e.g. offline): the seat is handed
+    # straight to them instead of being posted to the sub board.
+    sub_id: Optional[int] = None
 
 
 class SubFillIn(BaseModel):
@@ -388,6 +391,20 @@ def sub_candidates(sub_id: int, role: str = Depends(require_member)):
         return {str(mid): _candidate_status(conn, rules, mid, r["outing_id"], r["seat"]) for mid in rules.members}
 
 
+@app.get("/api/outings/{oid}/sub-candidates")
+def seat_sub_candidates(oid: int, member_id: int, role: str = Depends(require_member)):
+    """Who could take this member's seat — used when a rower picks their own sub."""
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        o = conn.execute("SELECT * FROM outings WHERE id = ?", (oid,)).fetchone()
+        if not o or (not o["published"] and role != "committee"):
+            raise HTTPException(404, "Outing not found")
+        a = conn.execute("SELECT seat FROM assignments WHERE outing_id=? AND member_id=?", (oid, member_id)).fetchone()
+        if not a:
+            raise HTTPException(400, "That person isn't in this outing")
+        return {str(mid): _candidate_status(conn, rules, mid, oid, a["seat"]) for mid in rules.members}
+
+
 def _candidate_status(conn, rules: Rules, member_id: int, outing_id: int, seat: int) -> dict:
     o = conn.execute("SELECT * FROM outings WHERE id = ?", (outing_id,)).fetchone()
     m = rules.members[member_id]
@@ -421,6 +438,20 @@ def request_sub(body: SubRequestIn, role: str = Depends(require_member)):
         if conn.execute("SELECT 1 FROM sub_requests WHERE outing_id=? AND seat=? AND status='open'",
                         (body.outing_id, a["seat"])).fetchone():
             raise HTTPException(400, "A sub has already been requested for this seat")
+        if body.sub_id is not None:
+            if body.sub_id not in rules.members:
+                raise HTTPException(400, "Unknown member")
+            if body.sub_id == body.member_id:
+                raise HTTPException(400, "You can't sub for yourself")
+            st = _candidate_status(conn, rules, body.sub_id, body.outing_id, a["seat"])
+            if not st["ok"]:
+                raise HTTPException(400, "Can't sub: " + "; ".join(st["problems"]))
+            conn.execute("UPDATE assignments SET member_id=? WHERE outing_id=? AND seat=? AND member_id=?",
+                         (body.sub_id, body.outing_id, a["seat"], body.member_id))
+            conn.execute("""INSERT INTO sub_requests(outing_id, seat, requester_id, reason, status, sub_id, resolved_at)
+                            VALUES (?, ?, ?, ?, 'filled', ?, datetime('now'))""",
+                         (body.outing_id, a["seat"], body.member_id, body.reason.strip(), body.sub_id))
+            return {"ok": True}
         conn.execute("INSERT INTO sub_requests(outing_id, seat, requester_id, reason) VALUES (?, ?, ?, ?)",
                      (body.outing_id, a["seat"], body.member_id, body.reason.strip()))
         return {"ok": True}

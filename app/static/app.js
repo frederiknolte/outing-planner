@@ -974,20 +974,54 @@ function calendarModal() {
 }
 
 // ------------------------------------------------------------------- subs --
+/* Searchable rower picker for a sub, with each person's eligibility for the seat. */
+function subPicker(el, cands, excludeId, onChange) {
+  return combo(el, {
+    items: () => S.boot.members.filter((x) => x.id !== excludeId).map((x) => { const c = cands[x.id] || { ok: false, problems: [] }; return { id: x.id, label: x.name, c, dim: !c.ok, cls: c.ok ? "" : "bad", rank: c.ok ? 0 : 1 }; }),
+    renderWhy: (i) => i.c.ok ? `<span class="chip ok">OK</span>` : `<span class="chip bad">${esc(i.c.problems.join(" · "))}</span>`,
+    placeholder: "Search rowers…",
+    onChange,
+  });
+}
+
 function requestSub(o) {
-  requireMe(() => {
+  requireMe(async () => {
     const seat = o.seats.find((s) => s.member && s.member.id === S.me);
     if (!seat) return toast("You're not in this session", true);
+    let cands = {};
+    try { cands = await api(`/api/outings/${o.id}/sub-candidates?member_id=${S.me}`); } catch (e) { return fail(e); }
+    const what = `<b>${esc(seat.label)}</b> seat for <b>${esc(o.title || (o.kind === "water" ? "Water outing" : "Land training"))}</b> on <b>${fmtLong(o.date)}${o.time ? " at " + esc(o.time) : ""}</b>`;
     modal({
-      title: "Request a sub",
-      body: `<div class="callout">${I.info}<div>You stay in the <b>${esc(seat.label)}</b> seat for <b>${esc(o.title || (o.kind === "water" ? "Water outing" : "Land training"))}</b> on <b>${fmtLong(o.date)}${o.time ? " at " + esc(o.time) : ""}</b> until someone takes it. Your outing count moves to them.</div></div>
+      title: "Can't make it?",
+      body: `<div class="seg" id="rs-mode" style="display:flex"><button data-m="board" class="on" style="flex:1;justify-content:center">Find me a sub</button><button data-m="found" style="flex:1;justify-content:center">I've found a sub</button></div>
+        <div id="rs-board"><div class="callout">${I.info}<div>You stay in the ${what} until someone takes it from the sub board. Your outing count moves to them.</div></div></div>
+        <div id="rs-found" hidden><div class="callout">${I.info}<div>Arranged a sub yourself? Pick them and the ${what} moves straight to them, along with the outing count.</div></div>
+          <label class="field"><span>Who's taking your seat?</span><div id="rs-who"></div></label></div>
         <label class="field"><span>Reason (optional)</span><input class="input" id="rs-reason" maxlength="300" placeholder="e.g. Lab meeting moved"></label>`,
       foot: `<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="rs-go">${I.swap}Post to sub board</button></div>`,
       onMount: (m, close) => {
-        $("#rs-go", m).onclick = async () => {
-          try { await api("/api/subs", { method: "POST", body: { outing_id: o.id, member_id: S.me, reason: $("#rs-reason", m).value } }); close(); toast("Sub request posted"); refreshSubsCount(); route(); }
+        let mode = "board";
+        const go = $("#rs-go", m);
+        const ctl = subPicker($("#rs-who", m), cands, S.me, () => sync());
+        const sync = () => {
+          $$("#rs-mode button", m).forEach((b) => b.classList.toggle("on", b.dataset.m === mode));
+          $("#rs-board", m).hidden = mode !== "board";
+          $("#rs-found", m).hidden = mode !== "found";
+          go.innerHTML = mode === "board" ? `${I.swap}Post to sub board` : `${I.check}Hand over seat`;
+          const who = ctl.get();
+          go.disabled = mode === "found" && !(who && cands[who]?.ok);
+        };
+        $$("#rs-mode button", m).forEach((b) => b.onclick = () => { mode = b.dataset.m; sync(); });
+        go.onclick = async () => {
+          const body = { outing_id: o.id, member_id: S.me, reason: $("#rs-reason", m).value };
+          if (mode === "found") {
+            if (!ctl.get()) return toast("Pick your sub first", true);
+            body.sub_id = ctl.get();
+          }
+          try { await api("/api/subs", { method: "POST", body }); close(); toast(mode === "found" ? "Seat handed over" : "Sub request posted"); refreshSubsCount(); route(); }
           catch (e) { fail(e); }
         };
+        sync();
       },
     });
   });
@@ -1011,8 +1045,9 @@ async function fillSub(subId) {
       ${sr.reason ? `<div class="reason" style="background:var(--surface-2);padding:8px 10px;border-radius:10px;font-style:italic" class="muted">“${esc(sr.reason)}”</div>` : ""}`;
     let body, foot;
     if (mine && !committee) {
-      body = summary + `<div class="callout">${I.info}<div>This is your own request. Cancel it if you can make it after all.</div></div>`;
-      foot = `<div class="r"><button class="btn" data-close>Close</button><button class="btn danger" id="fs-cancel">Cancel my request</button></div>`;
+      body = summary + `<div class="callout">${I.info}<div>This is your own request. Found a sub yourself? Pick them below to hand over the seat. Or cancel the request if you can make it after all.</div></div>
+        <label class="field"><span>Who's taking your seat?</span><div id="fs-who"></div></label>`;
+      foot = `<button class="btn danger" id="fs-cancel">Cancel my request</button><div class="r"><button class="btn" data-close>Close</button><button class="btn primary" id="fs-go" disabled>${I.check}Hand over seat</button></div>`;
     } else if (committee) {
       body = summary + `<label class="field"><span>Who's taking the seat?</span><div id="fs-who"></div></label><div id="fs-st"></div>`;
       foot = `<button class="btn danger" id="fs-cancel">Cancel request</button><div class="r"><button class="btn" data-close>Close</button><button class="btn primary" id="fs-go">Assign sub</button></div>`;
@@ -1025,19 +1060,13 @@ async function fillSub(subId) {
     modal({
       title: "Sub needed", body, foot,
       onMount: (m, close) => {
-        let ctl = null;
-        if (committee) {
-          ctl = combo($("#fs-who", m), {
-            items: () => S.boot.members.filter((x) => x.id !== sr.requester.id).map((x) => { const c = cands[x.id] || { ok: false, problems: [] }; return { id: x.id, label: x.name, c, dim: !c.ok, cls: c.ok ? "" : "bad", rank: c.ok ? 0 : 1 }; }),
-            renderWhy: (i) => i.c.ok ? `<span class="chip ok">OK</span>` : `<span class="chip bad">${esc(i.c.problems.join(" · "))}</span>`,
-            placeholder: "Search rowers…",
-          });
-        }
         const g = $("#fs-go", m);
+        const picks = committee || mine;
+        const ctl = picks ? subPicker($("#fs-who", m), cands, sr.requester.id, (v) => { if (!committee) g.disabled = !(v && cands[v]?.ok); }) : null;
         if (g) g.onclick = async () => {
-          const who = committee ? ctl.get() : S.me;
+          const who = picks ? ctl.get() : S.me;
           if (!who) return toast("Pick someone first", true);
-          try { await api(`/api/subs/${subId}/fill`, { method: "POST", body: { member_id: who } }); close(); toast("Seat taken — thanks!"); refreshSubsCount(); route(); }
+          try { await api(`/api/subs/${subId}/fill`, { method: "POST", body: { member_id: who } }); close(); toast(mine && !committee ? "Seat handed over" : "Seat taken — thanks!"); refreshSubsCount(); route(); }
           catch (e) { fail(e); }
         };
         const c = $("#fs-cancel", m);
