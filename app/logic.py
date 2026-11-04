@@ -149,15 +149,19 @@ class Rules:
         }
 
     # ---- eligibility ------------------------------------------------------
-    def check(self, member_id: int, kind: str, d: date, key) -> dict:
-        """Eligibility of a member for an outing of `kind` on date `d` (sort key `key`)."""
+    def check(self, member_id: int, kind: str, d: date, key, before: int | None = None) -> dict:
+        """Eligibility of a member for an outing of `kind` on date `d` (sort key `key`).
+
+        `before` overrides the number of water outings counted before this one (used by
+        auto-fill to account for seats it has planned but not saved yet)."""
         m = self.members.get(member_id)
         if not m:
             return {"ok": False, "reasons": ["Not in members list"], "note": ""}
         reasons, note = [], ""
         # The novice allowance only matters while subs are unpaid.
         novice = m["category"] == "Novice" and not self.subs_valid(m)
-        before = self.water_before(member_id, key)
+        if before is None:
+            before = self.water_before(member_id, key)
         if kind == "water":
             nth = before + 1
             free_subs = novice and nth <= self.free_n

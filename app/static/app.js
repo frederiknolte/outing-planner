@@ -53,6 +53,7 @@ const I = {
   users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/></svg>',
   todo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></svg>',
   repeat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></svg>',
+  wand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
 };
 
@@ -436,6 +437,7 @@ async function pageSchedule() {
         <button class="btn" id="wk-cal" title="Add your outings to your phone's calendar">${I.calendar}Add to calendar</button>
         ${committee ? `
           <button class="btn" id="wk-copy">${I.copy}Copy last week</button>
+          ${data.total ? `<button class="btn" id="wk-auto" title="Suggest crews for empty seats from this week's sign-ups">${I.wand}Auto-fill crews</button>` : ""}
           ${data.total ? (data.published === data.total ? `<button class="btn" id="wk-unpub">${I.eye}Unpublish</button>` : `<button class="btn primary" id="wk-pub">${I.send}Publish week</button>`) : ""}
         ` : ""}
       </div>
@@ -476,6 +478,7 @@ async function pageSchedule() {
     if (pub) pub.onclick = async () => { if (await confirmBox("Publish this week?", "All sessions for this week become visible to rowers.", "Publish")) { await api("/api/committee/week/publish", { method: "POST", body: { start: data.start, published: true } }).catch(fail); toast("Week published"); pageSchedule(); } };
     if (unpub) unpub.onclick = async () => { await api("/api/committee/week/publish", { method: "POST", body: { start: data.start, published: false } }).catch(fail); toast("Week set back to draft"); pageSchedule(); };
     $("#wk-copy").onclick = () => copyWeek(data.start);
+    const auto = $("#wk-auto"); if (auto) auto.onclick = () => autofillWeek(data.start);
   }
   if (committee && S.pendingNew) { const d = S.pendingNew; S.pendingNew = null; editOuting(null, d); }
   $$(".outing").forEach((card) => card.addEventListener("click", (e) => {
@@ -540,6 +543,70 @@ function copyWeek(target) {
           const r = await api("/api/committee/week/copy", { method: "POST", body: { source: src, target, include_crews: $("#cw-crews", m).checked } });
           close(); toast(`Copied ${r.copied} session${r.copied === 1 ? "" : "s"}`); pageSchedule();
         } catch (e) { fail(e); }
+      };
+    },
+  });
+}
+
+/* Auto-fill: the server proposes crews for the week's empty seats from the sign-ups; nothing is saved until
+   the committee presses Apply, and then exactly the proposal shown is saved (seats stay drafts). */
+async function autofillWeek(start, includePublished = false) {
+  let p;
+  try { p = await api("/api/committee/week/autofill", { method: "POST", body: { start, include_published: includePublished } }); } catch (e) { return fail(e); }
+  const STATUS = { full: ["Crew complete", "ok"], partial: ["Still short", "warn"], unchanged: ["No change", ""], skipped: ["Not filled", "bad"] };
+  const seatsHtml = (x) => x.seats.map((s) => `<div class="seat ${s.new ? "af-new" : ""}">
+      <span class="sl">${esc(s.seat === 0 ? "Cox" : s.label)}${s.side ? `<i class="af-side">${s.side}</i>` : ""}</span>
+      <span class="sn">${s.member ? esc(s.member.name) : `<span class="faint">empty</span>`}</span>
+      <span>${s.member && s.seat !== 0 && s.member.category === "Senior" && x.category === "Novice" ? `<span class="tag violet" title="Senior in a novice crew">Senior</span>` : ""}</span></div>`).join("");
+  const outingHtml = (x) => {
+    const [stl, stc] = STATUS[x.status];
+    return `<article class="card af-outing">
+      <div class="af-head"><b>${DAY[dow(x.date)]} ${fmtShort(x.date)}${x.time ? ` · <span class="tnum">${esc(tRange(x))}</span>` : ""}</b>
+        <span class="muted">${esc([x.title, x.boat].filter(Boolean).join(" · "))}</span></div>
+      <div class="af-chips"><span class="chip ${stc}">${stl}</span>${x.added ? `<span class="chip accent">+${x.added}</span>` : ""}${x.category ? `<span class="chip">${x.category === "Novice" ? "Novice crew" : "Senior crew"}</span>` : ""}${x.squad ? `<span class="chip ${x.squad === "women" ? "violet" : "accent"}">${esc(SQUAD_SHORT[x.squad])}</span>` : ""}${x.published ? `<span class="chip warn">Published</span>` : ""}</div>
+      <div class="seats">${seatsHtml(x)}</div>
+      <div class="small" style="margin-top:6px">${I.whistle} ${x.new_coach ? `Bankrider: <b class="af-new-text">${esc(x.new_coach)}</b>` : x.coach ? `Coach: ${esc(x.coach)}` : `<span class="faint">No coach / bankrider</span>`}</div>
+      ${x.notes.length ? `<div class="warnings">${x.notes.map((n) => `<div>${I.alert}<span>${esc(n)}</span></div>`).join("")}</div>` : ""}
+    </article>`;
+  };
+  const short = (q) => (q.role === "bankrider" ? 0 : Math.max(0, q.want_row - q.rows) + Math.max(0, q.want_cox - q.coxes));
+  const people = p.people.slice().sort((a, b) => short(b) - short(a) || a.name.localeCompare(b.name));
+  const given = (now, before, want) => `${now}${now > before ? ` <span class="af-new-text">(+${now - before})</span>` : ""}${want ? `<span class="faint"> / ${want}</span>` : ""}`;
+  const peopleHtml = `<div class="table-wrap"><table class="t af-people"><thead><tr><th>Name</th><th title="Rowing outings this week / wanted">Rowing</th><th title="Coxing outings this week / wanted">Coxing</th><th>Bankriding</th><th title="All sessions this week / weekly maximum">Total</th></tr></thead><tbody>
+    ${people.map((q) => `<tr class="${short(q) ? "af-short" : ""}"><td>${esc(q.name)} <span class="faint small">${esc(q.category || "")}${q.novice_outings ? ` · ${q.novice_outings} novice outing${q.novice_outings === 1 ? "" : "s"}` : ""}</span></td>
+      <td class="tnum">${q.role === "cox" || q.role === "bankrider" ? "—" : given(q.rows, q.rows_before, q.want_row)}</td>
+      <td class="tnum">${["cox", "both"].includes(q.role) ? given(q.coxes, q.coxes_before, q.want_cox) : "—"}</td>
+      <td class="tnum">${q.bankrides ? given(q.bankrides, q.bankrides_before, 0) : "—"}</td>
+      <td class="tnum">${q.total}${q.max_outings ? `<span class="faint"> / ${q.max_outings}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
+  const nShort = people.filter(short).length;
+  const changes = p.added + p.bankriders;
+  const body = !p.signups
+    ? `<div class="empty">${I.users}<h3>Nobody has signed up for this week yet</h3><p>Auto-fill uses the weekly sign-up. Open the sign-up form under <a href="#/signup">Sign up</a> first.</p></div>`
+    : !p.outings.length
+    ? `<div class="empty">${I.water}<h3>No draft water outings to fill</h3><p>Create this week's water outings first (or copy last week without crews), then auto-fill them.</p></div>`
+    : `<div class="callout">${I.info}<div>${changes ? `Puts <b>${p.added}</b> ${p.added === 1 ? "person" : "people"} into empty seats${p.bankriders ? ` and adds <b>${p.bankriders}</b> bankrider${p.bankriders === 1 ? "" : "s"}` : ""}. ` : "There's nothing auto-fill can add right now. "}
+        People you've already placed stay where they are. Nothing is saved until you press <b>Apply</b>, and sessions stay as drafts so you can adjust them before publishing.</div></div>
+      <div class="af-summary small muted">${p.full} complete · ${p.partial} still short · ${nShort ? `${nShort} ${nShort === 1 ? "person gets" : "people get"} fewer outings than they asked for` : "everyone gets what they asked for"}</div>
+      ${p.excluded_published || includePublished ? `<label class="check small"><input type="checkbox" id="af-pub" ${includePublished ? "checked" : ""}> Also fill published sessions${p.excluded_published ? ` (${p.excluded_published} with empty seats)` : ""}</label>` : ""}
+      <div class="af-grid">${p.outings.map(outingHtml).join("")}</div>
+      <details class="af-more"><summary class="section-title" style="cursor:pointer">Outings per person <span class="faint">${people.length}</span></summary>${peopleHtml}</details>
+      <p class="small faint" style="margin:10px 0 0">How it picks: only people who signed up as free for that session and are eligible (subs, swim test, novice free outings), within their weekly maximum and not booked elsewhere at that time. People furthest below the number of outings they asked for go first. Rowers sit on their side, and crews stay in their squad unless that would leave seats empty. Novice crews get 2–3 seniors, shared out among the seniors.</p>`;
+  modal({
+    title: `Auto-fill crews · ${fmtShort(p.start)} – ${fmtShort(addDays(p.start, 6))}`, body, wide: "xl",
+    foot: `<div class="r"><button class="btn" data-close>Cancel</button>${changes ? `<button class="btn primary" id="af-go">${I.check}Apply</button>` : ""}</div>`,
+    onMount: (m, close) => {
+      const pub = $("#af-pub", m); if (pub) pub.onchange = () => { close(); autofillWeek(start, pub.checked); };
+      const go = $("#af-go", m);
+      if (go) go.onclick = async () => {
+        go.disabled = true;
+        const outings = p.outings.filter((x) => x.added || x.new_coach).map((x) => ({
+          id: x.id, coach: x.new_coach, seats: Object.fromEntries(x.seats.filter((s) => s.new).map((s) => [String(s.seat), s.member.id])) }));
+        try {
+          const r = await api("/api/committee/week/autofill/apply", { method: "POST", body: { start: p.start, outings } });
+          close();
+          toast(`Added ${r.added} ${r.added === 1 ? "person" : "people"}${r.coaches ? ` and ${r.coaches} bankrider${r.coaches === 1 ? "" : "s"}` : ""}${r.skipped ? ` · ${r.skipped} skipped (changed since the preview)` : ""}`, !!r.skipped);
+          pageSchedule();
+        } catch (e) { go.disabled = false; fail(e); }
       };
     },
   });
@@ -2154,7 +2221,7 @@ async function pageSignup() {
   if (!S.suFormWeek || !meta.weeks.some((w) => w.week_start === S.suFormWeek)) S.suFormWeek = meta.weeks[0].week_start;
   const wk = meta.weeks.find((w) => w.week_start === S.suFormWeek);
   const st = { member_id: S.me && meName() ? S.me : null, new_name: "", phone: "", has_phone: false, college: "", college_other: "",
-    role: "", want_row: 2, want_cox: 1, side: "", squad: "", max_outings: 3, can_bankride: false, slot_ids: new Set(), comments: "", existing: false };
+    role: "rower", want_row: 2, want_cox: 1, side: "", squad: "", max_outings: 3, can_bankride: true, slot_ids: new Set(), comments: "", existing: false };
 
   const prefill = async () => {
     if (!st.member_id) return;
