@@ -123,6 +123,15 @@ CREATE TABLE IF NOT EXISTS places (
     lon REAL
 );
 
+-- Club committee positions (see committee_roster.py)
+CREATE TABLE IF NOT EXISTS committee_holders (
+    position TEXT NOT NULL,                        -- president | vice_president | mens_captain | ...
+    slot INTEGER NOT NULL DEFAULT 0,               -- 0, or 1 for the second captain
+    member_id INTEGER REFERENCES members(id) ON DELETE CASCADE,
+    name TEXT NOT NULL DEFAULT '',                 -- used when the holder isn't a club member
+    PRIMARY KEY (position, slot)
+);
+
 -- Boat issue tracker
 CREATE TABLE IF NOT EXISTS boat_issues (
     id INTEGER PRIMARY KEY,

@@ -191,6 +191,7 @@ const ROUTES = [
   { id: "me", label: "My outings", icon: I.user },
   { id: "stats", label: "Leaderboard", parent: "me", icon: I.trophy },
   { id: "rowers", label: "Rowers", tab: "Members", icon: I.user },
+  { id: "committee", label: "Committee", parent: "rowers", icon: I.user },
   { id: "reminders", label: "Subs reminders", parent: "rowers", icon: I.user, committee: true, count: "reminders" },
   { id: "coaches", label: "Coaches", parent: "rowers", icon: I.whistle, committee: true },
   { id: "boats", label: "Boat park", tab: "Boats", icon: I.boat },
@@ -1133,7 +1134,8 @@ let rowerSort = { k: "name", dir: 1 }, rowerQ = "", rowerCat = "all";
 
 async function pageRowers() {
   const committee = isCommittee();
-  let rows, meta = {}, nRem = 0;
+  let rows, meta = {}, nRem = 0, cttee = {};
+  api("/api/club-committee").then((d) => { cttee = committeeByMember(d); if ($("#rw-table")) draw(); }).catch(() => {});
   try {
     if (committee) {
       const [r, rem] = await Promise.all([api("/api/committee/members"), api("/api/committee/subs-reminders")]);
@@ -1152,7 +1154,7 @@ async function pageRowers() {
       ${committee ? `<th>Swim</th><th>Subs</th>${th("cox_status", "Cox")}<th title="At their next new outing, counting everything already scheduled">May row next</th>` : `${th("cox_status", "Cox")}`}
       ${th("water", "Water", "num")}${th("land", "Land", "num")}${th("total", "Total", "num")}<th style="width:120px"></th>${th("novice_free_left", "Free left", "num")}</tr></thead>
       <tbody>${list.map((r) => `<tr class="${committee ? "clickable" : ""}" data-id="${r.id}">
-        <td><b>${esc(r.name)}</b>${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${committee && !r.active ? ` <span class="chip">inactive</span>` : ""}${committee && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
+        <td><b>${esc(r.name)}</b>${cttee[r.id] ? ` ${committeeBadge(cttee[r.id])}` : ""}${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${committee && !r.active ? ` <span class="chip">inactive</span>` : ""}${committee && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
         <td><span class="chip ${r.category === "Novice" ? "accent" : ""}">${esc(r.category)}</span></td>
         ${committee ? `<td>${r.swim_test ? `<span class="chip ok">${I.check}Yes</span>` : `<span class="chip warn">No</span>`}</td>
           <td>${r.subs_valid ? `<span class="chip ok">${esc(r.subs_plan === "Full year" ? "Full year" : r.subs_term)}</span>` : `<span class="chip ${r.subs_plan === "Unpaid" ? "warn" : "bad"}" title="${esc(r.subs_plan)} ${esc(r.subs_term)} ${esc(r.subs_year)}">${r.subs_plan === "Unpaid" ? "Unpaid" : "Expired"}</span>`}</td>
@@ -1620,6 +1622,62 @@ function editIssue(i, boats) {
   });
 }
 
+// -------------------------------------------------------------- committee --
+/* member id -> ["President", ...] */
+function committeeByMember(d) {
+  const label = Object.fromEntries(d.positions.map((p) => [p.key, p.label]));
+  const out = {};
+  d.holders.filter((h) => h.member_id).forEach((h) => (out[h.member_id] = out[h.member_id] || []).push(label[h.position]));
+  return out;
+}
+const positionPlural = (label) => label.replace(/Captain$/, "Captains");
+const committeeBadge = (titles) => `<span class="c-badge" title="Committee: ${esc(titles.join(", "))}" aria-label="Committee: ${esc(titles.join(", "))}">C</span>`;
+
+async function pageCommittee() {
+  let d;
+  try { d = await api("/api/club-committee"); } catch (e) { return fail(e); }
+  const held = (key) => d.holders.filter((h) => h.position === key);
+  const card = (p) => {
+    const hs = held(p.key);
+    const people = hs.length ? hs.map((h) => `<div class="cm-person"><span class="avatar">${esc(initials(h.name))}</span><span><b>${esc(h.name)}</b>${h.member_id === S.me ? ` <span class="chip accent">you</span>` : ""}</span></div>`).join("")
+      : `<div class="cm-person vacant"><span class="avatar">?</span><span class="faint">Vacant</span></div>`;
+    return `<div class="card cm-card"><div class="cm-role">${esc(p.max > 1 && hs.length > 1 ? positionPlural(p.label) : p.label)}</div>${people}</div>`;
+  };
+  $("#main").innerHTML = `
+    <div class="page-head"><div><h1>Committee</h1><p>Who runs the club, and who to talk to. Committee members have a <span class="c-badge" aria-hidden="true">C</span> next to their name on the rowers list.</p></div>
+      ${isCommittee() ? `<div class="toolbar"><button class="btn primary" id="cm-edit">Edit committee</button></div>` : ""}</div>
+    <div class="cm-grid">${d.positions.map(card).join("")}</div>`;
+  const e = $("#cm-edit"); if (e) e.onclick = () => editCommittee(d);
+}
+
+function editCommittee(d) {
+  // one name field per seat: Men's and Women's Captain have two
+  const seats = d.positions.flatMap((p) => Array.from({ length: p.max }, (_, slot) => ({ p, slot })));
+  const state = seats.map(({ p, slot }) => { const h = d.holders.find((x) => x.position === p.key && x.slot === slot); return { member_id: h?.member_id ?? null, new_name: h && !h.member_id ? h.name : "" }; });
+  modal({
+    title: "Edit committee", wide: true,
+    body: `<p class="muted small" style="margin:0">Pick a club member, or type a name for someone who isn't in the club list (e.g. the Senior Member). Leave a position empty if it's vacant.</p>
+      <div class="cm-edit">${d.positions.map((p) => {
+        const idx = seats.map((x, i) => (x.p === p ? i : -1)).filter((i) => i >= 0);
+        return p.max > 1
+          ? `<div class="field cm-multi"><span>${esc(positionPlural(p.label))} <span class="faint">(up to ${p.max})</span></span><div class="cm-multi-row">${idx.map((i) => `<div data-seat="${i}" aria-label="${esc(p.label)}"></div>`).join("")}</div></div>`
+          : `<label class="field"><span>${esc(p.label)}</span><div data-seat="${idx[0]}"></div></label>`;
+      }).join("")}</div>`,
+    foot: `<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="cm-save">Save</button></div>`,
+    onMount: (m, close) => {
+      $$("[data-seat]", m).forEach((el) => nameField(el, state[+el.dataset.seat], null, { placeholder: "Vacant — type a name…", newLabel: "Not in the club list:", newChip: "Use this name", empty: "Keep typing the full name…" }));
+      $("#cm-save", m).onclick = async () => {
+        const holders = seats.map(({ p, slot }, i) => ({ position: p.key, slot, member_id: state[i].member_id, name: state[i].member_id ? "" : state[i].new_name || "" }))
+          .filter((h) => h.member_id || h.name.trim());
+        // captains are equal: store whoever is filled in from slot 0 upwards, with no gaps
+        const bySlot = {};
+        holders.forEach((h) => { h.slot = bySlot[h.position] = (bySlot[h.position] ?? -1) + 1; });
+        try { await api("/api/committee/club-committee", { method: "PUT", body: { holders } }); close(); toast("Committee saved"); rerender(); } catch (e) { fail(e); }
+      };
+    },
+  });
+}
+
 // ---------------------------------------------------------------- coaches --
 async function pageCoaches() {
   let coaches, stats;
@@ -1932,9 +1990,10 @@ async function pageSignup() {
 }
 
 /* Name field: pick an existing member, or type a new full name. */
-function nameField(container, st, onPick) {
+function nameField(container, st, onPick, opts = {}) {
+  const o = { placeholder: "Start typing your name…", newLabel: "I'm new:", newChip: "Add me", empty: "Keep typing your full name…", ...opts };
   container.classList.add("combo");
-  container.innerHTML = `<input class="input" autocomplete="off" placeholder="Start typing your name…"><button type="button" class="clear" tabindex="-1" aria-label="Clear">×</button>`;
+  container.innerHTML = `<input class="input" autocomplete="off" placeholder="${esc(o.placeholder)}"><button type="button" class="clear" tabindex="-1" aria-label="Clear">×</button>`;
   const inp = $("input", container), clr = $(".clear", container);
   let list = null, hl = 0, shown = [];
   const members = () => S.boot.members;
@@ -1949,8 +2008,8 @@ function nameField(container, st, onPick) {
     if (q.length >= 3 && !exact) shown.push({ id: null, label: inp.value.trim().replace(/\s+/g, " "), isNew: true });
     hl = Math.min(hl, Math.max(0, shown.length - 1));
     if (!list) { list = document.createElement("div"); list.className = "combo-list"; container.appendChild(list); }
-    list.innerHTML = shown.length ? shown.map((i, k) => `<div class="combo-item ${k === hl ? "hl" : ""}" data-k="${k}">${i.isNew ? `<span class="nm"><b>I'm new:</b> “${esc(i.label)}”</span><span class="why"><span class="chip accent">${I.plus}Add me</span></span>` : `<span class="nm">${esc(i.label)}</span>`}</div>`).join("")
-      : `<div class="combo-empty">Keep typing your full name…</div>`;
+    list.innerHTML = shown.length ? shown.map((i, k) => `<div class="combo-item ${k === hl ? "hl" : ""}" data-k="${k}">${i.isNew ? `<span class="nm"><b>${esc(o.newLabel)}</b> “${esc(i.label)}”</span><span class="why"><span class="chip accent">${I.plus}${esc(o.newChip)}</span></span>` : `<span class="nm">${esc(i.label)}</span>`}</div>`).join("")
+      : `<div class="combo-empty">${esc(o.empty)}</div>`;
     $$(".combo-item", list).forEach((el) => el.addEventListener("mousedown", (e) => { e.preventDefault(); pick(shown[+el.dataset.k]); }));
   };
   const pick = (it) => {
@@ -2312,7 +2371,7 @@ function route() {
   const r = ROUTES.find((x) => x.id === id && routeAllowed(x)) || ROUTES[0];
   shell(r.id);
   S.page = ({ schedule: pageSchedule, signup: pageSignup, subs: pageSubs, races: pageRaces, me: pageMe, stats: pageStats, rowers: pageRowers,
-    reminders: pageSubsReminders, coaches: pageCoaches, boats: pageBoats, issues: pageIssues, settings: pageSettings })[r.id];
+    committee: pageCommittee, reminders: pageSubsReminders, coaches: pageCoaches, boats: pageBoats, issues: pageIssues, settings: pageSettings })[r.id];
   window.scrollTo(0, 0);
   return S.page();
 }

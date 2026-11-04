@@ -29,6 +29,7 @@ from .signup import availability_for_outing, router as signup_router
 from .stats import router as stats_router
 from .races import router as races_router
 from . import issues
+from .committee_roster import router as roster_router
 from .logic import (BOAT_TYPES, SUBS_PLANS, TERMS, TZ, Rules, monday_of, outing_payload,
                     seat_label, seat_list)
 
@@ -1334,6 +1335,7 @@ app.include_router(calendar_router)
 app.include_router(stats_router)
 app.include_router(races_router)
 app.include_router(issues.router)
+app.include_router(roster_router)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 

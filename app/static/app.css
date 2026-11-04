@@ -704,3 +704,19 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
   .topbar .top-gear { display: none; }
   .nav .nav-settings { display: flex !important; border-top: 1px solid rgba(255, 255, 255, .12); margin-top: 4px; padding-top: 13px; }
 }
+
+/* ------------------------------------------------------------- committee -- */
+.c-badge { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; vertical-align: -3px;
+  background: linear-gradient(135deg, #e2b83a, var(--crest-gold)); color: #2a1d00; font-size: 11px; font-weight: 800; line-height: 1;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--crest-gold) 60%, transparent); cursor: default; }
+.cm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.cm-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.cm-role { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--crest-gold); }
+.cm-person { display: flex; align-items: center; gap: 10px; min-width: 0; overflow-wrap: anywhere; }
+.cm-person .avatar { width: 34px; height: 34px; font-size: 13px; }
+.cm-person.vacant .avatar { background: var(--surface-3); color: var(--text-3); }
+.cm-edit { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 640px) { .cm-grid, .cm-edit { grid-template-columns: 1fr; } }
+.cm-multi { grid-column: 1 / -1; }
+.cm-multi-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 640px) { .cm-multi-row { grid-template-columns: 1fr; } }
