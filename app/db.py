@@ -239,6 +239,7 @@ MIGRATIONS = {
         "cancel_reason": "TEXT NOT NULL DEFAULT ''",   # free-text note shown with the cancellation
         "cancel_category": "TEXT NOT NULL DEFAULT ''", # flag | weather | bankrider | numbers | other (see logic.CANCEL_REASONS)
     },
+    "boats": {"last_serviced": "TEXT NOT NULL DEFAULT ''"},       # YYYY-MM-DD or '' (see usage.py)
     "races": {"squad": "TEXT NOT NULL DEFAULT 'any'"},             # any | open | women
     "race_responses": {
         "squad": "TEXT NOT NULL DEFAULT ''",                        # open | women
@@ -284,6 +285,7 @@ DEFAULT_SETTINGS = {
     "peak_end": "",                    # last day of the term's major regatta; blank = end of 8th week
     "peak_crews_before_8": "1",        # crews allowed on the water at once before 08:00 in peak term (Extra Slot = 2)
     "photo_storage_mb": "300",         # total space boat-issue photos may use
+    "service_interval_hours": "",      # boat usage: flag a boat for servicing after this many hours (blank = off)
 }
 
 

@@ -54,6 +54,7 @@ const I = {
   todo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></svg>',
   repeat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></svg>',
   wand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5"/></svg>',
+  chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15v2"/><path d="M11 10v7"/><path d="M15 6v11"/><path d="M19 12v5"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
 };
 
@@ -211,6 +212,7 @@ const ROUTES = [
   { id: "reminders", label: "Subs reminders", parent: "rowers", icon: I.user, committee: true, count: "reminders" },
   { id: "boats", label: "Boat park", tab: "Boats", icon: I.boat },
   { id: "issues", label: "Issues", parent: "boats", icon: I.alert, count: "issues" },
+  { id: "usage", label: "Usage", parent: "boats", icon: I.chart },
   { id: "committee", label: "Committee", tab: "Overview", icon: I.users },
   { id: "todo", label: "To-do", parent: "committee", icon: I.todo, committee: true, count: "todo" },
   { id: "handbook", label: "Handbook", parent: "committee", icon: I.info, committee: true },
@@ -1705,6 +1707,76 @@ function editBoat(b, types) {
   });
 }
 
+// ------------------------------------------------------------- boat usage --
+/* Outings and hours on the water per boat, usage since each boat's last service, and idle boats. */
+const USAGE_PERIODS = [["season", "This season"], ["term", "This term"], ["30d", "Last 30 days"], ["all", "All time"]];
+const fmtHours = (h) => (h >= 100 ? Math.round(h) : h.toFixed(1).replace(/\.0$/, ""));
+
+async function pageUsage() {
+  S.usagePeriod = S.usagePeriod || "season";
+  let d;
+  try { d = await api(`/api/boats/usage?period=${S.usagePeriod}`); } catch (e) { return fail(e); }
+  const committee = isCommittee(), t = d.totals, iv = d.service_interval_hours;
+  const maxH = Math.max(1, ...d.boats.map((b) => b.hours));
+  const ago = (n) => (n === 0 ? "today" : n === 1 ? "yesterday" : n < 14 ? `${n} days ago` : n < 60 ? `${Math.round(n / 7)} weeks ago` : `${Math.round(n / 30)} months ago`);
+  const periodLabel = d.since ? `since ${fmtShort(d.since)}` : "all time";
+  const svcCell = (b) => {
+    const s = b.since_service;
+    const pct = b.service_pct;
+    const bar = pct != null && b.status !== "retired" ? `<div class="bar ${b.service_due ? "due" : pct >= 80 ? "near" : ""}" title="${pct}% of the ${iv} h service interval"><i style="width:${Math.min(100, pct)}%"></i></div>` : "";
+    return `<div class="u-svc"><span>${fmtHours(s.hours)} h <span class="faint">· ${plural(s.outings, "outings")}</span>${b.service_due ? ` <span class="chip bad">Due</span>` : ""}</span>${bar}</div>`;
+  };
+  const row = (b) => `<tr class="${b.status === "retired" ? "u-retired" : ""}">
+      <td><b>${esc(b.name)}</b> <span class="faint">${esc(b.boat_type)}</span>
+        ${b.status === "repair" ? ` <span class="chip warn">Under repair</span>` : b.status === "retired" ? ` <span class="chip">Retired</span>` : b.idle ? ` <span class="chip warn" title="No outing in the last ${d.idle_after_days} days and nothing booked">Idle</span>` : ""}</td>
+      <td class="num">${b.outings}</td>
+      <td><div class="u-hours"><span class="num">${fmtHours(b.hours)}</span><div class="bar"><i style="width:${(b.hours / maxH) * 100}%"></i></div></div></td>
+      <td>${b.last_used ? `${fmtShort(b.last_used)} <span class="faint small">${ago(b.idle_days)}</span>` : `<span class="faint">Never</span>`}</td>
+      <td>${b.upcoming ? `${b.upcoming} <span class="faint small">next ${fmtShort(b.next_outing)}</span>` : `<span class="faint">–</span>`}</td>
+      <td>${svcCell(b)}</td>
+      <td>${b.last_serviced ? fmtShort(b.last_serviced) : `<span class="faint">Not recorded</span>`}${committee ? ` <button class="btn sm" data-svc="${b.id}">Serviced…</button>` : ""}</td>
+    </tr>`;
+  $("#main").innerHTML = `
+    <div class="page-head"><div><h1>Boat usage</h1><p>Outings and hours on the water per boat, ${esc(periodLabel)}. Outings count once they've happened; cancelled ones don't.</p></div>
+      <div class="toolbar"><div class="seg" id="us-p">${USAGE_PERIODS.map(([k, l]) => `<button data-p="${k}" class="${S.usagePeriod === k ? "on" : ""}">${l}</button>`).join("")}</div></div></div>
+    <div class="stats" style="margin-bottom:16px">
+      <div class="card stat"><div class="k">Hours on the water</div><div class="v">${fmtHours(t.hours)}</div><div class="s">across ${plural(t.outings, "outings")}</div></div>
+      <div class="card stat"><div class="k">Boats used</div><div class="v">${t.used}<span class="u-of"> / ${t.in_service}</span></div><div class="s">of the boats not retired</div></div>
+      <div class="card stat"><div class="k">Sitting idle</div><div class="v">${t.idle}</div><div class="s">available, unused for ${d.idle_after_days} days, nothing booked</div></div>
+      ${iv ? `<div class="card stat"><div class="k">Due for service</div><div class="v">${t.due}</div><div class="s">${fmtHours(iv)} h or more since last service</div></div>` : ""}
+    </div>
+    ${t.assumed ? `<div class="callout" style="margin-bottom:14px">${I.info}<div>${plural(t.assumed, "outings")} had no end time, so ${d.default_minutes} minutes were assumed for ${t.assumed === 1 ? "it" : "them"}. Add end times to sessions for exact hours.</div></div>` : ""}
+    ${d.boats.length ? `<div class="card table-wrap"><table class="t u-table"><thead><tr><th>Boat</th><th class="num">Outings</th><th>Hours</th><th>Last used</th><th>Booked</th><th title="All use since the last service date (or ever, if none is recorded), whatever period is picked">Since service</th><th>Last serviced</th></tr></thead>
+      <tbody>${d.boats.map(row).join("")}</tbody></table></div>`
+      : `<div class="card empty">${I.boat}<h3>No boats yet</h3><p>Add the fleet under <a href="#/boats">Boat park</a> and set a boat on water outings to track their use.</p></div>`}
+    ${committee ? `<div class="card u-interval"><label class="field"><span>Service interval</span>
+        <div class="u-iv-row"><input class="input" type="number" min="0" step="5" id="us-iv" value="${iv ? fmtHours(iv) : ""}" placeholder="Off"><span class="muted">hours on the water</span><button class="btn" id="us-iv-save">Save</button></div>
+        <span class="hint">Boats with this many hours since their last service are flagged as due. Leave blank to turn it off.</span></label></div>` : ""}`;
+  $$("#us-p button").forEach((b) => b.onclick = () => { S.usagePeriod = b.dataset.p; pageUsage(); });
+  if (!committee) return;
+  $("#us-iv-save").onclick = async () => {
+    const hours = Math.max(0, +$("#us-iv").value || 0);
+    try { await api("/api/committee/service-interval", { method: "PUT", body: { hours } }); toast(hours ? "Service interval saved" : "Service interval turned off"); pageUsage(); } catch (e) { fail(e); }
+  };
+  $$("[data-svc]").forEach((btn) => btn.onclick = () => markServiced(d.boats.find((b) => b.id === +btn.dataset.svc)));
+}
+
+function markServiced(b) {
+  modal({
+    title: `${b.name}: last serviced`,
+    body: `<label class="field"><span>Date of service</span><input class="input" type="date" id="sv-date" value="${esc(b.last_serviced || S.boot.today)}" max="${esc(S.boot.today)}">
+      <span class="hint">Usage since service counts from this day on.</span></label>`,
+    foot: `${b.last_serviced ? `<button class="btn danger" id="sv-clear">Clear</button>` : ""}<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="sv-save">Save</button></div>`,
+    onMount: (m, close) => {
+      const save = async (date) => {
+        try { await api(`/api/committee/boats/${b.id}/serviced`, { method: "PUT", body: { date } }); close(); toast(date ? "Service recorded" : "Service date cleared"); pageUsage(); } catch (e) { fail(e); }
+      };
+      $("#sv-save", m).onclick = () => { const v = $("#sv-date", m).value; if (!v) return toast("Pick a date", true); save(v); };
+      const c = $("#sv-clear", m); if (c) c.onclick = () => save("");
+    },
+  });
+}
+
 // ------------------------------------------------------------ boat issues --
 const ISSUE_SEV = { minor: ["Minor", ""], caution: ["Use with care", "warn"], unusable: ["Do not use", "bad"] };
 const ISSUE_ST = { open: "bad", in_progress: "accent", waiting: "warn", fixed: "ok", closed: "" };
@@ -2958,7 +3030,7 @@ function route() {
   const r = ROUTES.find((x) => x.id === id && routeAllowed(x)) || ROUTES[0];
   shell(r.id);
   S.page = ({ schedule: pageSchedule, signup: pageSignup, subs: pageSubs, races: pageRaces, me: pageMe, stats: pageStats, rowers: pageRowers,
-    committee: pageCommittee, todo: pageTasks, handbook: pageHandbook, reminders: pageSubsReminders, coaches: pageCoaches, boats: pageBoats, issues: pageIssues, settings: pageSettings })[r.id];
+    committee: pageCommittee, todo: pageTasks, handbook: pageHandbook, reminders: pageSubsReminders, coaches: pageCoaches, boats: pageBoats, issues: pageIssues, usage: pageUsage, settings: pageSettings })[r.id];
   window.scrollTo(0, 0);
   return S.page();
 }

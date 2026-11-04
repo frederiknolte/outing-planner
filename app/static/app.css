@@ -309,6 +309,20 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
 .t .num { text-align: right; font-variant-numeric: tabular-nums; }
 .bar { height: 6px; border-radius: 99px; background: var(--surface-3); overflow: hidden; min-width: 60px; }
 .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--crest-green)); border-radius: 99px; }
+.bar.near i { background: var(--warn); }
+.bar.due i { background: var(--bad); }
+
+/* ---------- boat usage ---------- */
+.u-table td { white-space: nowrap; }
+.u-table tr.u-retired td { opacity: .6; }
+.u-hours { display: flex; align-items: center; gap: 10px; min-width: 140px; }
+.u-hours .num { width: 3.5em; text-align: right; font-weight: 700; }
+.u-hours .bar { flex: 1; }
+.u-svc { display: grid; gap: 4px; min-width: 150px; }
+.u-of { font-size: 16px; color: var(--text-3); font-weight: 700; }
+.u-interval { margin-top: 16px; padding: 16px; max-width: 520px; }
+.u-iv-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.u-iv-row .input { width: 110px; }
 
 /* ---------- stats ---------- */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
