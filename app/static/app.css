@@ -191,6 +191,8 @@ textarea.input { resize: vertical; min-height: 64px; }
 .seg { display: inline-flex; background: var(--surface-3); border-radius: 10px; padding: 3px; gap: 2px; }
 .seg button { border: 0; background: transparent; padding: 6px 12px; border-radius: 8px; font-weight: 600; color: var(--text-2); cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
 .seg button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
+.seg.seg-days { display: flex; width: 100%; }
+.seg.seg-days button { flex: 1; justify-content: center; padding: 6px 4px; min-width: 0; }
 
 .chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; background: var(--surface-3); color: var(--text-2); white-space: nowrap; }
 .chip.water { background: var(--water-soft); color: var(--water); }

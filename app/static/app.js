@@ -2417,24 +2417,37 @@ async function editSlot(sl, ws, tpl) {
   await loadPlaces(true);
   const days = Array.from({ length: 7 }, (_, i) => addDays(ws, i));
   const v = sl || tpl || { date: days[0], time: "", kind: "water", location: "", note: "" };
+  // new sessions can go on several days at once; editing keeps a single day
+  const picked = new Set(sl ? [v.date] : (v.dates || [v.date]).filter((d) => days.includes(d)));
   modal({
     title: sl ? "Edit session" : "Add session",
     body: `<div class="seg" id="sl-kind">${[["water", "Water"], ["erg", "Erg"], ["tank", "Tank"]].map(([k, l]) => `<button data-k="${k}" class="${v.kind === k ? "on" : ""}">${l}</button>`).join("")}</div>
-      <div class="grid-2"><label class="field"><span>Day</span><select class="input" id="sl-date">${days.map((d) => `<option value="${d}" ${d === v.date ? "selected" : ""}>${fmtLong(d)}</option>`).join("")}</select></label>
+      <div class="grid-2">${sl ? `<label class="field"><span>Day</span><select class="input" id="sl-date">${days.map((d) => `<option value="${d}" ${d === v.date ? "selected" : ""}>${fmtLong(d)}</option>`).join("")}</select></label>`
+          : `<div class="field"><span>Days <span class="faint">(tick several to add the same session on each)</span></span><div class="seg seg-days" id="sl-days">${days.map((d) => `<button type="button" data-d="${d}" class="${picked.has(d) ? "on" : ""}" title="${esc(fmtLong(d))}">${DAY[dow(d)]}</button>`).join("")}</div></div>`}
         <div class="field"><span>Time <span class="faint">(start – end)</span></span><div class="time-range"><input class="input tnum" type="time" id="sl-time" value="${esc(v.time)}" aria-label="Start time"><span class="faint">–</span><input class="input tnum" type="time" id="sl-end" value="${esc(v.end_time || "")}" aria-label="End time (optional)"></div><span class="hint">Use the same time when you create the outing, so availability matches.</span></div></div>
       <div class="grid-2"><label class="field"><span>Where (optional)</span><input class="input" id="sl-loc" list="sl-places" value="${esc(v.location)}" placeholder="e.g. Boathouse, College gym">${placesDatalist("sl-places")}</label>
         <label class="field"><span>Note (optional)</span><input class="input" id="sl-note" value="${esc(v.note)}" placeholder="e.g. Novices only"></label></div>
-      ${sl ? "" : `<label class="check small"><input type="checkbox" id="sl-more"> Add another after this one</label>`}`,
+      ${sl ? "" : `<label class="check small"><input type="checkbox" id="sl-more" ${tpl ? "checked" : ""}> Add another after this one <span class="faint">(keeps these details)</span></label>`}`,
     foot: `${sl ? `<button class="btn danger" id="sl-del">Delete</button>` : ""}<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="sl-save">Save</button></div>`,
     onMount: (m, close) => {
       let kind = v.kind;
       $$("#sl-kind button", m).forEach((b) => b.onclick = () => { kind = b.dataset.k; $$("#sl-kind button", m).forEach((x) => x.classList.toggle("on", x === b)); });
+      $$("#sl-days button", m).forEach((b) => b.onclick = () => {
+        const d = b.dataset.d; picked.has(d) ? picked.delete(d) : picked.add(d); b.classList.toggle("on", picked.has(d));
+      });
       $("#sl-save", m).onclick = async () => {
-        const body = { date: $("#sl-date", m).value, time: $("#sl-time", m).value.trim(), end_time: $("#sl-end", m).value.trim(), kind, location: $("#sl-loc", m).value, note: $("#sl-note", m).value };
+        const body = { time: $("#sl-time", m).value.trim(), end_time: $("#sl-end", m).value.trim(), kind, location: $("#sl-loc", m).value, note: $("#sl-note", m).value };
         try {
-          await api(sl ? `/api/committee/signup/slots/${sl.id}` : "/api/committee/signup/slots", { method: sl ? "PUT" : "POST", body });
-          const more = $("#sl-more", m)?.checked; close(); toast("Session saved"); await pageSignupCommittee();
-          if (more) editSlot(null, ws, { ...body, time: "", end_time: "" });
+          if (sl) {
+            await api(`/api/committee/signup/slots/${sl.id}`, { method: "PUT", body: { ...body, date: $("#sl-date", m).value } });
+            close(); toast("Session saved"); pageSignupCommittee(); return;
+          }
+          const dates = days.filter((d) => picked.has(d));
+          if (!dates.length) return toast("Pick at least one day", true);
+          const r = await api("/api/committee/signup/slots", { method: "POST", body: { ...body, date: dates[0], dates } });
+          const more = $("#sl-more", m)?.checked; close();
+          toast(r.created > 1 ? `Added ${r.created} sessions` : "Session saved"); await pageSignupCommittee();
+          if (more) editSlot(null, ws, { ...body, date: dates[0], dates });
         } catch (e) { fail(e); }
       };
       const del = $("#sl-del", m);

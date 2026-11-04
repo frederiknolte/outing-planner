@@ -313,6 +313,7 @@ class SlotIn(BaseModel):
     kind: str = "water"
     location: str = Field("", max_length=80)
     note: str = Field("", max_length=200)
+    dates: list[str] = Field([], max_length=7)  # create only: the same session on several days of one week
 
 
 def _slot_validate(b: SlotIn) -> str:
@@ -329,11 +330,20 @@ def _slot_validate(b: SlotIn) -> str:
 
 @router.post("/api/committee/signup/slots")
 def slot_create(b: SlotIn, _: str = Depends(require_committee)):
+    dates = sorted(set(b.dates or [b.date]))
+    b.date = dates[0]
     ws = _slot_validate(b)
+    for d in dates:
+        try:
+            date.fromisoformat(d)
+        except ValueError:
+            raise HTTPException(400, "Bad date")
+        if _monday(d) != ws:
+            raise HTTPException(400, "All days must be in the same week")
     with db.get_conn() as conn:
-        cur = conn.execute("INSERT INTO signup_slots(week_start, date, time, end_time, kind, location, note) VALUES (?,?,?,?,?,?,?)",
-                           (ws, b.date, b.time, b.end_time, b.kind, b.location.strip(), b.note.strip()))
-        return {"id": cur.lastrowid}
+        ids = [conn.execute("INSERT INTO signup_slots(week_start, date, time, end_time, kind, location, note) VALUES (?,?,?,?,?,?,?)",
+                            (ws, d, b.time, b.end_time, b.kind, b.location.strip(), b.note.strip())).lastrowid for d in dates]
+        return {"id": ids[0], "ids": ids, "created": len(ids)}
 
 
 @router.put("/api/committee/signup/slots/{slot_id}")
