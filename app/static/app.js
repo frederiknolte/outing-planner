@@ -45,6 +45,7 @@ const I = {
   down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
   flag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22V4M4 4h13l-2 4 2 4H4"/></svg>',
   link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
 };
 
@@ -180,18 +181,34 @@ function renderLogin() {
 }
 
 // ------------------------------------------------------------------ shell --
+/* Top-level menu items, plus child pages (`parent`) that appear as tabs above the page.
+   Child pages keep their own URL, so old links like #/subs still work. */
 const ROUTES = [
-  { id: "schedule", label: "Schedule", icon: I.calendar },
+  { id: "schedule", label: "Schedule", tab: "Week", icon: I.calendar },
+  { id: "subs", label: "Sub board", parent: "schedule", icon: I.swap, count: "subs" },
   { id: "signup", label: "Sign up", adminLabel: "Sign-ups", icon: I.calendar },
-  { id: "subs", label: "Sub board", icon: I.swap },
   { id: "races", label: "Races", icon: I.flag },
-  { id: "me", label: "My outings", icon: I.user, member: true },
-  { id: "stats", label: "Leaderboard", icon: I.trophy },
-  { id: "rowers", label: "Rowers", icon: I.user },
-  { id: "boats", label: "Boat park", icon: I.boat },
-  { id: "coaches", label: "Coaches", icon: I.whistle, admin: true },
-  { id: "settings", label: "Settings", icon: I.info, admin: true },
+  { id: "me", label: "My outings", icon: I.user },
+  { id: "stats", label: "Leaderboard", parent: "me", icon: I.trophy },
+  { id: "rowers", label: "Rowers", tab: "Members", icon: I.user },
+  { id: "reminders", label: "Subs reminders", parent: "rowers", icon: I.user, admin: true, count: "reminders" },
+  { id: "coaches", label: "Coaches", parent: "rowers", icon: I.whistle, admin: true },
+  { id: "boats", label: "Boat park", tab: "Boats", icon: I.boat },
+  { id: "issues", label: "Issues", parent: "boats", icon: I.alert, count: "issues" },
+  { id: "settings", label: "Settings", icon: I.gear, admin: true, gear: true },
 ];
+S.counts = {};
+const routeAllowed = (r) => !r.admin || isAdmin();
+const topOf = (r) => (r.parent ? ROUTES.find((x) => x.id === r.parent) : r);
+const countBadge = (key, cls = "count") => `<span class="${cls}" data-count="${key}"${S.counts[key] ? "" : " hidden"}>${S.counts[key] || ""}</span>`;
+/* Update a badge everywhere it appears (menu, phone menu button, tabs) without re-rendering the page. */
+function setCount(key, n) {
+  S.counts[key] = n;
+  $$(`[data-count="${key}"]`).forEach((el) => { el.textContent = n || ""; el.hidden = !n; });
+}
+/* Navigate without the hashchange handler (which would close an open modal); returns once the page has rendered. */
+function go(id) { if (location.hash !== `#/${id}`) history.pushState(null, "", `#/${id}`); return route(); }
+const rerender = () => (S.page ? S.page() : route());
 
 const routeLabel = (r) => (isAdmin() && r.adminLabel) || r.label;
 function setNavOpen(open) {
@@ -205,20 +222,28 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") setNavOpen
 document.addEventListener("click", (e) => { if (!e.target.closest(".topbar")) setNavOpen(false); });
 
 function shell(active) {
-  const routes = ROUTES.filter((r) => (!r.admin || isAdmin()));
-  const cur = routes.find((r) => r.id === active) || routes[0];
+  const routes = ROUTES.filter((r) => !r.parent && !r.gear && routeAllowed(r));
+  const here = ROUTES.find((r) => r.id === active) || ROUTES[0];
+  const top = topOf(here);
+  const cur = top.gear ? here : top;
   const name = meName();
+  // A top-level item shows the count of its child tabs (e.g. Schedule shows open subs).
+  const kidCount = (r) => ROUTES.filter((k) => k.parent === r.id && k.count && routeAllowed(k)).map((k) => countBadge(k.count)).join("");
+  const tabs = ROUTES.filter((r) => (r.id === top.id || r.parent === top.id) && routeAllowed(r));
   $("#app").innerHTML = `
   <header class="topbar"><div class="topbar-inner">
     <a class="brand" href="#/schedule" style="color:inherit"><img class="brand-mark" src="/static/crest.png" alt=""><div>${esc(S.boot.club_name || "Reuben Boat Club")}<small>Outing planner · Oxford</small></div></a>
-    <button class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="main-nav"><span class="nav-ic">${cur.icon}</span><span class="nav-cur">${esc(routeLabel(cur))}</span><span class="count" id="nav-toggle-count"${active !== "subs" && S.openSubs ? "" : " hidden"}>${S.openSubs}</span><span class="chev">${I.down}</span></button>
-    <nav class="nav" id="main-nav">${routes.map((r) => `<a href="#/${r.id}" class="${r.id === active ? "active" : ""}"${r.id === active ? ` aria-current="page"` : ""}><span class="nav-ic">${r.icon}</span><span class="nav-l">${esc(routeLabel(r))}</span>${r.id === "subs" && S.openSubs ? `<span class="count">${S.openSubs}</span>` : ""}</a>`).join("")}</nav>
+    <button class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="main-nav"><span class="nav-ic">${cur.icon}</span><span class="nav-cur">${esc(routeLabel(cur))}</span>${countBadge("subs")}<span class="chev">${I.down}</span></button>
+    <nav class="nav" id="main-nav">${routes.map((r) => `<a href="#/${r.id}" class="${r.id === top.id ? "active" : ""}"${r.id === top.id ? ` aria-current="page"` : ""}><span class="nav-ic">${r.icon}</span><span class="nav-l">${esc(routeLabel(r))}</span>${kidCount(r)}</a>`).join("")}
+      ${isAdmin() ? `<a href="#/settings" class="nav-settings ${active === "settings" ? "active" : ""}"><span class="nav-ic">${I.gear}</span><span class="nav-l">Settings</span></a>` : ""}</nav>
     <div class="top-actions">
       ${isAdmin() ? `<span class="role-badge">Admin</span>` : ""}
+      ${isAdmin() ? `<a class="btn ghost icon top-gear ${active === "settings" ? "on" : ""}" href="#/settings" title="Settings" aria-label="Settings">${I.gear}</a>` : ""}
       <button class="me-chip" id="me-chip" title="Choose who you are">${name ? `<span class="avatar">${esc(initials(name))}</span><span class="n">${esc(name)}</span>` : `<span class="avatar" style="background:var(--surface-3);color:var(--text-3)">?</span><span class="n">Who are you?</span>`}</button>
       <button class="btn ghost icon" id="logout" title="Sign out">${I.logout}</button>
     </div>
   </div></header>
+  ${tabs.length > 1 ? `<div class="subnav"><nav class="subnav-inner" aria-label="${esc(routeLabel(top))}">${tabs.map((r) => `<a href="#/${r.id}" class="${r.id === active ? "on" : ""}"${r.id === active ? ` aria-current="page"` : ""}>${esc(r.tab || r.label)}${r.count ? countBadge(r.count, "count-pill") : ""}</a>`).join("")}</nav></div>` : ""}
   <main class="main" id="main"><div class="spinner"></div></main>`;
   $("#nav-toggle").onclick = (e) => { e.stopPropagation(); setNavOpen(!$(".topbar").classList.contains("nav-open")); };
   $("#main-nav").onclick = () => setNavOpen(false);
@@ -971,15 +996,18 @@ async function fillSub(subId) {
   if (admin) go(); else requireMe(go);
 }
 
-async function refreshSubsCount() {
-  try { const s = await api("/api/subs"); S.openSubs = s.open.length; const n = $('.nav a[href="#/subs"]'); if (n) { n.querySelector(".count")?.remove(); if (S.openSubs) n.insertAdjacentHTML("beforeend", `<span class="count">${S.openSubs}</span>`); }
-    const tc = $("#nav-toggle-count"); if (tc) { tc.textContent = S.openSubs; tc.hidden = !S.openSubs || !!n?.classList.contains("active"); } } catch {}
+async function refreshCounts() {
+  const get = async (key, path, n) => { try { setCount(key, n(await api(path))); } catch {} };
+  get("subs", "/api/subs", (d) => d.open.length);
+  get("issues", "/api/issues", (d) => d.issues.filter((i) => d.active.includes(i.status)).length);
+  if (isAdmin()) get("reminders", "/api/admin/subs-reminders", (d) => d.members.length);
 }
+const refreshSubsCount = refreshCounts;
 
 async function pageSubs() {
   let data;
   try { data = await api("/api/subs"); } catch (e) { return fail(e); }
-  S.openSubs = data.open.length;
+  setCount("subs", data.open.length);
   const card = (s, filled) => {
     const d = pd(s.outing.date);
     return `<article class="card sub">
@@ -1102,17 +1130,14 @@ async function pageStats() {
 
 // ----------------------------------------------------------------- rowers --
 let rowerSort = { k: "name", dir: 1 }, rowerQ = "", rowerCat = "all";
-const rowersTabs = (on, nRem) => `<div class="seg" id="rw-tabs"><button data-t="members" class="${on === "members" ? "on" : ""}">Members</button><button data-t="subs" class="${on === "subs" ? "on" : ""}">Subs reminders${nRem ? ` <span class="count-pill">${nRem}</span>` : ""}</button></div>`;
-const wireRowersTabs = () => $$("#rw-tabs button").forEach((b) => b.onclick = () => { S.rowersTab = b.dataset.t; route(); });
 
 async function pageRowers() {
   const admin = isAdmin();
-  if (admin && S.rowersTab === "subs") return pageSubsReminders();
   let rows, meta = {}, nRem = 0;
   try {
     if (admin) {
       const [r, rem] = await Promise.all([api("/api/admin/members"), api("/api/admin/subs-reminders")]);
-      rows = r.members.map((m) => ({ ...m, ...m.totals })); meta = r; nRem = rem.members.length;
+      rows = r.members.map((m) => ({ ...m, ...m.totals })); meta = r; nRem = rem.members.length; setCount("reminders", nRem);
     }
     else rows = await api("/api/rowers");
   } catch (e) { return fail(e); }
@@ -1146,7 +1171,7 @@ async function pageRowers() {
   const allOut = rows.reduce((a, r) => a + r.total, 0);
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>${admin ? "Members" : "Rowers"}</h1><p>${admin ? "Manage the squad, subs and swim tests. Outing counts update automatically from the schedule." : "Outing counts across the squad."}</p></div>
-      ${admin ? `<div class="toolbar">${rowersTabs("members", nRem)}<button class="btn" id="rw-export">${I.download}Export CSV</button><button class="btn primary" id="rw-add">${I.plus}Add member</button></div>` : ""}</div>
+      ${admin ? `<div class="toolbar"><button class="btn" id="rw-export">${I.download}Export CSV</button><button class="btn primary" id="rw-add">${I.plus}Add member</button></div>` : ""}</div>
     <div class="stats" style="margin-bottom:16px">
       <div class="card stat"><div class="k">Members</div><div class="v">${rows.filter((r) => r.active !== false).length}</div><div class="s">${novices} novice · ${rows.filter((r) => r.active !== false).length - novices} senior</div></div>
       <div class="card stat"><div class="k">Coxes</div><div class="v">${rows.filter((r) => r.cox_status && r.active !== false).length}</div><div class="s">with a cox status</div></div>
@@ -1161,7 +1186,6 @@ async function pageRowers() {
     <div class="card table-wrap" id="rw-table"></div>`;
   $("#rw-q").oninput = (e) => { rowerQ = e.target.value.trim().toLowerCase(); draw(); };
   $$("#rw-cat button").forEach((b) => b.onclick = () => { rowerCat = b.dataset.c; $$("#rw-cat button").forEach((x) => x.classList.toggle("on", x === b)); draw(); });
-  if (admin) wireRowersTabs();
   if (admin) { $("#rw-add").onclick = () => editMember(null, meta); $("#rw-export").onclick = () => exportModal("/api/admin/members.csv", "all members"); }
   draw();
 }
@@ -1307,8 +1331,7 @@ async function pageSubsReminders() {
   };
   const groups = Object.keys(REM_TIERS).map((t) => [t, list.filter((x) => x.tier === t)]).filter(([, l]) => l.length);
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>Subs reminders</h1><p>Unpaid members to contact for ${esc(d.term)} ${esc(d.year)}, most urgent first. Outings already scheduled are counted.${d.cutoff ? ` Subs cutoff: <b>${fmtLong(d.cutoff)}</b>.` : ""}</p></div>
-      <div class="toolbar">${rowersTabs("subs", d.members.length)}</div></div>
+    <div class="page-head"><div><h1>Subs reminders</h1><p>Unpaid members to contact for ${esc(d.term)} ${esc(d.year)}, most urgent first. Outings already scheduled are counted.${d.cutoff ? ` Subs cutoff: <b>${fmtLong(d.cutoff)}</b>.` : ""}</p></div></div>
     <div class="filters">
       <label class="check small"><input type="checkbox" id="rem-hide" ${hideReminded ? "checked" : ""}> Hide people already reminded</label>
       <div class="toolbar" style="margin-left:auto"><button class="btn sm" id="rem-tpl">Edit message</button>${list.length ? `<button class="btn sm" id="rem-names">${I.copy}Copy all names</button>` : ""}</div>
@@ -1316,7 +1339,7 @@ async function pageSubsReminders() {
     ${groups.length ? groups.map(([t, l]) => `<div class="section-title rem-h ${REM_TIERS[t].cls}">${REM_TIERS[t].title} <span class="faint">· ${l.length} ${l.length === 1 ? "person" : "people"}</span></div>
       <p class="muted small" style="margin:-6px 0 10px">${REM_TIERS[t].hint}</p><div class="rem-list">${l.map(row).join("")}</div>`).join("")
       : `<div class="card empty">${I.check}<h3>No one to remind</h3><p>${hideReminded && d.members.length ? "Everyone on the list has already been reminded." : "Every active member who needs subs has paid, or still has free novice outings left."}</p></div>`}`;
-  wireRowersTabs(); wireReveal($("#main"));
+  setCount("reminders", d.members.length); wireReveal($("#main"));
   const byId = (id) => d.members.find((x) => x.id === +id);
   const markReminded = async (id, on = true) => { try { await api(`/api/admin/members/${id}/reminded`, { method: "POST", body: { reminded: on } }); } catch (e) { fail(e); } };
   const copy = async (text) => { try { await navigator.clipboard.writeText(text); return true; } catch { const t = document.createElement("textarea"); t.value = text; document.body.appendChild(t); t.select(); const ok = document.execCommand("copy"); t.remove(); return ok; } };
@@ -1361,18 +1384,13 @@ const boatSvg = (seats, coxed) => {
 };
 
 async function pageBoats() {
-  let data, iss;
-  try { [data, iss] = await Promise.all([api("/api/admin/boats"), api("/api/issues")]); } catch (e) { return fail(e); }
+  let data;
+  try { data = await api("/api/admin/boats"); } catch (e) { return fail(e); }
   const admin = isAdmin();
   const avail = data.boats.filter((b) => b.status === "available").length;
-  const nActive = iss.issues.filter((i) => iss.active.includes(i.status)).length;
-  S.boatTab = S.boatTab || "boats";
-  const tabs = `<div class="seg" id="bt-tab"><button data-t="boats" class="${S.boatTab === "boats" ? "on" : ""}">Boats</button><button data-t="issues" class="${S.boatTab === "issues" ? "on" : ""}">Issues${nActive ? `<span class="count-pill">${nActive}</span>` : ""}</button></div>`;
-  const wireTabs = () => $$("#bt-tab button").forEach((b) => b.onclick = () => { S.boatTab = b.dataset.t; pageBoats(); });
-  if (S.boatTab === "issues") { pageIssues(data, iss, tabs); wireTabs(); return; }
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>Boat park</h1><p>${data.boats.length} boats · ${avail} available${data.boats.length - avail ? ` · ${data.boats.length - avail} out of service` : ""}</p></div>
-      <div class="toolbar">${tabs}<button class="btn" id="bt-report">${I.alert}Report an issue</button>${admin ? `<button class="btn primary" id="bt-add">${I.plus}Add boat</button>` : ""}</div></div>
+      <div class="toolbar"><button class="btn" id="bt-report">${I.alert}Report an issue</button>${admin ? `<button class="btn primary" id="bt-add">${I.plus}Add boat</button>` : ""}</div></div>
     ${data.boats.length ? `<div class="boats">${data.boats.map((b) => `
       <article class="card boat ${b.status} ${admin ? "clickable" : ""}" data-id="${b.id}">
         <div class="boat-head"><div><div class="boat-name">${esc(b.name)}</div><div class="muted small">${esc(b.boat_type)} · ${b.seats} seat${b.seats > 1 ? "s" : ""}${b.coxed ? " + cox" : ""}</div></div>
@@ -1383,9 +1401,8 @@ async function pageBoats() {
         ${b.open_issues ? `<button class="chip ${ISSUE_SEV[b.worst_issue]?.[1] || "warn"} chip-btn" data-boat-issues="${b.id}">${I.alert}${b.open_issues} open issue${b.open_issues === 1 ? "" : "s"}</button>` : ""}
       </article>`).join("")}</div>`
       : `<div class="card empty">${I.boat}<h3>No boats yet</h3><p>${admin ? "Add the club's fleet so outings can be assigned to specific boats." : "An admin hasn't added the fleet yet."}</p>${admin ? `<button class="btn primary" id="bt-add2">${I.plus}Add first boat</button>` : ""}</div>`}`;
-  wireTabs();
   $("#bt-report").onclick = () => reportIssue(data.boats);
-  $$("[data-boat-issues]").forEach((b) => b.onclick = (e) => { e.stopPropagation(); S.issueBoat = +b.dataset.boatIssues; S.issueFilter = "active"; S.boatTab = "issues"; pageBoats(); });
+  $$("[data-boat-issues]").forEach((b) => b.onclick = (e) => { e.stopPropagation(); S.issueBoat = +b.dataset.boatIssues; S.issueFilter = "active"; go("issues"); });
   if (admin) {
     const add = () => editBoat(null, data.types);
     $("#bt-add").onclick = add; const a2 = $("#bt-add2"); if (a2) a2.onclick = add;
@@ -1498,20 +1515,23 @@ function reportIssue(boats, boatId) {
           const r = await api("/api/issues", { method: "POST", body });
           const files = [...$("#ri-photos", m).files];
           if (files.length) await uploadPhotos(r.id, files, (t) => ($("#ri-prog", m).textContent = t));
-          close(); toast("Issue reported"); S.boatTab = "issues"; await pageBoats(); openIssue(r.id, boats);
+          close(); toast("Issue reported"); await go("issues"); openIssue(r.id, boats);
         } catch (e) { fail(e); btn.disabled = false; }
       };
     },
   });
 }
 
-function pageIssues(data, iss, tabs) {
+async function pageIssues() {
+  let data, iss;
+  try { [data, iss] = await Promise.all([api("/api/admin/boats"), api("/api/issues")]); } catch (e) { return fail(e); }
+  setCount("issues", iss.issues.filter((i) => iss.active.includes(i.status)).length);
   S.issueFilter = S.issueFilter || "active";
   let shown = iss.issues.filter((i) => S.issueFilter === "all" || (S.issueFilter === "active") === iss.active.includes(i.status));
   if (S.issueBoat) shown = shown.filter((i) => i.boat_id === S.issueBoat);
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>Boat park</h1><p>Problems with the boats and how their repairs are going.</p></div>
-      <div class="toolbar">${tabs}<button class="btn primary" id="is-new">${I.plus}Report an issue</button></div></div>
+    <div class="page-head"><div><h1>Boat issues</h1><p>Problems with the boats and how their repairs are going.</p></div>
+      <div class="toolbar"><button class="btn primary" id="is-new">${I.plus}Report an issue</button></div></div>
     <div class="toolbar" style="margin-bottom:14px">
       <div class="seg" id="is-f">${[["active", "Open"], ["done", "Fixed & closed"], ["all", "All"]].map(([k, l]) => `<button data-f="${k}" class="${S.issueFilter === k ? "on" : ""}">${l}</button>`).join("")}</div>
       <select class="input" id="is-boat" style="width:auto"><option value="">All boats</option>${data.boats.map((b) => `<option value="${b.id}" ${S.issueBoat === b.id ? "selected" : ""}>${esc(b.name)}</option>`).join("")}</select></div>
@@ -1522,8 +1542,8 @@ function pageIssues(data, iss, tabs) {
       </button>`).join("")}</div>`
       : `<div class="card empty">${I.check}<h3>${S.issueFilter === "active" ? "No open issues" : "Nothing here"}</h3><p>${S.issueFilter === "active" ? "All boats are in good shape. Spotted a problem? Report it so it can be fixed." : "No issues match these filters."}</p></div>`}`;
   $("#is-new").onclick = () => reportIssue(data.boats, S.issueBoat || undefined);
-  $$("#is-f button").forEach((b) => b.onclick = () => { S.issueFilter = b.dataset.f; pageBoats(); });
-  $("#is-boat").onchange = (e) => { S.issueBoat = +e.target.value || null; pageBoats(); };
+  $$("#is-f button").forEach((b) => b.onclick = () => { S.issueFilter = b.dataset.f; pageIssues(); });
+  $("#is-boat").onchange = (e) => { S.issueBoat = +e.target.value || null; pageIssues(); };
   $$("[data-issue]").forEach((b) => b.onclick = () => openIssue(+b.dataset.issue, data.boats));
 }
 
@@ -1549,7 +1569,7 @@ async function openIssue(id, boats) {
       </div>`,
     foot: `${admin ? `<button class="btn danger" id="iu-del">Delete</button><button class="btn" id="iu-edit">Edit</button>` : ""}<div class="r"><button class="btn" data-close>Close</button><button class="btn primary" id="iu-save">Save update</button></div>`,
     onMount: (m, close) => {
-      const reload = async () => { close(); await pageBoats(); openIssue(id, boats); };
+      const reload = async () => { close(); await rerender(); openIssue(id, boats); };
       $("#iu-save", m).onclick = async () => {
         const note = $("#iu-note", m).value.trim(), status = admin ? $("#iu-st", m).value : "", who = $("#iu-who", m).value.trim();
         const files = [...$("#iu-photos", m).files];
@@ -1571,7 +1591,7 @@ async function openIssue(id, boats) {
       const d = $("#iu-del", m);
       if (d) d.onclick = async () => {
         if (!await confirmBox("Delete this issue?", "Its notes and photos are deleted too. To keep the history, set it to Fixed or Closed instead.", "Delete", true)) return openIssue(id, boats);
-        try { await api(`/api/issues/${id}`, { method: "DELETE" }); toast("Issue deleted"); pageBoats(); } catch (e) { fail(e); }
+        try { await api(`/api/issues/${id}`, { method: "DELETE" }); toast("Issue deleted"); rerender(); } catch (e) { fail(e); }
       };
       const ed = $("#iu-edit", m);
       if (ed) ed.onclick = () => editIssue(i, boats);
@@ -1594,7 +1614,7 @@ function editIssue(i, boats) {
       $("#ei-save", m).onclick = async () => {
         const body = { boat_id: +$("#ei-boat", m).value, title: $("#ei-title", m).value.trim(), severity: sev, description: $("#ei-desc", m).value };
         if (!body.title) return toast("Title is required", true);
-        try { await api(`/api/issues/${i.id}`, { method: "PUT", body }); await pageBoats(); openIssue(i.id, boats); } catch (e) { fail(e); }
+        try { await api(`/api/issues/${i.id}`, { method: "PUT", body }); await rerender(); openIssue(i.id, boats); } catch (e) { fail(e); }
       };
     },
   });
@@ -2289,10 +2309,12 @@ async function reboot() { S.boot = await api("/api/bootstrap"); S.role = S.boot.
 function route() {
   if (!S.role) return renderLogin();
   const id = (location.hash.replace(/^#\/?/, "") || "schedule").split("?")[0];
-  const r = ROUTES.find((x) => x.id === id && (!x.admin || isAdmin())) || ROUTES[0];
+  const r = ROUTES.find((x) => x.id === id && routeAllowed(x)) || ROUTES[0];
   shell(r.id);
-  ({ schedule: pageSchedule, signup: pageSignup, subs: pageSubs, races: pageRaces, me: pageMe, stats: pageStats, rowers: pageRowers, boats: pageBoats, coaches: pageCoaches, settings: pageSettings })[r.id]();
+  S.page = ({ schedule: pageSchedule, signup: pageSignup, subs: pageSubs, races: pageRaces, me: pageMe, stats: pageStats, rowers: pageRowers,
+    reminders: pageSubsReminders, coaches: pageCoaches, boats: pageBoats, issues: pageIssues, settings: pageSettings })[r.id];
   window.scrollTo(0, 0);
+  return S.page();
 }
 
 async function start() {

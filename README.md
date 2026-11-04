@@ -149,6 +149,7 @@ The club boats from its own boathouse on the Isis, so water outings are checked 
 
 ## Notes
 
+- **Menu**: six main pages (Schedule, Sign up, Races, My outings, Rowers, Boat park), the same for rowers and admins. Related pages are tabs under them: *Week / Sub board*, *My outings / Leaderboard*, *Members / Subs reminders / Coaches* (the last two for admins) and *Boats / Issues*. Admins open **Settings** from the gear icon next to their name (on phones, at the bottom of the menu). Old links such as `#/subs` or `#/stats` still work.
 - The shared passwords decide whether someone is an admin or a rower. Rowers pick their own name ("Who are you?"), and the app remembers it on that device. There are no individual accounts, so a rower could pick someone else's name. That's normal for a shared-password club tool.
 - Rowers never see payment or swim-test status. Only admins do.
 - Back up the database from **Settings → Data**, or copy the volume.
