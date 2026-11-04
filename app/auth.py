@@ -12,6 +12,10 @@ def require_member(request: Request) -> str:
     role = role_of(request)
     if role not in ("member", "committee"):
         raise HTTPException(401, "Not signed in")
+    # A committee member can preview the site as a rower; the client sends this header while
+    # that view is on, so pages get exactly what a rower would (no drafts, no eligibility).
+    if role == "committee" and request.headers.get("X-View-As") == "member":
+        return "member"
     return role
 
 

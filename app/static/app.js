@@ -60,6 +60,8 @@ const S = {
   role: null, boot: null, week: null, weekData: null, filter: "all",
   me: (() => { try { return Number(localStorage.getItem("op_me")) || null; } catch { return null; } })(),
   openSubs: 0,
+  realRole: null, // the signed-in role; S.role is the one the site currently renders as
+  viewAsRower: (() => { try { return localStorage.getItem("op_view_rower") === "1"; } catch { return false; } })(),
 };
 const setMe = (id) => { S.me = id; try { id ? localStorage.setItem("op_me", String(id)) : localStorage.removeItem("op_me"); } catch {} };
 const meName = () => S.boot?.members.find((m) => m.id === S.me)?.name;
@@ -67,11 +69,12 @@ const isCommittee = () => S.role === "committee";
 
 async function api(path, opts = {}) {
   const init = { method: opts.method || "GET", headers: {}, credentials: "same-origin" };
+  if (S.realRole === "committee" && S.viewAsRower) init.headers["X-View-As"] = "member";
   if (opts.body instanceof FormData) init.body = opts.body;
   else if (opts.body instanceof Blob) { init.body = opts.body; init.headers["Content-Type"] = opts.body.type || "application/octet-stream"; }
   else if (opts.body !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(opts.body); }
   const r = await fetch(path, init);
-  if (r.status === 401 && path !== "/api/login") { S.role = null; renderLogin(); throw new Error("Signed out"); }
+  if (r.status === 401 && path !== "/api/login") { S.role = S.realRole = null; renderLogin(); throw new Error("Signed out"); }
   const ct = r.headers.get("content-type") || "";
   const data = ct.includes("json") ? await r.json() : await r.text();
   if (!r.ok) {
@@ -186,7 +189,8 @@ function renderLogin() {
     const pw = e.target.password.value;
     try {
       const r = await api("/api/login", { method: "POST", body: { password: pw } });
-      S.role = r.role;
+      S.role = S.realRole = r.role;
+      S.viewAsRower = false; try { localStorage.removeItem("op_view_rower"); } catch {}
       await start();
     } catch (err) { $("#login-err").textContent = err.message; }
   };
@@ -252,7 +256,7 @@ function shell(active) {
     <nav class="nav" id="main-nav">${routes.map((r) => `<a href="#/${r.id}" class="${r.id === top.id ? "active" : ""}"${r.id === top.id ? ` aria-current="page"` : ""}><span class="nav-ic">${r.icon}</span><span class="nav-l">${esc(routeLabel(r))}</span>${kidCount(r)}</a>`).join("")}
       ${isCommittee() ? `<a href="#/settings" class="nav-settings ${active === "settings" ? "active" : ""}"><span class="nav-ic">${I.gear}</span><span class="nav-l">Settings</span></a>` : ""}</nav>
     <div class="top-actions">
-      ${isCommittee() ? `<span class="role-badge">Committee</span>` : ""}
+      ${S.realRole === "committee" ? `<button class="role-badge ${S.viewAsRower ? "rower" : ""}" id="view-toggle" title="${S.viewAsRower ? "Viewing as a rower — switch back to the committee view" : "Switch to the rower view"}" aria-pressed="${S.viewAsRower}">${S.viewAsRower ? "Rower" : "Committee"}</button>` : ""}
       ${isCommittee() ? `<a class="btn ghost icon top-gear ${active === "settings" ? "on" : ""}" href="#/settings" title="Settings" aria-label="Settings">${I.gear}</a>` : ""}
       <button class="me-chip" id="me-chip" title="Choose who you are">${name ? `<span class="avatar">${esc(initials(name))}</span><span class="n">${esc(name)}</span>` : `<span class="avatar" style="background:var(--surface-3);color:var(--text-3)">?</span><span class="n">Who are you?</span>`}</button>
       <button class="btn ghost icon" id="logout" title="Sign out">${I.logout}</button>
@@ -263,7 +267,8 @@ function shell(active) {
   $("#nav-toggle").onclick = (e) => { e.stopPropagation(); setNavOpen(!$(".topbar").classList.contains("nav-open")); };
   $("#main-nav").onclick = () => setNavOpen(false);
   $("#me-chip").onclick = () => pickIdentity();
-  $("#logout").onclick = async () => { await api("/api/logout", { method: "POST" }).catch(() => {}); S.role = null; renderLogin(); };
+  const vt = $("#view-toggle"); if (vt) vt.onclick = () => setViewAsRower(!S.viewAsRower);
+  $("#logout").onclick = async () => { await api("/api/logout", { method: "POST" }).catch(() => {}); S.role = S.realRole = null; renderLogin(); };
 }
 
 function pickIdentity(after) {
@@ -2746,6 +2751,18 @@ function editRace(r, data) {
 // ----------------------------------------------------------------- router --
 async function reboot() { S.boot = await api("/api/bootstrap"); S.role = S.boot.role; }
 
+/* Committee only: preview the whole site as a rower sees it (the server answers as for a rower too). */
+async function setViewAsRower(on) {
+  if (S.realRole !== "committee") return;
+  S.viewAsRower = on;
+  try { on ? localStorage.setItem("op_view_rower", "1") : localStorage.removeItem("op_view_rower"); } catch {}
+  S.week = null; S.weekData = null; S.counts = {};
+  try { await reboot(); } catch (e) { return fail(e); }
+  refreshSubsCount();
+  await route();
+  toast(on ? "Viewing as a rower" : "Back to the committee view");
+}
+
 function route() {
   if (!S.role) return renderLogin();
   const id = (location.hash.replace(/^#\/?/, "") || "schedule").split("?")[0];
@@ -2766,6 +2783,6 @@ async function start() {
 
 window.addEventListener("hashchange", () => { $("#modal-root").innerHTML = ""; route(); });
 (async () => {
-  try { const r = await api("/api/me"); S.role = r.role; } catch {}
+  try { const r = await api("/api/me"); S.role = S.realRole = r.role; } catch {}
   S.role ? start() : renderLogin();
 })();

@@ -371,7 +371,9 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
 .me-chip:hover { background: var(--surface-3); }
 .me-chip span.n { overflow: hidden; text-overflow: ellipsis; }
 .avatar { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 800; color: #fff; flex: none; background: linear-gradient(135deg, var(--oxford), var(--crest-green)); }
-.role-badge { font-size: 11px; font-weight: 750; text-transform: uppercase; letter-spacing: .06em; padding: 3px 8px; border-radius: 6px; background: var(--crest-gold); color: #1d1500; }
+.role-badge { font-size: 11px; font-weight: 750; text-transform: uppercase; letter-spacing: .06em; padding: 3px 8px; border-radius: 6px; background: var(--crest-gold); color: #1d1500; border: 0; font-family: inherit; cursor: pointer; }
+.role-badge:hover { filter: brightness(1.08); }
+.role-badge.rower { background: #9fd3f5; color: #06263d; }
 .topbar .me-chip { background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .18); color: #fff; }
 .topbar .me-chip:hover { background: rgba(255, 255, 255, .16); }
 .topbar .me-chip .avatar { box-shadow: 0 0 0 2px rgba(255, 255, 255, .25); }
