@@ -288,7 +288,7 @@ function pickIdentity(after) {
 function requireMe(fn) { if (S.me && meName()) fn(); else pickIdentity(fn); }
 
 // --------------------------------------------------------------- schedule --
-function seatRow(o, s) {
+function seatRow(o, s, extra = "") {
   const m = s.member;
   const mine = m && m.id === S.me;
   const cls = ["seat"];
@@ -305,7 +305,7 @@ function seatRow(o, s) {
   else if (mine && !o.past) tag = `<span class="tags">${subTag}<button class="tag ok" data-act="reqsub" data-o="${o.id}" title="Can't make it? Request a sub">Can't go</button></span>`;
   else tag = subTag;
   const title = m && isCommittee() && s.eligibility ? (s.eligibility.reasons.join(", ") || s.eligibility.note || "") : "";
-  return `<div class="${cls.join(" ")}" title="${esc(title)}"><span class="sl">${esc(({ Stroke: "S", Bow: "B", Sculler: "1x" })[s.label] || s.label)}</span><span class="sn">${m ? esc(m.name) : "Open"}</span>${tag}</div>`;
+  return `<div class="${cls.join(" ")}" title="${esc(title)}"><span class="sl">${esc(({ Stroke: "S", Bow: "B", Sculler: "1x" })[s.label] || s.label)}</span><span class="sn">${m ? esc(m.name) : "Open"}</span>${tag}${extra ? `<span class="seat-extra">${extra}</span>` : ""}</div>`;
 }
 
 /* Land sessions: list who's in, then the open spots anyone can take. */
@@ -383,7 +383,7 @@ function outingCard(o) {
   const kindChip = o.kind === "water" ? `<span class="chip water">${I.water}Water</span>` : `<span class="chip land">${I.land}Land</span>`;
   const full = o.spots === 0;
   const coxChip = o.cox_check && o.cox_check !== o.spots_text ? `<span class="chip ${o.cox_check === "Bankrider needed" ? "bad" : o.cox_check.startsWith("Cox needed") || o.cox_check === "Cox status not set" ? "warn" : "ok"}">${esc(o.cox_check)}</span>` : "";
-  return `<article class="card outing ${o.kind} ${o.published ? "" : "draft"} ${o.past ? "past" : ""} ${committee ? "clickable" : ""}" data-oid="${o.id}">
+  return `<article class="card outing ${o.kind} ${o.published ? "" : "draft"} ${o.past ? "past" : ""} clickable" data-oid="${o.id}">
     <div class="o-top"><div>${o.time ? `<div class="o-time tnum">${esc(tRange(o))}</div><div class="o-title">${esc(o.title || (o.kind === "water" ? "Water outing" : "Land training"))}</div>` : `<div class="o-time">${esc(o.title || (o.kind === "water" ? "Water outing" : "Land training"))}</div><div class="o-title faint small">Time TBC</div>`}</div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${kindChip}${committee && !o.published ? `<span class="chip">Draft</span>` : ""}</div></div>
     <div class="o-sub">
@@ -472,15 +472,49 @@ async function pageSchedule() {
   $$(".outing").forEach((card) => card.addEventListener("click", (e) => {
     const t = e.target.closest("[data-act]");
     const o = data.outings.find((x) => x.id === +card.dataset.oid);
-    if (t) {
-      e.stopPropagation();
-      if (t.dataset.act === "reqsub") return requestSub(o);
-      if (t.dataset.act === "fill") return fillSub(+t.dataset.sub, o);
-      if (t.dataset.act === "join") return joinLand(o);
-      if (t.dataset.act === "leave") return leaveLand(o);
-    }
-    if (committee) editOuting(o);
+    if (t) { e.stopPropagation(); return outingAct(t, o); }
+    if (committee) editOuting(o); else viewOuting(o);
   }));
+}
+
+function outingAct(t, o) {
+  if (t.dataset.act === "reqsub") return requestSub(o);
+  if (t.dataset.act === "fill") return fillSub(+t.dataset.sub, o);
+  if (t.dataset.act === "join") return joinLand(o);
+  if (t.dataset.act === "leave") return leaveLand(o);
+}
+
+/* Rowers' read-only view of an outing: full names, who's subbing for whom, and the same seat actions as the card. */
+function viewOuting(o) {
+  const name = o.title || (o.kind === "water" ? "Water outing" : "Land training");
+  const seats = o.kind === "land" ? o.seats.filter((s) => s.member).map((s, i) => ({ ...s, label: String(i + 1) })) : o.seats;
+  const extra = (s) => [
+    s.subbed_for ? `Subbing for ${esc(s.subbed_for)}` : "",
+    s.sub_request ? `Sub needed${s.sub_request.reason ? `: ${esc(s.sub_request.reason)}` : ""}` : "",
+  ].filter(Boolean).join(" · ");
+  const row = (s) => seatRow(o, s, extra(s));
+  const coxChip = o.cox_check && o.cox_check !== o.spots_text ? `<span class="chip ${o.cox_check === "Bankrider needed" ? "bad" : o.cox_check.startsWith("Cox needed") || o.cox_check === "Cox status not set" ? "warn" : "ok"}">${esc(o.cox_check)}</span>` : "";
+  const mine = o.seats.some((s) => s.member && s.member.id === S.me);
+  const join = o.kind === "land" && o.spots > 0 && !o.past && !mine;
+  modal({
+    title: esc(name),
+    body: `
+      <div class="o-detail">
+        <div><b>${fmtLong(o.date)}</b>${o.time ? ` · <span class="tnum">${esc(tRange(o))}</span>` : ` · <span class="faint">Time TBC</span>`}
+          ${o.kind === "water" ? `<span class="chip water">${I.water}Water</span>` : `<span class="chip land">${I.land}Land</span>`}</div>
+        ${o.boat ? `<div>${I.boat}${esc(o.boat.name)} <span class="faint">${esc(o.boat.type)}</span></div>` : ""}
+        ${o.location ? `<div>${I.pin}${o.maps_url ? `<a href="${esc(o.maps_url)}" target="_blank" rel="noopener">${esc(o.location)}</a>` : esc(o.location)}</div>` : ""}
+        ${o.coach ? `<div>${I.whistle}Coach: ${esc(o.coach)}</div>` : ""}
+      </div>
+      <div class="seats seats-detail">${seats.map(row).join("") || `<div class="seat open"><span class="sl"></span><span class="sn">No one yet. Be the first!</span></div>`}</div>
+      <div class="o-foot"><span class="chip ${o.spots === 0 ? "ok" : o.kind === "land" ? "accent" : "warn"}">${o.spots === 0 ? I.check : ""}${esc(o.spots_text)}${o.kind === "land" && o.spots ? ` of ${o.capacity}` : ""}</span>${coxChip}</div>
+      ${o.notes ? `<div class="callout">${I.info}<div>${esc(o.notes)}</div></div>` : ""}
+      ${riverList((o.river || []).filter((r) => !o.past && r.level === "stop"))}`,
+    foot: `<div class="r">${join ? `<button class="btn primary" data-act="join">${I.plus}Join</button>` : ""}<button class="btn" data-close>Close</button></div>`,
+    onMount: (el, close) => {
+      $$("[data-act]", el).forEach((b) => b.onclick = (e) => { e.stopPropagation(); close(); outingAct(b, o); });
+    },
+  });
 }
 
 function copyWeek(target) {
