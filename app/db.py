@@ -238,7 +238,6 @@ MIGRATIONS = {
         "cancelled": "INTEGER NOT NULL DEFAULT 0",     # kept on the schedule but doesn't count
         "cancel_reason": "TEXT NOT NULL DEFAULT ''",   # free-text note shown with the cancellation
         "cancel_category": "TEXT NOT NULL DEFAULT ''", # flag | weather | bankrider | numbers | other (see logic.CANCEL_REASONS)
-        "happened": "INTEGER NOT NULL DEFAULT 0",      # committee confirmed the session took place
     },
     "races": {"squad": "TEXT NOT NULL DEFAULT 'any'"},             # any | open | women
     "race_responses": {
@@ -259,6 +258,11 @@ MIGRATIONS = {
         "subs_reminded_at": "TEXT NOT NULL DEFAULT ''",  # when the committee last reminded them to pay subs
     },
 }
+
+# Columns that were removed again; dropped from existing databases on start-up.
+DROPPED_COLUMNS = [
+    ("outings", "happened"),   # the "Happened" confirmation was removed: past + not cancelled = went ahead
+]
 
 DEFAULT_SETTINGS = {
     "club_name": "Reuben Boat Club",
@@ -317,6 +321,9 @@ def init_db() -> None:
             for col, decl in cols.items():
                 if col not in have:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        for table, col in DROPPED_COLUMNS:
+            if col in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+                conn.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
         _normalize_times(conn)
         # Races used to have a separate "Cox only" answer; it's now Available + the cox role.
         conn.execute("UPDATE race_responses SET status = 'yes', role = 'cox', squad = '', side = '' WHERE status = 'cox'")

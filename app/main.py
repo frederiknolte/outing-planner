@@ -1087,8 +1087,6 @@ def _save_outing(conn, rules: Rules, oid: Optional[int], b: OutingIn) -> int:
                coxed=?, notes=? WHERE id=?""", fields + (oid,))
         if b.published is not None:
             conn.execute("UPDATE outings SET published=? WHERE id=?", (int(b.published), oid))
-        if b.date > rules.today.isoformat():
-            conn.execute("UPDATE outings SET happened=0 WHERE id=?", (oid,))
     # replace seat assignments; open sub requests whose requester left the seat get cancelled
     conn.execute("DELETE FROM assignments WHERE outing_id=?", (oid,))
     for s, mid in seats.items():
@@ -1117,16 +1115,16 @@ def outing_update(oid: int, b: OutingIn, _: str = Depends(require_committee)):
 
 
 class OutingStatusIn(BaseModel):
-    status: str                                    # happened | cancelled | scheduled (= clear the mark)
+    status: str                                    # cancelled | scheduled (= restore)
     category: str = ""                             # cancelled only: a CANCEL_REASONS key
     reason: str = Field("", max_length=200)        # cancelled only: optional note
 
 
 @app.post("/api/committee/outings/{oid}/status")
 def outing_status_set(oid: int, b: OutingStatusIn, _: str = Depends(require_committee)):
-    """Record what happened to a session. Cancelled sessions stay on the schedule with their crew, but no
+    """Cancel a session or restore it. Cancelled sessions stay on the schedule with their crew, but no
     longer count towards outing totals, free outings, stats or double-booking, and open sub requests close.
-    "happened" confirms a past session took place; "scheduled" clears either mark."""
+    "scheduled" clears the cancellation."""
     with db.get_conn() as conn:
         o = conn.execute("SELECT date FROM outings WHERE id=?", (oid,)).fetchone()
         if not o:
@@ -1134,16 +1132,12 @@ def outing_status_set(oid: int, b: OutingStatusIn, _: str = Depends(require_comm
         if b.status == "cancelled":
             if b.category not in CANCEL_REASONS:
                 raise HTTPException(400, "Pick a reason for the cancellation")
-            conn.execute("UPDATE outings SET cancelled=1, happened=0, cancel_category=?, cancel_reason=? WHERE id=?",
+            conn.execute("UPDATE outings SET cancelled=1, cancel_category=?, cancel_reason=? WHERE id=?",
                          (b.category, b.reason.strip(), oid))
             conn.execute("""UPDATE sub_requests SET status='cancelled', resolved_at=datetime('now')
                             WHERE outing_id=? AND status='open'""", (oid,))
-        elif b.status == "happened":
-            if o["date"] > Rules(conn).today.isoformat():
-                raise HTTPException(400, "This session hasn't happened yet")
-            conn.execute("UPDATE outings SET cancelled=0, happened=1, cancel_category='', cancel_reason='' WHERE id=?", (oid,))
         elif b.status == "scheduled":
-            conn.execute("UPDATE outings SET cancelled=0, happened=0, cancel_category='', cancel_reason='' WHERE id=?", (oid,))
+            conn.execute("UPDATE outings SET cancelled=0, cancel_category='', cancel_reason='' WHERE id=?", (oid,))
         else:
             raise HTTPException(400, "Unknown status")
         return {"ok": True}
@@ -1209,23 +1203,6 @@ def week_publish(b: WeekIn, _: str = Depends(require_committee)):
         conn.execute("UPDATE outings SET published=? WHERE date BETWEEN ? AND ?",
                      (int(b.published), ws.isoformat(), (ws + timedelta(days=6)).isoformat()))
         return {"ok": True}
-
-
-class WeekConfirmIn(BaseModel):
-    start: str
-
-
-@app.post("/api/committee/week/confirm")
-def week_confirm(b: WeekConfirmIn, _: str = Depends(require_committee)):
-    """Mark every past, published, not-cancelled session of the week as happened (the usual case)."""
-    ws = monday_of(date.fromisoformat(b.start))
-    with db.get_conn() as conn:
-        today = Rules(conn).today.isoformat()
-        n = conn.execute(
-            """UPDATE outings SET happened=1 WHERE date BETWEEN ? AND ? AND date < ?
-               AND published=1 AND cancelled=0 AND happened=0""",
-            (ws.isoformat(), (ws + timedelta(days=6)).isoformat(), today)).rowcount
-        return {"ok": True, "confirmed": n}
 
 
 class CopyWeekIn(BaseModel):

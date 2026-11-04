@@ -323,10 +323,10 @@ function landSpots(o) {
   const mine = inIt.some((s) => s.member.id === S.me);
   const join = o.spots > 0 && !o.past && !o.cancelled && !mine;
   return `<div class="seats">${inIt.map((s, i) => seatRow(o, { ...s, label: String(i + 1) })).join("") || `<div class="seat open"><span class="sl"></span><span class="sn">No one yet. Be the first!</span></div>`}</div>
-    <div class="o-foot land-open">
-      <span class="chip ${o.spots ? "accent" : "ok"}">${o.spots ? "" : I.check}${esc(o.spots_text)}${o.spots ? ` of ${o.capacity}` : ""}</span>
+    ${o.spots || join || (mine && !o.past && !o.cancelled) ? `<div class="o-foot land-open">
+      ${o.spots ? `<span class="chip accent">${esc(o.spots_text)} of ${o.capacity}</span>` : "<span></span>"}
       ${join ? `<button class="btn sm primary" data-act="join" title="Take a spot in this session">${I.plus}Join</button>` : mine && !o.past && !o.cancelled ? `<span class="chip ok">${I.check}You're in</span>` : ""}
-    </div>`;
+    </div>` : ""}`;
 }
 
 function joinLand(o) {
@@ -394,7 +394,7 @@ const cancelText = (o) => [o.cancel_label, o.cancel_reason].filter(Boolean).join
 
 async function setOutingStatus(o, status, extra = {}) {
   await api(`/api/committee/outings/${o.id}/status`, { method: "POST", body: { status, ...extra } });
-  toast(status === "cancelled" ? "Session cancelled" : status === "happened" ? "Marked as happened" : "Session restored");
+  toast(status === "cancelled" ? "Session cancelled" : "Session restored");
   pageSchedule();
 }
 
@@ -421,14 +421,22 @@ function cancelOuting(o) {
   });
 }
 
+/* Footer tags for a water outing: only things that need attention (empty seats, missing cox or bankrider,
+   cox status not set). A full crew with a fine cox shows nothing. */
+const COX_ATTENTION = { "Bankrider needed": "bad", "Cox needed": "warn", "Cox status not set": "warn" };
+function waterFoot(o) {
+  const tags = [];
+  if (o.spots_text !== "Full") tags.push(`<span class="chip warn">${esc(o.spots_text)}</span>`);
+  if (COX_ATTENTION[o.cox_check] && o.cox_check !== o.spots_text) tags.push(`<span class="chip ${COX_ATTENTION[o.cox_check]}">${esc(o.cox_check)}</span>`);
+  return tags.length ? `<div class="o-foot">${tags.join("")}</div>` : "";
+}
+
 function outingCard(o) {
   const committee = isCommittee();
   const kindChip = o.kind === "water" ? `<span class="chip water">${I.water}Water</span>` : `<span class="chip land">${I.land}Land</span>`;
-  const full = o.spots === 0;
-  const coxChip = o.cox_check && o.cox_check !== o.spots_text ? `<span class="chip ${o.cox_check === "Bankrider needed" ? "bad" : o.cox_check.startsWith("Cox needed") || o.cox_check === "Cox status not set" ? "warn" : "ok"}">${esc(o.cox_check)}</span>` : "";
   return `<article class="card outing ${o.kind} ${o.published ? "" : "draft"} ${o.past ? "past" : ""} ${o.cancelled ? "cancelled" : ""} clickable" data-oid="${o.id}">
     <div class="o-top"><div>${o.time ? `<div class="o-time tnum">${esc(tRange(o))}</div><div class="o-title">${esc(o.title || (o.kind === "water" ? "Water outing" : "Land training"))}</div>` : `<div class="o-time">${esc(o.title || (o.kind === "water" ? "Water outing" : "Land training"))}</div><div class="o-title faint small">Time TBC</div>`}</div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${kindChip}${o.cancelled ? `<span class="chip bad">Cancelled</span>` : ""}${committee && o.happened ? `<span class="chip ok" title="Confirmed as happened">${I.check}Happened</span>` : ""}${committee && !o.published ? `<span class="chip">Draft</span>` : ""}</div></div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${kindChip}${o.cancelled ? `<span class="chip bad">Cancelled</span>` : ""}${committee && !o.published ? `<span class="chip">Draft</span>` : ""}</div></div>
     ${o.cancelled ? `<div class="o-cancel">${I.x}<span>${esc(cancelText(o) || "This session has been cancelled")}</span></div>` : ""}
     <div class="o-sub">
       ${o.boat ? `<span>${I.boat}${esc(o.boat.name)} <span class="faint">${esc(o.boat.type)}</span></span>` : o.kind === "water" ? `<span class="faint">${I.boat}${o.capacity}${o.coxed ? "+" : ""} · no boat set</span>` : ""}
@@ -436,13 +444,10 @@ function outingCard(o) {
       ${o.coach ? `<span>${I.whistle}${esc(o.coach)}</span>` : ""}
     </div>
     ${o.kind === "land" ? landSpots(o) : `<div class="seats">${o.seats.map((s) => seatRow(o, s)).join("")}</div>
-    ${o.cancelled ? "" : `<div class="o-foot"><span class="chip ${full ? "ok" : "warn"}">${full ? I.check : ""}${esc(o.spots_text)}</span>${coxChip}</div>`}`}
+    ${o.cancelled ? "" : waterFoot(o)}`}
     ${o.notes ? `<div class="small muted" style="margin-top:6px">${esc(o.notes)}</div>` : ""}
     ${committee && o.warnings.length ? `<div class="warnings">${o.warnings.map((w) => `<div>${I.alert}<span>${esc(w)}</span></div>`).join("")}</div>` : ""}
     ${riverList((o.river || []).filter((r) => !o.past && (committee || r.level === "stop")))}
-    ${committee && o.status === "unconfirmed" ? `<div class="o-confirm"><span>Did it happen?</span>
-      <button class="btn sm" data-act="happened" title="Confirm this session took place">${I.check}Yes</button>
-      <button class="btn sm" data-act="cancel" title="It didn't go ahead: record why">${I.x}Cancelled</button></div>` : ""}
   </article>`;
 }
 
@@ -461,7 +466,6 @@ async function pageSchedule() {
     : `<span class="status-pill" style="background:var(--warn-soft);color:var(--warn)"><span class="dot"></span>${data.published}/${data.total} published</span>`;
   const outs = data.outings.filter((o) => S.filter === "all" || (S.filter === "mine" ? o.seats.some((s) => s.member && s.member.id === S.me) : S.filter === "subs" ? o.open_subs > 0 : S.filter === "open" ? (o.kind === "land" && o.spots > 0 && !o.past && !o.cancelled) : o.kind === S.filter));
   const myCount = data.outings.filter((o) => o.seats.some((s) => s.member && s.member.id === S.me)).length;
-  const unconfirmed = committee ? data.outings.filter((o) => o.status === "unconfirmed" && o.published).length : 0;
   main.innerHTML = `
     <div class="page-head">
       <div><h1>${isThis ? "This week" : data.start > S.boot.this_week ? (addDays(S.boot.this_week, 7) === data.start ? "Next week" : "Upcoming week") : "Past week"}</h1>
@@ -474,9 +478,6 @@ async function pageSchedule() {
         </div>
         <button class="btn" id="wk-cal" title="Add your outings to your phone's calendar">${I.calendar}Add to calendar</button>
         ${committee ? `
-          <button class="btn" id="wk-copy">${I.copy}Copy last week</button>
-          ${unconfirmed ? `<button class="btn" id="wk-confirm" title="Mark this week's past sessions as happened. Cancel any that didn't go ahead first">${I.check}Confirm ${plural(unconfirmed, "past sessions")}</button>` : ""}
-          ${data.total ? `<button class="btn" id="wk-auto" title="Suggest crews for empty seats from this week's sign-ups">${I.wand}Auto-fill crews</button>` : ""}
           ${data.total ? (data.published === data.total ? `<button class="btn" id="wk-unpub">${I.eye}Unpublish</button>` : `<button class="btn primary" id="wk-pub">${I.send}Publish week</button>`) : ""}
         ` : ""}
       </div>
@@ -516,13 +517,6 @@ async function pageSchedule() {
     const pub = $("#wk-pub"), unpub = $("#wk-unpub");
     if (pub) pub.onclick = async () => { if (await confirmBox("Publish this week?", "All sessions for this week become visible to rowers.", "Publish")) { await api("/api/committee/week/publish", { method: "POST", body: { start: data.start, published: true } }).catch(fail); toast("Week published"); pageSchedule(); } };
     if (unpub) unpub.onclick = async () => { await api("/api/committee/week/publish", { method: "POST", body: { start: data.start, published: false } }).catch(fail); toast("Week set back to draft"); pageSchedule(); };
-    $("#wk-copy").onclick = () => copyWeek(data.start);
-    const auto = $("#wk-auto"); if (auto) auto.onclick = () => autofillWeek(data.start);
-    const conf = $("#wk-confirm");
-    if (conf) conf.onclick = async () => {
-      if (!await confirmBox(`Confirm ${plural(unconfirmed, "past sessions")}?`, "They're marked as having happened. Cancel any session that didn't go ahead first, so the stats stay accurate.", "Confirm")) return;
-      try { const r = await api("/api/committee/week/confirm", { method: "POST", body: { start: data.start } }); toast(`${plural(r.confirmed, "sessions")} confirmed`); pageSchedule(); } catch (e) { fail(e); }
-    };
   }
   if (committee && S.pendingNew) { const d = S.pendingNew; S.pendingNew = null; editOuting(null, d); }
   $$(".outing").forEach((card) => card.addEventListener("click", (e) => {
@@ -538,7 +532,6 @@ function outingAct(t, o) {
   if (t.dataset.act === "fill") return fillSub(+t.dataset.sub, o);
   if (t.dataset.act === "join") return joinLand(o);
   if (t.dataset.act === "leave") return leaveLand(o);
-  if (t.dataset.act === "happened") return setOutingStatus(o, "happened").catch(fail);
   if (t.dataset.act === "cancel") return cancelOuting(o);
 }
 
@@ -551,7 +544,6 @@ function viewOuting(o) {
     s.sub_request ? `Sub needed${s.sub_request.reason ? `: ${esc(s.sub_request.reason)}` : ""}` : "",
   ].filter(Boolean).join(" · ");
   const row = (s) => seatRow(o, s, extra(s));
-  const coxChip = o.cox_check && o.cox_check !== o.spots_text ? `<span class="chip ${o.cox_check === "Bankrider needed" ? "bad" : o.cox_check.startsWith("Cox needed") || o.cox_check === "Cox status not set" ? "warn" : "ok"}">${esc(o.cox_check)}</span>` : "";
   const mine = o.seats.some((s) => s.member && s.member.id === S.me);
   const join = o.kind === "land" && o.spots > 0 && !o.past && !o.cancelled && !mine;
   modal({
@@ -566,7 +558,7 @@ function viewOuting(o) {
         ${o.coach ? `<div>${I.whistle}Coach: ${esc(o.coach)}</div>` : ""}
       </div>
       <div class="seats seats-detail">${seats.map(row).join("") || `<div class="seat open"><span class="sl"></span><span class="sn">No one yet. Be the first!</span></div>`}</div>
-      <div class="o-foot"><span class="chip ${o.spots === 0 ? "ok" : o.kind === "land" ? "accent" : "warn"}">${o.spots === 0 ? I.check : ""}${esc(o.spots_text)}${o.kind === "land" && o.spots ? ` of ${o.capacity}` : ""}</span>${coxChip}</div>
+      ${o.cancelled ? "" : o.kind === "land" ? (o.spots ? `<div class="o-foot"><span class="chip accent">${esc(o.spots_text)} of ${o.capacity}</span></div>` : "") : waterFoot(o)}
       ${o.notes ? `<div class="callout">${I.info}<div>${esc(o.notes)}</div></div>` : ""}
       ${riverList((o.river || []).filter((r) => !o.past && r.level === "stop"))}`,
     foot: `<div class="r">${join ? `<button class="btn primary" data-act="join">${I.plus}Join</button>` : ""}<button class="btn" data-close>Close</button></div>`,
@@ -576,18 +568,24 @@ function viewOuting(o) {
   });
 }
 
+/* After copying or auto-filling from the Sign-ups page, show that week's schedule. */
+function showWeek(start) {
+  S.week = start;
+  if (location.hash.startsWith("#/schedule")) pageSchedule(); else location.hash = "#/schedule";
+}
+
 function copyWeek(target) {
   const src = addDays(target, -7);
   modal({
-    title: "Copy sessions from last week",
-    body: `<p style="margin:0" class="muted">Copies every session from <b>${fmtShort(src)} – ${fmtShort(addDays(src, 6))}</b> into this week as drafts.</p>
+    title: "Copy last week's schedule",
+    body: `<p style="margin:0" class="muted">Copies every outing and land session from <b>${fmtShort(src)} – ${fmtShort(addDays(src, 6))}</b> into the schedule for <b>${fmtShort(target)} – ${fmtShort(addDays(target, 6))}</b> as drafts.</p>
       <label class="check"><input type="checkbox" id="cw-crews"> Also copy crews (who's in each seat)</label>`,
     foot: `<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="cw-go">${I.copy}Copy</button></div>`,
     onMount: (m, close) => {
       $("#cw-go", m).onclick = async () => {
         try {
           const r = await api("/api/committee/week/copy", { method: "POST", body: { source: src, target, include_crews: $("#cw-crews", m).checked } });
-          close(); toast(`Copied ${r.copied} session${r.copied === 1 ? "" : "s"}`); pageSchedule();
+          close(); toast(`Copied ${r.copied} session${r.copied === 1 ? "" : "s"}`); showWeek(target);
         } catch (e) { fail(e); }
       };
     },
@@ -627,9 +625,9 @@ async function autofillWeek(start, includePublished = false) {
   const nShort = people.filter(short).length;
   const changes = p.added + p.bankriders;
   const body = !p.signups
-    ? `<div class="empty">${I.users}<h3>Nobody has signed up for this week yet</h3><p>Auto-fill uses the weekly sign-up. Open the sign-up form under <a href="#/signup">Sign up</a> first.</p></div>`
+    ? `<div class="empty">${I.users}<h3>Nobody has signed up for this week yet</h3><p>Auto-fill uses the weekly sign-up. Open the sign-up form for this week first.</p></div>`
     : !p.outings.length
-    ? `<div class="empty">${I.water}<h3>No draft water outings to fill</h3><p>Create this week's water outings first (or copy last week without crews), then auto-fill them.</p></div>`
+    ? `<div class="empty">${I.water}<h3>No draft water outings to fill</h3><p>Create this week's water outings on the Schedule first (or copy last week's schedule without crews), then auto-fill them.</p></div>`
     : `<div class="callout">${I.info}<div>${changes ? `Puts <b>${p.added}</b> ${p.added === 1 ? "person" : "people"} into empty seats${p.bankriders ? ` and adds <b>${p.bankriders}</b> bankrider${p.bankriders === 1 ? "" : "s"}` : ""}. ` : "There's nothing auto-fill can add right now. "}
         People you've already placed stay where they are. Nothing is saved until you press <b>Apply</b>, and sessions stay as drafts so you can adjust them before publishing.</div></div>
       <div class="af-summary small muted">${p.full} complete · ${p.partial} still short · ${nShort ? `${nShort} ${nShort === 1 ? "person gets" : "people get"} fewer outings than they asked for` : "everyone gets what they asked for"}</div>
@@ -651,7 +649,7 @@ async function autofillWeek(start, includePublished = false) {
           const r = await api("/api/committee/week/autofill/apply", { method: "POST", body: { start: p.start, outings } });
           close();
           toast(`Added ${r.added} ${r.added === 1 ? "person" : "people"}${r.coaches ? ` and ${r.coaches} bankrider${r.coaches === 1 ? "" : "s"}` : ""}${r.skipped ? ` · ${r.skipped} skipped (changed since the preview)` : ""}`, !!r.skipped);
-          pageSchedule();
+          showWeek(p.start);
         } catch (e) { go.disabled = false; fail(e); }
       };
     },
@@ -710,17 +708,15 @@ async function editOuting(o, defaults = {}) {
     <label class="field"><span>Notes</span><textarea class="input" id="oe-notes" rows="2" placeholder="Optional — visible to rowers">${esc(st.notes)}</textarea></label>
     <div id="oe-warn"></div>
     <div id="oe-river"></div>`;
-  const canConfirm = o && !o.cancelled && !o.happened && S.weekData && o.date <= S.weekData.today;
   const foot = `${o ? `<button class="btn danger" id="oe-del">Delete</button>${o.cancelled
       ? `<button class="btn" id="oe-uncancel" title="Put this session back on">Restore session</button>`
-      : `<button class="btn" id="oe-cancel" title="Keep it on the schedule, marked as cancelled, with a reason">${I.x}Cancel session</button>`}${canConfirm
-      ? `<button class="btn" id="oe-happened" title="Confirm this session took place">${I.check}Mark happened</button>` : ""}` : ""}<div class="r">
+      : `<button class="btn" id="oe-cancel" title="Keep it on the schedule, marked as cancelled, with a reason">${I.x}Cancel session</button>`}` : ""}<div class="r">
       <button class="btn" data-close>Close</button>
       ${o && o.published ? "" : `<button class="btn" id="oe-save-draft">${o ? "Save draft" : "Save as draft"}</button>`}
       <button class="btn primary" id="oe-save">${o && o.published ? "Save" : "Save & publish"}</button></div>`;
 
   modal({
-    title: o ? (o.cancelled ? "Edit session · cancelled" : o.happened ? "Edit session · happened" : "Edit session") : st.kind === "water" ? "New water outing" : "New land session", body, foot, wide: "xl",
+    title: o ? (o.cancelled ? "Edit session · cancelled" : "Edit session") : st.kind === "water" ? "New water outing" : "New land session", body, foot, wide: "xl",
     onMount: (m, close) => {
       const boatSel = $("#oe-boat", m), capSel = $("#oe-cap", m);
       let target = null, loaded = false;
@@ -1032,7 +1028,6 @@ async function editOuting(o, defaults = {}) {
       const markAs = async (st) => { try { await setOutingStatus(o, st); close(); } catch (e) { fail(e); } };
       const cancelBtn = $("#oe-cancel", m); if (cancelBtn) cancelBtn.onclick = () => cancelOuting(o);
       const uncancel = $("#oe-uncancel", m); if (uncancel) uncancel.onclick = () => markAs("scheduled");
-      const happened = $("#oe-happened", m); if (happened) happened.onclick = () => markAs("happened");
       syncKind(); drawSeats(); loadCand();
     },
   });
@@ -1315,7 +1310,6 @@ function outcomesCard(oc) {
       <div class="oc-legend small"><span><i class="sw" style="background:var(--ok)"></i>Went ahead ${t.happened} <span class="faint">(${t.water.happened} water · ${t.land.happened} land)</span></span>
         <span><i class="sw" style="background:var(--bad)"></i>Cancelled ${t.cancelled}${t.cancelled ? ` <span class="faint">(${t.water.cancelled} water · ${t.land.cancelled} land)</span>` : ""}</span></div>
       ${t.by_reason.length ? `<div class="oc-reasons">${t.by_reason.map((r) => `<div class="oc-r"><span>${esc(r.label)}</span><div class="bar bad"><i style="width:${(r.count / max) * 100}%"></i></div><b class="tnum">${r.count}</b></div>`).join("")}</div>` : ""}
-      ${isCommittee() && t.unconfirmed ? `<div class="small faint oc-season">${plural(t.unconfirmed, "past sessions")} not confirmed yet. Mark them on the schedule.</div>` : ""}
       ${seasonLine}
     </div>`;
 }
@@ -2489,6 +2483,8 @@ async function pageSignupCommittee() {
       <div class="toolbar">
         <div class="weekbar"><button class="btn icon" id="sw-prev">${I.left}</button><button class="btn icon" id="sw-next">${I.right}</button></div>
         <a class="btn" href="#/signup?form=1">${I.eye}Open form</a>
+        <button class="btn" id="sw-copy-week" title="Copy last week's outings and land sessions into this week's schedule">${I.copy}Copy last week's schedule</button>
+        <button class="btn" id="sw-auto" title="Suggest crews for this week's empty seats from these sign-ups">${I.wand}Auto-fill crews</button>
         ${d.week.open ? `<button class="btn" id="sw-toggle">Close sign-ups</button>` : `<button class="btn primary" id="sw-toggle">${I.send}Open sign-ups</button>`}
       </div></div>
     ${!d.week.open && !d.slots.length ? `<div class="callout warn" style="margin-bottom:16px">${I.info}<div><b>Next step:</b> add this week's water, erg and tank sessions so rowers can tick when they're free, then open sign-ups. <a href="#" id="sw-go-sessions">Add sessions</a> or <a href="#" id="sw-copy-top">copy last week's</a>.</div></div>` : ""}
@@ -2554,6 +2550,8 @@ async function pageSignupCommittee() {
   }
   $$("#sw-tabs button").forEach((b) => b.onclick = () => { S.suTab = b.dataset.t; pageSignupCommittee(); });
   const swx = $("#sw-export"); if (swx) swx.onclick = () => exportModal(`/api/committee/signup/${ws}/responses.csv`, `sign-ups for the week of ${fmtShort(ws)}`);
+  $("#sw-copy-week").onclick = () => copyWeek(ws);
+  $("#sw-auto").onclick = () => autofillWeek(ws);
   $("#sw-prev").onclick = () => { S.suWeek = addDays(ws, -7); pageSignupCommittee(); };
   $("#sw-next").onclick = () => { S.suWeek = addDays(ws, 7); pageSignupCommittee(); };
   const goSessions = $("#sw-go-sessions");

@@ -36,12 +36,10 @@ CANCEL_REASONS = {
 
 
 def outing_status(o: dict, today: date) -> str:
-    """scheduled (still to come) | happened (confirmed) | unconfirmed (past, not yet marked) | cancelled."""
+    """scheduled (still to come) | past (went ahead) | cancelled."""
     if o.get("cancelled"):
         return "cancelled"
-    if o.get("happened"):
-        return "happened"
-    return "unconfirmed" if o["date"] < today.isoformat() else "scheduled"
+    return "past" if o["date"] < today.isoformat() else "scheduled"
 BOAT_TYPES = {  # type -> (rowers, coxed)
     "8+": (8, 1), "4+": (4, 1), "4-": (4, 0), "4x": (4, 0), "4x+": (4, 1),
     "2x": (2, 0), "2-": (2, 0), "1x": (1, 0), "Other": (8, 1),
@@ -307,6 +305,6 @@ def outing_payload(rules: Rules, o: dict, assignments: list[dict], subs: list[di
         "cancelled": bool(o.get("cancelled")), "cancel_reason": o.get("cancel_reason") or "",
         "cancel_category": o.get("cancel_category") or "",
         "cancel_label": CANCEL_REASONS.get(o.get("cancel_category") or "", ""),
-        "happened": bool(o.get("happened")), "status": outing_status(o, rules.today),
+        "status": outing_status(o, rules.today),
         "open_subs": len(open_subs),
     }

@@ -42,10 +42,9 @@ def _term_start(rules: Rules, season: date) -> date:
 
 
 def _outcomes(conn, rules: Rules, since: date) -> dict:
-    """What became of the published sessions from `since` on: how many happened, how many were
-    cancelled and why. Past sessions the committee hasn't marked yet count as "unconfirmed" (they
-    still count as having happened everywhere else). Cancellations count even if they're in the future."""
-    rows = conn.execute("""SELECT id, kind, date, cancelled, happened, cancel_category FROM outings
+    """What became of the published sessions from `since` on: how many went ahead (past and not
+    cancelled), how many were cancelled and why. Cancellations count even if they're in the future."""
+    rows = conn.execute("""SELECT id, kind, date, cancelled, cancel_category FROM outings
                            WHERE published = 1 AND date >= ?""", (since.isoformat(),)).fetchall()
     n = Counter()
     kinds = {"water": Counter(), "land": Counter()}
@@ -64,10 +63,9 @@ def _outcomes(conn, rules: Rules, since: date) -> dict:
     by_reason.sort(key=lambda x: -x["count"])
     return {
         "since": since.isoformat(),
-        "happened": n["happened"] + n["unconfirmed"],   # not cancelled = assumed to have happened
-        "confirmed": n["happened"], "unconfirmed": n["unconfirmed"], "cancelled": n["cancelled"],
-        "water": {"happened": kinds["water"]["happened"] + kinds["water"]["unconfirmed"], "cancelled": kinds["water"]["cancelled"]},
-        "land": {"happened": kinds["land"]["happened"] + kinds["land"]["unconfirmed"], "cancelled": kinds["land"]["cancelled"]},
+        "happened": n["past"], "cancelled": n["cancelled"],
+        "water": {"happened": kinds["water"]["past"], "cancelled": kinds["water"]["cancelled"]},
+        "land": {"happened": kinds["land"]["past"], "cancelled": kinds["land"]["cancelled"]},
         "by_reason": by_reason,
     }
 
