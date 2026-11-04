@@ -55,6 +55,7 @@ const I = {
   repeat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></svg>',
   wand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5"/></svg>',
   chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15v2"/><path d="M11 10v7"/><path d="M15 6v11"/><path d="M19 12v5"/></svg>',
+  bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
 };
 
@@ -65,7 +66,11 @@ const S = {
   realRole: null, // the signed-in role; S.role is the one the site currently renders as
   viewAsRower: (() => { try { return localStorage.getItem("op_view_rower") === "1"; } catch { return false; } })(),
 };
-const setMe = (id) => { S.me = id; try { id ? localStorage.setItem("op_me", String(id)) : localStorage.removeItem("op_me"); } catch {} };
+const setMe = (id) => {
+  const changed = id !== S.me;
+  S.me = id; try { id ? localStorage.setItem("op_me", String(id)) : localStorage.removeItem("op_me"); } catch {}
+  if (changed) id ? pushSync() : pushDisable(); // notifications follow whoever is picked on this device
+};
 const meName = () => S.boot?.members.find((m) => m.id === S.me)?.name;
 const isCommittee = () => S.role === "committee";
 
@@ -272,7 +277,7 @@ function shell(active) {
   $("#main-nav").onclick = () => setNavOpen(false);
   $("#me-chip").onclick = () => pickIdentity();
   const vt = $("#view-toggle"); if (vt) vt.onclick = () => setViewAsRower(!S.viewAsRower);
-  $("#logout").onclick = async () => { await api("/api/logout", { method: "POST" }).catch(() => {}); S.role = S.realRole = null; renderLogin(); };
+  $("#logout").onclick = async () => { await pushDisable(); await api("/api/logout", { method: "POST" }).catch(() => {}); S.role = S.realRole = null; renderLogin(); };
 }
 
 function pickIdentity(after) {
@@ -1106,6 +1111,102 @@ function calendarModal() {
   });
 }
 
+// ---------------------------------------------------------- notifications --
+/* Web push (see app/push.py). A device subscribes for the rower picked on it, like the calendar feed. */
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const b64uBytes = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4)), (c) => c.charCodeAt(0));
+let swReg = null;
+async function swReady() {
+  if (!("serviceWorker" in navigator)) return null;
+  if (!swReg) { await navigator.serviceWorker.register("/sw.js"); swReg = await navigator.serviceWorker.ready; }
+  return swReg;
+}
+async function pushSub() { if (!pushSupported()) return null; const r = await swReady(); return r ? r.pushManager.getSubscription() : null; }
+const sameKey = (sub, key) => {
+  const k = sub.options && sub.options.applicationServerKey;
+  if (!k) return true;
+  const a = new Uint8Array(k), b = b64uBytes(key);
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+};
+async function pushEnable() {
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") throw new Error(perm === "denied" ? "Notifications are blocked for this site. Allow them in your browser or phone settings, then try again" : "Notifications weren't allowed");
+  const reg = await swReady();
+  const { key } = await api("/api/push/key");
+  let sub = await reg.pushManager.getSubscription();
+  if (sub && !sameKey(sub, key)) { await sub.unsubscribe(); sub = null; }
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uBytes(key) });
+  await api("/api/push/subscribe", { method: "POST", body: { member_id: S.me, subscription: sub.toJSON() } });
+  return sub;
+}
+async function pushDisable() {
+  try {
+    const sub = await pushSub(); if (!sub) return;
+    await api("/api/push/unsubscribe", { method: "POST", body: { endpoint: sub.endpoint } }).catch(() => {});
+    await sub.unsubscribe();
+  } catch {}
+}
+/* On start and when the name changes: keep this device's subscription pointing at the right rower and the server's key. */
+async function pushSync() {
+  try {
+    if (!S.me || !pushSupported() || Notification.permission !== "granted") return;
+    const sub = await pushSub(); if (!sub) return;
+    const { key } = await api("/api/push/key");
+    if (!sameKey(sub, key)) return void await pushEnable();
+    await api("/api/push/subscribe", { method: "POST", body: { member_id: S.me, subscription: sub.toJSON() } });
+  } catch {}
+}
+
+function notificationsModal() {
+  requireMe(async () => {
+    const name = meName();
+    let sub = null;
+    try { sub = await pushSub(); } catch {}
+    const what = `<ul style="margin:0;padding-left:20px;line-height:1.7">
+        <li>Your crew is published</li><li>Someone takes the seat you asked a sub for</li>
+        <li>You're put in a session, e.g. picked as someone's sub</li><li>The Isis flag goes Red or Black before your outing</li></ul>`;
+    let body;
+    if (isIOS() && !isStandalone()) {
+      body = `<p style="margin:0">On iPhone and iPad, notifications only work once the planner is on your Home Screen:</p>
+        <ol style="margin:0;padding-left:20px;line-height:1.7"><li>Tap the <b>Share</b> button in Safari</li><li>Choose <b>Add to Home Screen</b></li>
+        <li>Open <b>RBC Outings</b> from your Home Screen, go to <b>Me</b> and turn notifications on there</li></ol>
+        <p class="small faint" style="margin:0">Needs iOS 16.4 or later.</p>`;
+    } else if (!pushSupported()) {
+      body = `<div class="callout warn">${I.alert}<div>This browser can't show notifications. Try Chrome, Firefox, Edge or Safari, or add the planner to your home screen.</div></div>`;
+    } else if (Notification.permission === "denied") {
+      body = `<div class="callout warn">${I.alert}<div>Notifications are blocked for this site. Allow them in your browser or phone settings, then come back here.</div></div>`;
+    } else {
+      body = `<p style="margin:0">${sub ? `<span class="chip ok">${I.check}On for ${esc(name)}</span>` : `<span class="chip">Off on this device</span>`}</p>
+        <p style="margin:0">Get a notification on this device when:</p>${what}
+        <p class="small faint" style="margin:0">Notifications are for <b>${esc(name)}</b> and only go to devices where you turn them on. The flag is checked every hour.</p>`;
+    }
+    const can = pushSupported() && !(isIOS() && !isStandalone()) && Notification.permission !== "denied";
+    modal({
+      title: "Notifications",
+      body,
+      foot: can ? (sub
+        ? `<button class="btn ghost" id="pn-off">Turn off</button><div class="r"><button class="btn" id="pn-test">${I.send}Send a test</button><button class="btn primary" data-close>Done</button></div>`
+        : `<button class="btn ghost" data-close>Not now</button><div class="r"><button class="btn primary" id="pn-on">${I.bell}Turn on</button></div>`)
+        : `<div class="r"><button class="btn primary" data-close>OK</button></div>`,
+      onMount: (m, close) => {
+        const on = $("#pn-on", m), off = $("#pn-off", m), test = $("#pn-test", m);
+        if (on) on.onclick = async () => {
+          on.disabled = true;
+          try { await pushEnable(); toast("Notifications are on"); close(); notificationsModal(); } catch (e) { on.disabled = false; fail(e); }
+        };
+        if (off) off.onclick = async () => { await pushDisable(); toast("Notifications are off on this device"); close(); };
+        if (test) test.onclick = async () => {
+          test.disabled = true;
+          try { await api("/api/push/test", { method: "POST", body: { endpoint: sub.endpoint } }); toast("Test sent. It should arrive in a few seconds"); }
+          catch (e) { fail(e); } finally { test.disabled = false; }
+        };
+      },
+    });
+  });
+}
+
 // ------------------------------------------------------------------- subs --
 /* Searchable rower picker for a sub, with each person's eligibility for the seat. */
 function subPicker(el, cands, excludeId, onChange) {
@@ -1199,7 +1300,7 @@ async function fillSub(subId) {
         if (g) g.onclick = async () => {
           const who = picks ? ctl.get() : S.me;
           if (!who) return toast("Pick someone first", true);
-          try { await api(`/api/subs/${subId}/fill`, { method: "POST", body: { member_id: who } }); close(); toast(mine && !committee ? "Seat handed over" : "Seat taken — thanks!"); refreshSubsCount(); route(); }
+          try { await api(`/api/subs/${subId}/fill`, { method: "POST", body: { member_id: who, by: S.me } }); close(); toast(mine && !committee ? "Seat handed over" : "Seat taken — thanks!"); refreshSubsCount(); route(); }
           catch (e) { fail(e); }
         };
         const c = $("#fs-cancel", m);
@@ -1259,7 +1360,7 @@ async function pageMe() {
   const free = t.novice_free_left;
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>${esc(d.member.name)}</h1><p><span class="chip ${d.member.category === "Novice" ? "accent" : ""}">${esc(d.member.category)}</span> ${d.member.cox_status ? `<span class="chip violet">Cox · ${({ N: "Novice", X: "Experienced", S: "Senior" })[d.member.cox_status]}</span>` : ""}</p></div>
-      <div class="toolbar"><button class="btn" id="me-cal">${I.calendar}Add to calendar</button><button class="btn" id="switch">${I.swap}Not you?</button></div></div>
+      <div class="toolbar"><button class="btn" id="me-notify">${I.bell}Notifications</button><button class="btn" id="me-cal">${I.calendar}Add to calendar</button><button class="btn" id="switch">${I.swap}Not you?</button></div></div>
     <div class="stats">
       <div class="card stat"><div class="k">Water outings</div><div class="v">${t.water}</div><div class="s">${t.water_done} done</div></div>
       <div class="card stat"><div class="k">Land sessions</div><div class="v">${t.land}</div><div class="s">${t.land_done} done</div></div>
@@ -1279,6 +1380,7 @@ async function pageMe() {
       : `<div class="card empty">${I.calendar}<h3>Nothing scheduled</h3><p>You're not in any published upcoming sessions. Check the sub board for open seats.</p></div>`}`;
   $("#switch").onclick = () => pickIdentity();
   $("#me-cal").onclick = () => calendarModal();
+  $("#me-notify").onclick = () => notificationsModal();
   $$(".outing").forEach((card) => card.addEventListener("click", (e) => {
     const t = e.target.closest("[data-act]"); if (!t) return;
     const o = d.upcoming.find((x) => x.id === +card.dataset.oid);
@@ -3164,6 +3266,7 @@ function route() {
 async function start() {
   try { await reboot(); } catch { return renderLogin(); }
   if (S.me && !meName()) setMe(null);
+  pushSync();
   refreshSubsCount();
   route();
 }

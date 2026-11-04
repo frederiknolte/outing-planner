@@ -22,6 +22,7 @@ from . import db
 from .auth import require_committee, require_member, role_of
 from . import privacy
 from . import river
+from . import push
 from .timeutil import normalize as norm_time, to_minutes
 from .calendar import router as calendar_router
 from .signup import availability_for_outing, week_counts, router as signup_router
@@ -342,6 +343,7 @@ class SubRequestIn(BaseModel):
 
 class SubFillIn(BaseModel):
     member_id: int
+    by: Optional[int] = None   # the rower using the app (to skip telling people what they did themselves)
 
 
 class SubCancelIn(BaseModel):
@@ -427,6 +429,7 @@ def _candidate_status(conn, rules: Rules, member_id: int, outing_id: int, seat: 
 
 @app.post("/api/subs")
 def request_sub(body: SubRequestIn, role: str = Depends(require_member)):
+    msgs: list = []
     with db.get_conn() as conn:
         rules = Rules(conn)
         o = conn.execute("SELECT * FROM outings WHERE id = ?", (body.outing_id,)).fetchone()
@@ -451,15 +454,18 @@ def request_sub(body: SubRequestIn, role: str = Depends(require_member)):
             st = _candidate_status(conn, rules, body.sub_id, body.outing_id, a["seat"])
             if not st["ok"]:
                 raise HTTPException(400, "Can't sub: " + "; ".join(st["problems"]))
+            before = push.snapshot(conn, ids=[body.outing_id])
             conn.execute("UPDATE assignments SET member_id=? WHERE outing_id=? AND seat=? AND member_id=?",
                          (body.sub_id, body.outing_id, a["seat"], body.member_id))
             conn.execute("""INSERT INTO sub_requests(outing_id, seat, requester_id, reason, status, sub_id, resolved_at)
                             VALUES (?, ?, ?, ?, 'filled', ?, datetime('now'))""",
                          (body.outing_id, a["seat"], body.member_id, body.reason.strip(), body.sub_id))
-            return {"ok": True}
-        conn.execute("INSERT INTO sub_requests(outing_id, seat, requester_id, reason) VALUES (?, ?, ?, ?)",
-                     (body.outing_id, a["seat"], body.member_id, body.reason.strip()))
-        return {"ok": True}
+            msgs = push.crew_changes(conn, before, actor=body.member_id)
+        else:
+            conn.execute("INSERT INTO sub_requests(outing_id, seat, requester_id, reason) VALUES (?, ?, ?, ?)",
+                         (body.outing_id, a["seat"], body.member_id, body.reason.strip()))
+    push.dispatch(msgs)
+    return {"ok": True}
 
 
 @app.post("/api/subs/{sub_id}/fill")
@@ -478,13 +484,19 @@ def fill_sub(sub_id: int, body: SubFillIn, role: str = Depends(require_member)):
         st = _candidate_status(conn, rules, body.member_id, s["outing_id"], s["seat"])
         if not st["ok"]:
             raise HTTPException(400, "Can't sub: " + "; ".join(st["problems"]))
+        before = push.snapshot(conn, ids=[s["outing_id"]])
         cur = conn.execute("UPDATE assignments SET member_id=? WHERE outing_id=? AND seat=? AND member_id=?",
                            (body.member_id, s["outing_id"], s["seat"], s["requester_id"]))
         if cur.rowcount != 1:
             raise HTTPException(409, "The seat has changed — refresh and try again")
         conn.execute("UPDATE sub_requests SET status='filled', sub_id=?, resolved_at=datetime('now') WHERE id=?",
                      (body.member_id, sub_id))
-        return {"ok": True}
+        by = body.by if body.by is not None else (None if role == "committee" else body.member_id)
+        msgs = push.crew_changes(conn, before, actor=by)
+        if by != s["requester_id"]:
+            msgs += push.sub_filled(conn, s["outing_id"], s["requester_id"], body.member_id)
+    push.dispatch(msgs)
+    return {"ok": True}
 
 
 @app.post("/api/subs/{sub_id}/cancel")
@@ -1040,7 +1052,9 @@ def _times(start_text: str, end_text: str = "") -> tuple[str, str]:
     return start, end
 
 
-def _save_outing(conn, rules: Rules, oid: Optional[int], b: OutingIn) -> int:
+def _save_outing(conn, rules: Rules, oid: Optional[int], b: OutingIn, msgs: Optional[list] = None) -> int:
+    """Create or update an outing and its crew. Notifications for the change are added to `msgs`."""
+    before = push.snapshot(conn, ids=[oid] if oid else [])
     if b.kind not in ("water", "land"):
         raise HTTPException(400, "Kind must be water or land")
     try:
@@ -1099,21 +1113,31 @@ def _save_outing(conn, rules: Rules, oid: Optional[int], b: OutingIn) -> int:
             if new:
                 conn.execute("UPDATE sub_requests SET status='filled', sub_id=?, resolved_at=datetime('now') WHERE id=?",
                              (new, sr["id"]))
+                if msgs is not None:
+                    msgs += push.sub_filled(conn, oid, sr["requester_id"], new)
             else:
                 conn.execute("UPDATE sub_requests SET status='cancelled', resolved_at=datetime('now') WHERE id=?", (sr["id"],))
+    if msgs is not None:
+        msgs += push.crew_changes(conn, before, extra_ids=[oid])
     return oid
 
 
 @app.post("/api/committee/outings")
 def outing_create(b: OutingIn, _: str = Depends(require_committee)):
+    msgs: list = []
     with db.get_conn() as conn:
-        return {"id": _save_outing(conn, Rules(conn), None, b)}
+        oid = _save_outing(conn, Rules(conn), None, b, msgs)
+    push.dispatch(msgs)
+    return {"id": oid}
 
 
 @app.put("/api/committee/outings/{oid}")
 def outing_update(oid: int, b: OutingIn, _: str = Depends(require_committee)):
+    msgs: list = []
     with db.get_conn() as conn:
-        return {"id": _save_outing(conn, Rules(conn), oid, b)}
+        oid = _save_outing(conn, Rules(conn), oid, b, msgs)
+    push.dispatch(msgs)
+    return {"id": oid}
 
 
 class OutingStatusIn(BaseModel):
@@ -1201,10 +1225,14 @@ class WeekIn(BaseModel):
 @app.post("/api/committee/week/publish")
 def week_publish(b: WeekIn, _: str = Depends(require_committee)):
     ws = monday_of(date.fromisoformat(b.start))
+    we = (ws + timedelta(days=6)).isoformat()
     with db.get_conn() as conn:
+        before = push.snapshot(conn, start=ws.isoformat(), end=we)
         conn.execute("UPDATE outings SET published=? WHERE date BETWEEN ? AND ?",
-                     (int(b.published), ws.isoformat(), (ws + timedelta(days=6)).isoformat()))
-        return {"ok": True}
+                     (int(b.published), ws.isoformat(), we))
+        msgs = push.crew_changes(conn, before)
+    push.dispatch(msgs)
+    return {"ok": True}
 
 
 class CopyWeekIn(BaseModel):
@@ -1420,7 +1448,28 @@ app.include_router(tasks_router)
 app.include_router(autofill_router)
 app.include_router(usage_router)
 app.include_router(handover_router)
+app.include_router(push.router)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    return FileResponse(os.path.join(STATIC, "manifest.webmanifest"),
+                        media_type="application/manifest+json",
+                        headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/sw.js")
+def service_worker():
+    # Served from the root so it controls the whole site (needed for push notifications).
+    return FileResponse(os.path.join(STATIC, "sw.js"), media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/robots.txt")
+def robots():
+    # Private club tool: ask all crawlers to stay out.
+    return FileResponse(os.path.join(STATIC, "robots.txt"), media_type="text/plain")
 
 
 @app.get("/")

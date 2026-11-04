@@ -169,6 +169,12 @@ def refresh_now(db_module) -> None:
         print(f"[river] flag fetch failed: {err}", flush=True)
     elif json.loads(old or "{}").get("key") != flag["key"]:
         print(f"[river] Isis flag is now {flag['status_text']}", flush=True)
+    if flag is not None:
+        try:
+            from . import push
+            push.check_flag()
+        except Exception as e:  # noqa: BLE001 - a notification problem mustn't stop the flag job
+            print(f"[river] flag alerts failed: {type(e).__name__}: {e}", flush=True)
 
 
 def start_flag_thread(db_module, interval_s: int = FETCH_EVERY_S) -> None:

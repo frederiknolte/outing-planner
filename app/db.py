@@ -234,6 +234,22 @@ CREATE TABLE IF NOT EXISTS season_archives (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS push_subscriptions (           -- one row per device with notifications on (push.py)
+    id INTEGER PRIMARY KEY,
+    member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    endpoint TEXT NOT NULL UNIQUE,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_used_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_push_member ON push_subscriptions(member_id);
+
+CREATE TABLE IF NOT EXISTS push_sent (                    -- one-off alerts already sent (e.g. red flag per outing)
+    key TEXT PRIMARY KEY,
+    sent_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS signup_availability (
     signup_id INTEGER NOT NULL REFERENCES signups(id) ON DELETE CASCADE,
     slot_id INTEGER NOT NULL REFERENCES signup_slots(id) ON DELETE CASCADE,

@@ -58,7 +58,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from . import db
+from . import db, push
 from .auth import require_committee
 from .logic import Rules, monday_of, seat_label, seat_list
 from .signup import availability_for_outing
@@ -585,6 +585,7 @@ def autofill_apply(b: ApplyIn, _: str = Depends(require_committee)):
     we = (ws + timedelta(days=6)).isoformat()
     added = coaches = skipped = 0
     with db.get_conn() as conn:
+        before = push.snapshot(conn, ids=[x.id for x in b.outings])
         members = {r["id"] for r in conn.execute("SELECT id FROM members")}
         for x in b.outings:
             o = conn.execute("SELECT * FROM outings WHERE id = ?", (x.id,)).fetchone()
@@ -613,4 +614,6 @@ def autofill_apply(b: ApplyIn, _: str = Depends(require_committee)):
                 else:
                     conn.execute("UPDATE outings SET coach = ? WHERE id = ?", (x.coach.strip(), x.id))
                     coaches += 1
-        return {"added": added, "coaches": coaches, "skipped": skipped}
+        msgs = push.crew_changes(conn, before)
+    push.dispatch(msgs)
+    return {"added": added, "coaches": coaches, "skipped": skipped}
