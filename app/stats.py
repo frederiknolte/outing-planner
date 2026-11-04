@@ -60,11 +60,11 @@ def season_stats(role: str = Depends(require_member)):
         rows = conn.execute(
             """SELECT a.member_id, a.seat, o.id AS oid, o.kind, o.date, o.time, o.boat_id
                FROM assignments a JOIN outings o ON o.id = a.outing_id
-               WHERE o.published = 1 AND o.date >= ? AND o.date < ?""",
+               WHERE o.published = 1 AND o.cancelled = 0 AND o.date >= ? AND o.date < ?""",
             (start.isoformat(), today.isoformat())).fetchall()
         subs = conn.execute(
             """SELECT s.sub_id FROM sub_requests s JOIN outings o ON o.id = s.outing_id
-               WHERE s.status = 'filled' AND s.sub_id IS NOT NULL AND o.date >= ?""",
+               WHERE s.status = 'filled' AND s.sub_id IS NOT NULL AND o.cancelled = 0 AND o.date >= ?""",
             (start.isoformat(),)).fetchall()
 
         c = {k: Counter() for k in ("water", "land", "total", "early", "late", "weekend", "cox", "subs")}

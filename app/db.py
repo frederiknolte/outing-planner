@@ -233,7 +233,11 @@ CREATE TABLE IF NOT EXISTS signup_availability (
 
 # Columns added after the first release; added to existing databases on start-up.
 MIGRATIONS = {
-    "outings": {"end_time": "TEXT NOT NULL DEFAULT ''"},
+    "outings": {
+        "end_time": "TEXT NOT NULL DEFAULT ''",
+        "cancelled": "INTEGER NOT NULL DEFAULT 0",     # kept on the schedule but doesn't count
+        "cancel_reason": "TEXT NOT NULL DEFAULT ''",
+    },
     "races": {"squad": "TEXT NOT NULL DEFAULT 'any'"},             # any | open | women
     "race_responses": {
         "squad": "TEXT NOT NULL DEFAULT ''",                        # open | women

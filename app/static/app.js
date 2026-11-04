@@ -308,9 +308,9 @@ function seatRow(o, s, extra = "") {
   const subTag = s.subbed_for ? `<span class="tag violet" title="Subbing for ${esc(s.subbed_for)}">sub</span>` : "";
   if (s.sub_request) tag = `<button class="tag warn" data-act="fill" data-sub="${s.sub_request.id}" title="${esc(s.sub_request.reason || "Sub needed")}">Sub needed</button>`;
   // Land sessions are open: you just leave, the spot reopens for anyone.
-  else if (mine && !o.past && o.kind === "land") tag = `<span class="tags">${subTag}<button class="tag ok" data-act="leave" title="Give up your spot">Leave</button></span>`;
+  else if (mine && !o.past && !o.cancelled && o.kind === "land") tag = `<span class="tags">${subTag}<button class="tag ok" data-act="leave" title="Give up your spot">Leave</button></span>`;
   // Your own seat always offers "Can't go" — including a seat you took as a sub.
-  else if (mine && !o.past) tag = `<span class="tags">${subTag}<button class="tag ok" data-act="reqsub" data-o="${o.id}" title="Can't make it? Request a sub">Can't go</button></span>`;
+  else if (mine && !o.past && !o.cancelled) tag = `<span class="tags">${subTag}<button class="tag ok" data-act="reqsub" data-o="${o.id}" title="Can't make it? Request a sub">Can't go</button></span>`;
   else tag = subTag;
   const title = m && isCommittee() && s.eligibility ? (s.eligibility.reasons.join(", ") || s.eligibility.note || "") : "";
   return `<div class="${cls.join(" ")}" title="${esc(title)}"><span class="sl">${esc(({ Stroke: "S", Bow: "B", Sculler: "1x" })[s.label] || s.label)}</span><span class="sn">${m ? esc(m.name) : "Open"}</span>${tag}${extra ? `<span class="seat-extra">${extra}</span>` : ""}</div>`;
@@ -320,11 +320,11 @@ function seatRow(o, s, extra = "") {
 function landSpots(o) {
   const inIt = o.seats.filter((s) => s.member);
   const mine = inIt.some((s) => s.member.id === S.me);
-  const join = o.spots > 0 && !o.past && !mine;
+  const join = o.spots > 0 && !o.past && !o.cancelled && !mine;
   return `<div class="seats">${inIt.map((s, i) => seatRow(o, { ...s, label: String(i + 1) })).join("") || `<div class="seat open"><span class="sl"></span><span class="sn">No one yet. Be the first!</span></div>`}</div>
     <div class="o-foot land-open">
       <span class="chip ${o.spots ? "accent" : "ok"}">${o.spots ? "" : I.check}${esc(o.spots_text)}${o.spots ? ` of ${o.capacity}` : ""}</span>
-      ${join ? `<button class="btn sm primary" data-act="join" title="Take a spot in this session">${I.plus}Join</button>` : mine && !o.past ? `<span class="chip ok">${I.check}You're in</span>` : ""}
+      ${join ? `<button class="btn sm primary" data-act="join" title="Take a spot in this session">${I.plus}Join</button>` : mine && !o.past && !o.cancelled ? `<span class="chip ok">${I.check}You're in</span>` : ""}
     </div>`;
 }
 
@@ -391,16 +391,17 @@ function outingCard(o) {
   const kindChip = o.kind === "water" ? `<span class="chip water">${I.water}Water</span>` : `<span class="chip land">${I.land}Land</span>`;
   const full = o.spots === 0;
   const coxChip = o.cox_check && o.cox_check !== o.spots_text ? `<span class="chip ${o.cox_check === "Bankrider needed" ? "bad" : o.cox_check.startsWith("Cox needed") || o.cox_check === "Cox status not set" ? "warn" : "ok"}">${esc(o.cox_check)}</span>` : "";
-  return `<article class="card outing ${o.kind} ${o.published ? "" : "draft"} ${o.past ? "past" : ""} clickable" data-oid="${o.id}">
+  return `<article class="card outing ${o.kind} ${o.published ? "" : "draft"} ${o.past ? "past" : ""} ${o.cancelled ? "cancelled" : ""} clickable" data-oid="${o.id}">
     <div class="o-top"><div>${o.time ? `<div class="o-time tnum">${esc(tRange(o))}</div><div class="o-title">${esc(o.title || (o.kind === "water" ? "Water outing" : "Land training"))}</div>` : `<div class="o-time">${esc(o.title || (o.kind === "water" ? "Water outing" : "Land training"))}</div><div class="o-title faint small">Time TBC</div>`}</div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${kindChip}${committee && !o.published ? `<span class="chip">Draft</span>` : ""}</div></div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${kindChip}${o.cancelled ? `<span class="chip bad">Cancelled</span>` : ""}${committee && !o.published ? `<span class="chip">Draft</span>` : ""}</div></div>
+    ${o.cancelled ? `<div class="o-cancel">${I.x}<span>${o.cancel_reason ? esc(o.cancel_reason) : "This session has been cancelled"}</span></div>` : ""}
     <div class="o-sub">
       ${o.boat ? `<span>${I.boat}${esc(o.boat.name)} <span class="faint">${esc(o.boat.type)}</span></span>` : o.kind === "water" ? `<span class="faint">${I.boat}${o.capacity}${o.coxed ? "+" : ""} · no boat set</span>` : ""}
       ${o.location ? (o.maps_url ? `<a href="${esc(o.maps_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open in maps">${I.pin}${esc(o.location)}</a>` : `<span>${I.pin}${esc(o.location)}</span>`) : ""}
       ${o.coach ? `<span>${I.whistle}${esc(o.coach)}</span>` : ""}
     </div>
     ${o.kind === "land" ? landSpots(o) : `<div class="seats">${o.seats.map((s) => seatRow(o, s)).join("")}</div>
-    <div class="o-foot"><span class="chip ${full ? "ok" : "warn"}">${full ? I.check : ""}${esc(o.spots_text)}</span>${coxChip}</div>`}
+    ${o.cancelled ? "" : `<div class="o-foot"><span class="chip ${full ? "ok" : "warn"}">${full ? I.check : ""}${esc(o.spots_text)}</span>${coxChip}</div>`}`}
     ${o.notes ? `<div class="small muted" style="margin-top:6px">${esc(o.notes)}</div>` : ""}
     ${committee && o.warnings.length ? `<div class="warnings">${o.warnings.map((w) => `<div>${I.alert}<span>${esc(w)}</span></div>`).join("")}</div>` : ""}
     ${riverList((o.river || []).filter((r) => !o.past && (committee || r.level === "stop")))}
@@ -420,7 +421,7 @@ async function pageSchedule() {
     ? `<span class="status-pill" style="background:var(--ok-soft);color:var(--ok)"><span class="dot"></span>Published</span>`
     : data.published === 0 ? `<span class="status-pill" style="background:var(--surface-3);color:var(--text-2)"><span class="dot"></span>Draft — not visible to rowers</span>`
     : `<span class="status-pill" style="background:var(--warn-soft);color:var(--warn)"><span class="dot"></span>${data.published}/${data.total} published</span>`;
-  const outs = data.outings.filter((o) => S.filter === "all" || (S.filter === "mine" ? o.seats.some((s) => s.member && s.member.id === S.me) : S.filter === "subs" ? o.open_subs > 0 : S.filter === "open" ? (o.kind === "land" && o.spots > 0 && !o.past) : o.kind === S.filter));
+  const outs = data.outings.filter((o) => S.filter === "all" || (S.filter === "mine" ? o.seats.some((s) => s.member && s.member.id === S.me) : S.filter === "subs" ? o.open_subs > 0 : S.filter === "open" ? (o.kind === "land" && o.spots > 0 && !o.past && !o.cancelled) : o.kind === S.filter));
   const myCount = data.outings.filter((o) => o.seats.some((s) => s.member && s.member.id === S.me)).length;
   main.innerHTML = `
     <div class="page-head">
@@ -503,13 +504,14 @@ function viewOuting(o) {
   const row = (s) => seatRow(o, s, extra(s));
   const coxChip = o.cox_check && o.cox_check !== o.spots_text ? `<span class="chip ${o.cox_check === "Bankrider needed" ? "bad" : o.cox_check.startsWith("Cox needed") || o.cox_check === "Cox status not set" ? "warn" : "ok"}">${esc(o.cox_check)}</span>` : "";
   const mine = o.seats.some((s) => s.member && s.member.id === S.me);
-  const join = o.kind === "land" && o.spots > 0 && !o.past && !mine;
+  const join = o.kind === "land" && o.spots > 0 && !o.past && !o.cancelled && !mine;
   modal({
     title: esc(name),
     body: `
       <div class="o-detail">
         <div><b>${fmtLong(o.date)}</b>${o.time ? ` · <span class="tnum">${esc(tRange(o))}</span>` : ` · <span class="faint">Time TBC</span>`}
-          ${o.kind === "water" ? `<span class="chip water">${I.water}Water</span>` : `<span class="chip land">${I.land}Land</span>`}</div>
+          ${o.kind === "water" ? `<span class="chip water">${I.water}Water</span>` : `<span class="chip land">${I.land}Land</span>`}${o.cancelled ? ` <span class="chip bad">Cancelled</span>` : ""}</div>
+        ${o.cancelled ? `<div class="callout bad">${I.x}<div><b>This session has been cancelled.</b>${o.cancel_reason ? ` ${esc(o.cancel_reason)}` : ""}</div></div>` : ""}
         ${o.boat ? `<div>${I.boat}${esc(o.boat.name)} <span class="faint">${esc(o.boat.type)}</span></div>` : ""}
         ${o.location ? `<div>${I.pin}${o.maps_url ? `<a href="${esc(o.maps_url)}" target="_blank" rel="noopener">${esc(o.location)}</a>` : esc(o.location)}</div>` : ""}
         ${o.coach ? `<div>${I.whistle}Coach: ${esc(o.coach)}</div>` : ""}
@@ -595,13 +597,15 @@ async function editOuting(o, defaults = {}) {
     <label class="field"><span>Notes</span><textarea class="input" id="oe-notes" rows="2" placeholder="Optional — visible to rowers">${esc(st.notes)}</textarea></label>
     <div id="oe-warn"></div>
     <div id="oe-river"></div>`;
-  const foot = `${o ? `<button class="btn danger" id="oe-del">Delete</button>` : ""}<div class="r">
+  const foot = `${o ? `<button class="btn danger" id="oe-del">Delete</button>${o.cancelled
+      ? `<button class="btn" id="oe-uncancel" title="Put this session back on">Restore</button>`
+      : `<button class="btn" id="oe-cancel" title="Keep it on the schedule, marked as cancelled">Cancel session</button>`}` : ""}<div class="r">
       <button class="btn" data-close>Cancel</button>
       ${o && o.published ? "" : `<button class="btn" id="oe-save-draft">${o ? "Save draft" : "Save as draft"}</button>`}
       <button class="btn primary" id="oe-save">${o && o.published ? "Save" : "Save & publish"}</button></div>`;
 
   modal({
-    title: o ? "Edit session" : st.kind === "water" ? "New water outing" : "New land session", body, foot, wide: "xl",
+    title: o ? (o.cancelled ? "Edit session · cancelled" : "Edit session") : st.kind === "water" ? "New water outing" : "New land session", body, foot, wide: "xl",
     onMount: (m, close) => {
       const boatSel = $("#oe-boat", m), capSel = $("#oe-cap", m);
       let target = null, loaded = false;
@@ -898,6 +902,25 @@ async function editOuting(o, defaults = {}) {
         if (!await confirmBox("Delete this session?", "Crew assignments and sub requests for it will be removed. Outing counts update automatically.", "Delete", true)) return;
         try { await api(`/api/committee/outings/${o.id}`, { method: "DELETE" }); toast("Session deleted"); pageSchedule(); } catch (e) { fail(e); }
       };
+      const setCancelled = async (cancelled, reason = "") => {
+        try {
+          await api(`/api/committee/outings/${o.id}/cancel`, { method: "POST", body: { cancelled, reason } });
+          close(); toast(cancelled ? "Session cancelled" : "Session restored"); pageSchedule();
+        } catch (e) { fail(e); }
+      };
+      const cancelBtn = $("#oe-cancel", m);
+      if (cancelBtn) cancelBtn.onclick = () => modal({
+        title: "Cancel this session?",
+        body: `<p style="margin:0 0 10px">It stays on the schedule marked as cancelled, with its crew, but won't count towards anyone's outings. Open sub requests are closed.</p>
+          <label class="field"><span>Reason</span><input class="input" id="oc-reason" maxlength="200" placeholder="Optional — e.g. red flag, coach ill"></label>`,
+        foot: `<div class="r"><button class="btn" data-close>Keep session</button><button class="btn danger" id="oc-ok">Cancel session</button></div>`,
+        onMount: (cm, cclose) => {
+          $("#oc-reason", cm).focus();
+          $("#oc-ok", cm).onclick = () => { const r = $("#oc-reason", cm).value; cclose(); setCancelled(true, r); };
+        },
+      });
+      const uncancel = $("#oe-uncancel", m);
+      if (uncancel) uncancel.onclick = () => setCancelled(false);
       syncKind(); drawSeats(); loadCand();
     },
   });

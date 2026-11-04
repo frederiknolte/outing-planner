@@ -98,6 +98,7 @@ class Rules:
         rows = conn.execute(
             """SELECT a.id, a.outing_id, a.seat, a.member_id, o.kind, o.date, o.time
                FROM assignments a JOIN outings o ON o.id = a.outing_id
+               WHERE o.cancelled = 0
                ORDER BY o.date, o.time, o.id"""
         ).fetchall()
         # per member: sorted list of water outing sort keys; counts
@@ -236,7 +237,7 @@ def outing_payload(rules: Rules, o: dict, assignments: list[dict], subs: list[di
                 req = rules.members.get(sr["requester_id"], {})
                 if sr["sub_id"] == a["member_id"]:
                     entry["subbed_for"] = req.get("name")
-            conflicts = [x for x in same_slot.get(a["member_id"], []) if x != o["id"]]
+            conflicts = [] if o.get("cancelled") else [x for x in same_slot.get(a["member_id"], []) if x != o["id"]]
             if conflicts:
                 warnings.append(f"{m.get('name')} is double-booked at this time")
         seats.append(entry)
@@ -258,10 +259,12 @@ def outing_payload(rules: Rules, o: dict, assignments: list[dict], subs: list[di
                 cox_check = "Cox status not set"
     if cox_check == "Bankrider needed":
         warnings.append("Novice cox: bankrider/coach needed")
-    if ineligible and committee:
+    if o.get("cancelled"):
+        warnings = []  # nothing to fix on a cancelled session
+    if ineligible and committee and not o.get("cancelled"):
         warnings.append(f"{ineligible} ineligible athlete{'s' if ineligible > 1 else ''}")
     boat = boats.get(o["boat_id"]) if o["boat_id"] else None
-    if boat and boat["status"] != "available" and committee:
+    if boat and boat["status"] != "available" and committee and not o.get("cancelled"):
         warnings.append(f"{boat['name']} is marked '{boat['status']}'")
     spots = empty_rowers + (1 if cox_seat and not cox_seat["member"] else 0)
     if kind == "land":  # land sessions are open: anyone can take a free spot
@@ -280,5 +283,6 @@ def outing_payload(rules: Rules, o: dict, assignments: list[dict], subs: list[di
         "notes": o["notes"], "seats": seats, "spots": spots, "spots_text": spots_text,
         "cox_check": cox_check, "warnings": warnings,
         "past": d < rules.today,
+        "cancelled": bool(o.get("cancelled")), "cancel_reason": o.get("cancel_reason") or "",
         "open_subs": len(open_subs),
     }

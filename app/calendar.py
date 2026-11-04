@@ -100,10 +100,14 @@ def build_feed(conn, member: dict, base_url: str) -> str:
         else:
             role_txt = "Coach / bankrider" if o["kind"] == "water" else "Coach"
         summary = f"{o['title'] or kind} ({role_txt})" if o["title"] else f"{kind} ({role_txt})"
-        if oid in sub_open:
+        if o["cancelled"]:
+            summary = "[Cancelled] " + summary
+        elif oid in sub_open:
             summary = "[Sub requested] " + summary
         crew = sorted(crews.get(oid, []), key=lambda a: (a["seat"] != 0, -a["seat"] if o["kind"] == "water" else a["seat"]))
         desc = [f"{club} · {kind}"]
+        if o["cancelled"]:
+            desc.append("CANCELLED" + (f": {o['cancel_reason']}" if o["cancel_reason"] else ""))
         if o["boat_id"] and o["boat_id"] in boats:
             desc.append(f"Boat: {boats[o['boat_id']]['name']} ({boats[o['boat_id']]['boat_type']})")
         if o["coach"]:
@@ -137,7 +141,8 @@ def build_feed(conn, member: dict, base_url: str) -> str:
         ev += [f"SUMMARY:{_esc(summary)}", f"DESCRIPTION:{_esc(chr(10).join(desc))}"]
         if o["location"]:
             ev += _location_lines(o["location"], places.get(o["location"].strip().lower()))
-        ev += ["STATUS:CONFIRMED", "TRANSP:OPAQUE", "END:VEVENT"]
+        ev += ["STATUS:CANCELLED", "TRANSP:TRANSPARENT"] if o["cancelled"] else ["STATUS:CONFIRMED", "TRANSP:OPAQUE"]
+        ev += ["END:VEVENT"]
         lines += ev
     lines.append("END:VCALENDAR")
     return "\r\n".join(_fold(x) for x in lines) + "\r\n"

@@ -188,22 +188,22 @@ def _outings_payload(conn, rules: Rules, where: str, params: tuple, committee: b
     slot = defaultdict(lambda: defaultdict(list))  # (date,time) -> member -> [outing ids]
     for r in conn.execute(
         f"""SELECT a.member_id, o.id, o.date, o.time FROM assignments a JOIN outings o ON o.id = a.outing_id
-            WHERE o.date IN ({dq}) AND o.time != ''""", dates):
+            WHERE o.date IN ({dq}) AND o.time != '' AND o.cancelled = 0""", dates):
         slot[(r["date"], r["time"])][r["member_id"]].append(r["id"])
     boats = _boats(conn)
     flag = river.current_flag(rules.settings)
     day_water = defaultdict(list)  # date -> water outings that day (for the before-8am crew limits)
-    for r in conn.execute(f"SELECT id, kind, date, time, end_time, capacity FROM outings WHERE kind='water' AND date IN ({dq})", dates):
+    for r in conn.execute(f"SELECT id, kind, date, time, end_time, capacity FROM outings WHERE kind='water' AND cancelled = 0 AND date IN ({dq})", dates):
         day_water[r["date"]].append(dict(r))
     boat_slot = defaultdict(list)
-    for o in conn.execute(f"SELECT id, date, time, boat_id FROM outings WHERE date IN ({dq}) AND boat_id IS NOT NULL", dates):
+    for o in conn.execute(f"SELECT id, date, time, boat_id FROM outings WHERE date IN ({dq}) AND boat_id IS NOT NULL AND cancelled = 0", dates):
         boat_slot[(o["date"], o["time"], o["boat_id"])].append(o["id"])
     out = []
     for o in outings:
         p = outing_payload(rules, o, assigns[o["id"]], subs[o["id"]], boats,
                            slot.get((o["date"], o["time"]), {}) if o["time"] else {}, committee)
         crew = {a["seat"]: a["member_id"] for a in assigns[o["id"]]}
-        p["river"] = river.check_outing(o, crew, rules.members, boats.get(o["boat_id"]), rules.settings, flag,
+        p["river"] = [] if o["cancelled"] else river.check_outing(o, crew, rules.members, boats.get(o["boat_id"]), rules.settings, flag,
                                         rules.today, TZ, [x for x in day_water[o["date"]] if x["id"] != o["id"]])
         if committee and o["boat_id"] and o["time"] and len(boat_slot[(o["date"], o["time"], o["boat_id"])]) > 1:
             p["warnings"].append(f"{boats[o['boat_id']]['name']} is booked twice at this time")
@@ -414,7 +414,7 @@ def _candidate_status(conn, rules: Rules, member_id: int, outing_id: int, seat: 
         problems.append("Already in this outing")
     elif o["time"] and conn.execute(
             """SELECT 1 FROM assignments a JOIN outings x ON x.id=a.outing_id
-               WHERE a.member_id=? AND x.date=? AND x.time=? AND x.id != ?""",
+               WHERE a.member_id=? AND x.date=? AND x.time=? AND x.id != ? AND x.cancelled = 0""",
             (member_id, o["date"], o["time"], outing_id)).fetchone():
         problems.append("Booked in another outing at this time")
     if o["kind"] == "water" and seat == 0 and not m["cox_status"]:
@@ -431,6 +431,8 @@ def request_sub(body: SubRequestIn, role: str = Depends(require_member)):
             raise HTTPException(404, "Outing not found")
         if o["date"] < rules.today.isoformat():
             raise HTTPException(400, "This outing is in the past")
+        if o["cancelled"]:
+            raise HTTPException(400, "This outing has been cancelled")
         a = conn.execute("SELECT * FROM assignments WHERE outing_id=? AND member_id=?",
                          (body.outing_id, body.member_id)).fetchone()
         if not a:
@@ -468,6 +470,8 @@ def fill_sub(sub_id: int, body: SubFillIn, role: str = Depends(require_member)):
             raise HTTPException(400, "Unknown member")
         if body.member_id == s["requester_id"]:
             raise HTTPException(400, "You can't sub for yourself — cancel the request instead")
+        if conn.execute("SELECT cancelled FROM outings WHERE id = ?", (s["outing_id"],)).fetchone()["cancelled"]:
+            raise HTTPException(400, "This outing has been cancelled")
         st = _candidate_status(conn, rules, body.member_id, s["outing_id"], s["seat"])
         if not st["ok"]:
             raise HTTPException(400, "Can't sub: " + "; ".join(st["problems"]))
@@ -505,6 +509,8 @@ def _land_outing(conn, rules: Rules, oid: int, role: str):
         raise HTTPException(400, "Only land sessions are open to join. Water crews are picked by the coaches")
     if o["date"] < rules.today.isoformat():
         raise HTTPException(400, "This session is in the past")
+    if o["cancelled"]:
+        raise HTTPException(400, "This session has been cancelled")
     return o
 
 
@@ -564,9 +570,9 @@ def boats_list(role: str = Depends(require_member)):
         rows = [dict(r) for r in conn.execute("SELECT * FROM boats ORDER BY status != 'available', seats DESC, name")]
         today = Rules(conn).today.isoformat()
         usage = {r["boat_id"]: r["n"] for r in conn.execute(
-            "SELECT boat_id, COUNT(*) n FROM outings WHERE boat_id IS NOT NULL GROUP BY boat_id")}
+            "SELECT boat_id, COUNT(*) n FROM outings WHERE boat_id IS NOT NULL AND cancelled = 0 GROUP BY boat_id")}
         nxt = {r["boat_id"]: r["d"] for r in conn.execute(
-            "SELECT boat_id, MIN(date) d FROM outings WHERE boat_id IS NOT NULL AND date >= ? GROUP BY boat_id", (today,))}
+            "SELECT boat_id, MIN(date) d FROM outings WHERE boat_id IS NOT NULL AND cancelled = 0 AND date >= ? GROUP BY boat_id", (today,))}
         open_issues = {}
         for r in conn.execute("SELECT boat_id, severity FROM boat_issues WHERE status IN ('open', 'in_progress', 'waiting')"):
             n, worst = open_issues.get(r["boat_id"], (0, ""))
@@ -799,14 +805,14 @@ def subs_reminders(_: str = Depends(require_committee)):
         blocked, upcoming = defaultdict(list), defaultdict(list)
         for r in conn.execute(
                 """SELECT a.member_id, o.id, o.kind, o.date, o.time, o.title FROM assignments a
-                   JOIN outings o ON o.id = a.outing_id WHERE o.date >= ? ORDER BY o.date, o.time, o.id""", (today,)):
+                   JOIN outings o ON o.id = a.outing_id WHERE o.date >= ? AND o.cancelled = 0 ORDER BY o.date, o.time, o.id""", (today,)):
             info = {"id": r["id"], "kind": r["kind"], "date": r["date"], "time": r["time"], "title": r["title"]}
             upcoming[r["member_id"]].append(info)
             e = rules.check(r["member_id"], r["kind"], date.fromisoformat(r["date"]), (r["date"], r["time"], r["id"]))
             if "Subs not paid" in e["reasons"]:
                 blocked[r["member_id"]].append(info)
         last_out = {r["member_id"]: r["d"] for r in conn.execute(
-            "SELECT a.member_id, MAX(o.date) d FROM assignments a JOIN outings o ON o.id = a.outing_id WHERE o.date <= ? GROUP BY a.member_id", (today,))}
+            "SELECT a.member_id, MAX(o.date) d FROM assignments a JOIN outings o ON o.id = a.outing_id WHERE o.date <= ? AND o.cancelled = 0 GROUP BY a.member_id", (today,))}
         last_signup = {r["member_id"]: r["w"] for r in conn.execute("SELECT member_id, MAX(week_start) w FROM signups GROUP BY member_id")}
         order = {"blocked": 0, "now": 1, "cutoff": 2, "soon": 3}
         out = []
@@ -981,7 +987,7 @@ def coaching_stats(_: str = Depends(require_committee)):
             if mo > 12:
                 y, mo = y + 1, 1
         coaches = [dict(r) for r in conn.execute("SELECT * FROM coaches ORDER BY name")]
-        outings = conn.execute("SELECT date, coach FROM outings WHERE coach != '' AND date >= ? AND date < ?",
+        outings = conn.execute("SELECT date, coach FROM outings WHERE coach != '' AND cancelled = 0 AND date >= ? AND date < ?",
                                (start.isoformat(), f"{y:04d}-{mo:02d}-01")).fetchall()
         rows, uncounted = [], defaultdict(int)
         counted_any = [False] * len(outings)
@@ -1105,6 +1111,26 @@ def outing_create(b: OutingIn, _: str = Depends(require_committee)):
 def outing_update(oid: int, b: OutingIn, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         return {"id": _save_outing(conn, Rules(conn), oid, b)}
+
+
+class OutingCancelIn(BaseModel):
+    cancelled: bool = True
+    reason: str = Field("", max_length=200)
+
+
+@app.post("/api/committee/outings/{oid}/cancel")
+def outing_cancel(oid: int, b: OutingCancelIn, _: str = Depends(require_committee)):
+    """Mark a session cancelled (or restore it). It stays on the schedule with its crew, but no longer
+    counts towards outing totals, free outings, stats or double-booking, and open sub requests close."""
+    with db.get_conn() as conn:
+        if not conn.execute("SELECT 1 FROM outings WHERE id=?", (oid,)).fetchone():
+            raise HTTPException(404, "Outing not found")
+        conn.execute("UPDATE outings SET cancelled=?, cancel_reason=? WHERE id=?",
+                     (int(b.cancelled), b.reason.strip() if b.cancelled else "", oid))
+        if b.cancelled:
+            conn.execute("""UPDATE sub_requests SET status='cancelled', resolved_at=datetime('now')
+                            WHERE outing_id=? AND status='open'""", (oid,))
+        return {"ok": True}
 
 
 @app.delete("/api/committee/outings/{oid}")
@@ -1246,7 +1272,7 @@ def river_check(b: RiverCheckIn, _: str = Depends(require_committee)):
              "capacity": boat["seats"] if boat else b.capacity, "coxed": bool(boat["coxed"]) if boat else b.coxed}
         crew = {int(k): v for k, v in b.seats.items() if v is not None and k.lstrip("-").isdigit()}
         others = [dict(r) for r in conn.execute(
-            "SELECT id, kind, date, time, end_time, capacity FROM outings WHERE kind='water' AND date=? AND id != ?",
+            "SELECT id, kind, date, time, end_time, capacity FROM outings WHERE kind='water' AND cancelled = 0 AND date=? AND id != ?",
             (b.date, b.outing_id or -1))]
         flag = river.current_flag(rules.settings)
         return {"flag": flag, "day": river.day_info(date.fromisoformat(b.date), TZ),

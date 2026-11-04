@@ -243,6 +243,11 @@ textarea.input { resize: vertical; min-height: 64px; }
 .outing.land::before { background: var(--land); }
 .outing.draft { background: repeating-linear-gradient(135deg, var(--surface), var(--surface) 10px, var(--surface-2) 10px, var(--surface-2) 20px); }
 .outing.past { opacity: .72; }
+.outing.cancelled::before { background: var(--bad); }
+.outing.cancelled .o-time, .outing.cancelled .o-title, .outing.cancelled .seats { text-decoration: line-through; text-decoration-color: var(--text-3); }
+.outing.cancelled .seats { opacity: .6; }
+.o-cancel { display: flex; gap: 6px; align-items: center; margin: 6px 0 4px; padding: 5px 8px; border-radius: 8px; background: var(--bad-soft); color: var(--bad); font-size: 12.5px; font-weight: 600; }
+.o-cancel svg { width: 13px; height: 13px; flex: none; }
 .outing.clickable { cursor: pointer; }
 .outing.clickable:hover { box-shadow: var(--shadow-lg); transform: translateY(-1px); }
 .o-top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }

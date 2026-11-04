@@ -271,7 +271,7 @@ def signup_committee(week_start: str, _: str = Depends(require_committee)):
         sched = defaultdict(int)
         for r in conn.execute(
                 """SELECT a.member_id FROM assignments a JOIN outings o ON o.id = a.outing_id
-                   WHERE o.date BETWEEN ? AND ?""", (ws, (date.fromisoformat(ws) + timedelta(days=6)).isoformat())):
+                   WHERE o.cancelled = 0 AND o.date BETWEEN ? AND ?""", (ws, (date.fromisoformat(ws) + timedelta(days=6)).isoformat())):
             sched[r["member_id"]] += 1
         for resp in responses:
             resp["scheduled"] = sched.get(resp["member_id"], 0)
