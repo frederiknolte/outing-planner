@@ -630,3 +630,34 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
 .flag-row { display: flex; gap: 10px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); }
 .flag-row .flag-dot { margin-top: 3px; }
 .flag-row.on { border-color: var(--accent); background: var(--accent-soft); }
+
+/* ---------------------------------------------------------------- races -- */
+.race-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+.race { padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.race.past { opacity: .8; }
+.race-head { display: flex; gap: 12px; align-items: center; }
+.race-title { font-weight: 700; font-size: 15.5px; overflow-wrap: anywhere; }
+.race-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.race-notes { color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.race-links { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.race-links a { display: inline-flex; gap: 6px; align-items: center; overflow-wrap: anywhere; min-width: 0; }
+.race-links svg { width: 14px; height: 14px; flex: none; }
+.race-respond { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--border); }
+.race-respond .seg { flex-wrap: wrap; }
+.seg button.on.yes { background: var(--ok-soft); color: var(--ok); }
+.seg button.on.maybe { background: var(--warn-soft); color: var(--warn); }
+.seg button.on.no { background: var(--bad-soft); color: var(--bad); }
+.race-who summary { cursor: pointer; display: flex; gap: 6px; flex-wrap: wrap; list-style: none; }
+.race-who summary::-webkit-details-marker { display: none; }
+.race-who[open] summary { margin-bottom: 8px; }
+.race-who > .btn { margin-top: 8px; }
+.race-group { margin-top: 6px; }
+.race-person { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 3px 0; font-size: 13.5px; }
+.race-person.me { font-weight: 700; }
+.race-link-rows { display: flex; flex-direction: column; gap: 6px; }
+.race-link-row { display: grid; grid-template-columns: 1fr 2fr auto; gap: 6px; }
+@media (max-width: 640px) {
+  .race-list { grid-template-columns: 1fr; }
+  .race-link-row { grid-template-columns: 1fr auto; }
+  .race-link-row input[data-k=url] { grid-column: 1; grid-row: 2; }
+}

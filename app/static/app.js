@@ -43,6 +43,8 @@ const I = {
   whistle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="14" r="6"/><path d="M13 10l8-4v4l-6 2"/></svg>',
   trophy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg>',
   down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
+  flag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22V4M4 4h13l-2 4 2 4H4"/></svg>',
+  link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
 };
 
@@ -181,6 +183,7 @@ const ROUTES = [
   { id: "schedule", label: "Schedule", icon: I.calendar },
   { id: "signup", label: "Sign up", adminLabel: "Sign-ups", icon: I.calendar },
   { id: "subs", label: "Sub board", icon: I.swap },
+  { id: "races", label: "Races", icon: I.flag },
   { id: "me", label: "My outings", icon: I.user, member: true },
   { id: "stats", label: "Leaderboard", icon: I.trophy },
   { id: "rowers", label: "Rowers", icon: I.user },
@@ -1945,6 +1948,141 @@ function editPlace(p, after) {
   });
 }
 
+// ------------------------------------------------------------------ races --
+const RACE_ST = { yes: ["Available", "ok"], maybe: ["Maybe", "warn"], no: ["Not available", "bad"] };
+const raceEligible = (r, m) => r.entry === "all" || (m && r.entry === (m.category || "").toLowerCase());
+
+function raceCard(r, data) {
+  const d = pd(r.date), me = S.boot.members.find((m) => m.id === S.me);
+  const mine = r.responses.find((x) => x.member_id === S.me);
+  const eligible = raceEligible(r, me);
+  const locked = r.past || !r.open;
+  const canRespond = isAdmin() || (!locked && (!me || eligible));
+  const groups = ["yes", "maybe", "no"].map((k) => [k, r.responses.filter((x) => x.status === k)]);
+  let respond;
+  if (!canRespond) respond = `<div class="small muted">${r.past ? "This race has happened." : !r.open ? "Sign-up is closed." : `For ${esc(data.entry[r.entry].toLowerCase())} only.`}${mine ? ` You said <b>${esc(RACE_ST[mine.status][0].toLowerCase())}</b>.` : ""}</div>`;
+  else respond = `<div class="race-respond"><span class="small muted">${me ? `${esc(me.name.split(" ")[0])}, can you race?` : "Can you race?"}</span>
+      <div class="seg">${Object.entries(RACE_ST).map(([k, [l]]) => `<button data-race-st="${k}" class="${mine?.status === k ? "on " + k : ""}">${esc(l)}</button>`).join("")}</div>
+      ${mine ? `<button class="btn ghost sm" data-race-note>${mine.comment ? "Edit note" : "Add note"}</button>` : ""}</div>
+      ${mine?.comment ? `<div class="small muted">Your note: “${esc(mine.comment)}”</div>` : ""}`;
+  return `<article class="card race ${r.past ? "past" : ""}" data-race="${r.id}">
+    <div class="race-head"><div class="datebox"><span>${DAY[dow(r.date)]}</span><b>${d.getUTCDate()}</b><span>${MON[d.getUTCMonth()]}</span></div>
+      <div style="flex:1;min-width:0"><div class="race-title">${esc(r.title)}</div>
+        <div class="o-sub">${r.city ? `<span>${I.pin}${esc(r.city)}</span>` : ""}${r.time_slot ? `<span>${esc(r.time_slot)}</span>` : ""}${r.term ? `<span>${esc(r.term)}</span>` : ""}</div></div>
+      ${isAdmin() ? `<button class="btn sm" data-race-edit>Edit</button>` : ""}</div>
+    <div class="race-chips"><span class="chip ${r.entry === "novice" ? "accent" : r.entry === "senior" ? "violet" : ""}">${esc(data.entry[r.entry])}</span>${r.race_type ? `<span class="chip">${esc(r.race_type)}</span>` : ""}${!r.open && !r.past ? `<span class="chip warn">Sign-up closed</span>` : ""}</div>
+    ${r.notes ? `<div class="race-notes small">${esc(r.notes)}</div>` : ""}
+    ${r.links.length ? `<div class="race-links">${r.links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${I.link}${esc(l.label || l.url.replace(/^https?:\/\//, "").replace(/\/$/, ""))}</a>`).join("")}</div>` : ""}
+    ${respond}
+    <details class="race-who"${isAdmin() ? " open" : ""}><summary><span class="chip ok">${r.counts.yes} available</span><span class="chip warn">${r.counts.maybe} maybe</span><span class="chip bad">${r.counts.no} not</span></summary>
+      ${r.responses.length ? groups.filter(([, l]) => l.length).map(([k, l]) => `<div class="race-group"><div class="faint small">${RACE_ST[k][0]}</div>${l.map((x) => `<div class="race-person ${x.member_id === S.me ? "me" : ""}">
+        <span>${esc(x.name)} <span class="faint small">${esc(x.category)}</span>${x.comment && isAdmin() ? ` <span class="small muted">“${esc(x.comment)}”</span>` : ""}</span>
+        ${isAdmin() ? `<button class="btn ghost sm" data-race-set="${x.member_id}">Change</button>` : ""}</div>`).join("")}</div>`).join("") : `<div class="faint small">No responses yet.</div>`}
+      ${isAdmin() ? `<button class="btn sm" data-race-set="">${I.plus}Add response for someone</button>` : ""}
+    </details>
+  </article>`;
+}
+
+async function pageRaces() {
+  let data;
+  try { data = await api(`/api/races${S.me ? `?me=${S.me}` : ""}`); } catch (e) { return fail(e); }
+  S.raceTab = S.raceTab || "upcoming";
+  const shown = data.races.filter((r) => (S.raceTab === "past") === r.past);
+  if (S.raceTab === "past") shown.reverse();
+  const admin = isAdmin();
+  $("#main").innerHTML = `
+    <div class="page-head"><div><h1>Races</h1><p>Upcoming regattas and head races. Say whether you can race so the coaches can put crews together.</p></div>
+      <div class="toolbar"><div class="seg" id="rc-tab"><button data-t="upcoming" class="${S.raceTab === "upcoming" ? "on" : ""}">Upcoming</button><button data-t="past" class="${S.raceTab === "past" ? "on" : ""}">Past</button></div>
+      ${admin ? `<button class="btn primary" id="rc-add">${I.plus}Add race</button>` : ""}</div></div>
+    ${shown.length ? `<div class="race-list">${shown.map((r) => raceCard(r, data)).join("")}</div>`
+      : `<div class="card empty">${I.flag}<h3>${S.raceTab === "past" ? "No past races" : "No races planned yet"}</h3><p>${admin && S.raceTab === "upcoming" ? "Add a race so rowers can say whether they're available." : "Races will show up here once a coach adds them."}</p></div>`}`;
+  $$("#rc-tab button").forEach((b) => b.onclick = () => { S.raceTab = b.dataset.t; pageRaces(); });
+  if (admin) $("#rc-add").onclick = () => editRace(null, data);
+  $$(".race[data-race]").forEach((card) => {
+    const r = data.races.find((x) => x.id === +card.dataset.race);
+    const e = $("[data-race-edit]", card); if (e) e.onclick = () => editRace(r, data);
+    $$("[data-race-st]", card).forEach((b) => b.onclick = () => requireMe(async () => {
+      const me = S.boot.members.find((m) => m.id === S.me);
+      if (!admin && !raceEligible(r, me)) return toast(`This race is for ${data.entry[r.entry].toLowerCase()} only`, true);
+      const mine = r.responses.find((x) => x.member_id === S.me);
+      try {
+        if (mine?.status === b.dataset.raceSt) await api(`/api/races/${r.id}/response/${S.me}`, { method: "DELETE" });
+        else await api(`/api/races/${r.id}/response`, { method: "PUT", body: { member_id: S.me, status: b.dataset.raceSt, comment: mine?.comment || "" } });
+        pageRaces();
+      } catch (err) { fail(err); }
+    }));
+    const n = $("[data-race-note]", card); if (n) n.onclick = () => raceResponseModal(r, S.me);
+    $$("[data-race-set]", card).forEach((b) => b.onclick = () => raceResponseModal(r, b.dataset.raceSet ? +b.dataset.raceSet : null));
+  });
+}
+
+function raceResponseModal(r, memberId) {
+  const cur = memberId != null ? r.responses.find((x) => x.member_id === memberId) : null;
+  let status = cur?.status || "yes", picker = null;
+  const who = memberId != null ? S.boot.members.find((m) => m.id === memberId)?.name || cur?.name : null;
+  modal({
+    title: esc(r.title),
+    body: `${isAdmin() && memberId == null ? `<label class="field"><span>Rower</span><div id="rr-who"></div></label>` : `<div><b>${esc(who || "")}</b></div>`}
+      <div class="field"><span>Can they race?</span><div class="seg" id="rr-st">${Object.entries(RACE_ST).map(([k, [l]]) => `<button type="button" data-v="${k}" class="${status === k ? "on " + k : ""}">${esc(l)}</button>`).join("")}</div></div>
+      <label class="field"><span>Note (optional)</span><textarea class="input" id="rr-c" rows="2" maxlength="500" placeholder="e.g. Can only do the morning division">${esc(cur?.comment || "")}</textarea><span class="hint">Only coaches see notes.</span></label>`,
+    foot: `${cur ? `<button class="btn danger" id="rr-del">Remove response</button>` : ""}<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="rr-save">Save</button></div>`,
+    onMount: (m, close) => {
+      const box = $("#rr-who", m);
+      if (box) picker = combo(box, { items: () => S.boot.members.map((x) => ({ id: x.id, label: x.name, sub: x.category, dim: !raceEligible(r, x), rank: raceEligible(r, x) ? 0 : 1 })), placeholder: "Search names…", renderWhy: (i) => `<span class="chip">${esc(i.sub)}</span>` });
+      $$("#rr-st button", m).forEach((b) => b.onclick = () => { status = b.dataset.v; $$("#rr-st button", m).forEach((x) => x.className = x === b ? "on " + x.dataset.v : ""); });
+      $("#rr-save", m).onclick = async () => {
+        const mid = memberId ?? picker?.get();
+        if (mid == null) return toast("Pick a rower", true);
+        try { await api(`/api/races/${r.id}/response`, { method: "PUT", body: { member_id: mid, status, comment: $("#rr-c", m).value } }); close(); pageRaces(); } catch (e) { fail(e); }
+      };
+      const d = $("#rr-del", m);
+      if (d) d.onclick = async () => { try { await api(`/api/races/${r.id}/response/${memberId}`, { method: "DELETE" }); close(); pageRaces(); } catch (e) { fail(e); } };
+    },
+  });
+}
+
+function editRace(r, data) {
+  const v = r || { title: "", date: S.boot.today, term: S.boot.settings.current_term || "", city: "", time_slot: "", entry: "all", race_type: "", notes: "", open: true, links: [] };
+  const links = v.links.map((l) => ({ ...l }));
+  const types = [...new Set(data.races.map((x) => x.race_type).filter(Boolean))];
+  const linkRows = () => links.map((l, i) => `<div class="race-link-row" data-i="${i}"><input class="input" data-k="label" placeholder="Label, e.g. Entry info" value="${esc(l.label)}"><input class="input" data-k="url" type="url" placeholder="https://…" value="${esc(l.url)}"><button type="button" class="btn ghost icon" data-rm aria-label="Remove link">${I.x}</button></div>`).join("");
+  modal({
+    title: r ? "Edit race" : "Add race", wide: true,
+    body: `<label class="field"><span>Title</span><input class="input" id="r-title" value="${esc(v.title)}" placeholder="e.g. Christ Church Regatta"></label>
+      <div class="grid-3"><label class="field"><span>Date</span><input class="input" type="date" id="r-date" value="${esc(v.date)}"></label>
+        <label class="field"><span>Term</span><select class="input" id="r-term"><option value="">–</option>${data.terms.map((t) => `<option ${v.term === t ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+        <label class="field"><span>Who should enter</span><select class="input" id="r-entry">${Object.entries(data.entry).map(([k, l]) => `<option value="${k}" ${v.entry === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
+      <div class="grid-3"><label class="field"><span>City</span><input class="input" id="r-city" value="${esc(v.city)}" placeholder="e.g. Oxford"></label>
+        <label class="field"><span>Expected time slot</span><input class="input" id="r-slot" value="${esc(v.time_slot)}" placeholder="e.g. 09:00–13:00, Morning"></label>
+        <label class="field"><span>Race type</span><input class="input" id="r-type" list="r-types" value="${esc(v.race_type)}" placeholder="e.g. Head race, Side-by-side"><datalist id="r-types">${types.map((t) => `<option value="${esc(t)}">`).join("")}</datalist></label></div>
+      <label class="field"><span>Notes</span><textarea class="input" id="r-notes" rows="3">${esc(v.notes)}</textarea></label>
+      <div class="field"><span>Links / sources</span><div id="r-links" class="race-link-rows"></div><button type="button" class="btn sm" id="r-addlink" style="align-self:flex-start">${I.plus}Add link</button></div>
+      <label class="check"><input type="checkbox" id="r-open" ${v.open ? "checked" : ""}> Open for responses</label>`,
+    foot: `${r ? `<button class="btn danger" id="r-del">Delete</button>` : ""}<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="r-save">Save</button></div>`,
+    onMount: (m, close) => {
+      const box = $("#r-links", m);
+      const sync = () => $$(".race-link-row", box).forEach((row) => $$("input", row).forEach((inp) => links[+row.dataset.i][inp.dataset.k] = inp.value));
+      const draw = () => { box.innerHTML = linkRows(); $$("[data-rm]", box).forEach((b) => b.onclick = () => { sync(); links.splice(+b.closest(".race-link-row").dataset.i, 1); draw(); }); };
+      draw();
+      $("#r-addlink", m).onclick = () => { sync(); links.push({ label: "", url: "" }); draw(); $$(".race-link-row input[data-k=label]", box).pop()?.focus(); };
+      $("#r-save", m).onclick = async () => {
+        sync();
+        const body = { title: $("#r-title", m).value.trim(), date: $("#r-date", m).value, term: $("#r-term", m).value, city: $("#r-city", m).value, time_slot: $("#r-slot", m).value,
+          entry: $("#r-entry", m).value, race_type: $("#r-type", m).value, notes: $("#r-notes", m).value, open: $("#r-open", m).checked,
+          links: links.filter((l) => l.url.trim()) };
+        if (!body.title) return toast("Title is required", true);
+        if (!body.date) return toast("Pick a date", true);
+        try { await api(r ? `/api/admin/races/${r.id}` : "/api/admin/races", { method: r ? "PUT" : "POST", body }); close(); toast("Race saved"); pageRaces(); } catch (e) { fail(e); }
+      };
+      const d = $("#r-del", m);
+      if (d) d.onclick = async () => {
+        if (!await confirmBox(`Delete ${esc(r.title)}?`, "This also removes everyone's responses for it.", "Delete", true)) return;
+        try { await api(`/api/admin/races/${r.id}`, { method: "DELETE" }); toast("Race deleted"); pageRaces(); } catch (e) { fail(e); }
+      };
+    },
+  });
+}
+
 // ----------------------------------------------------------------- router --
 async function reboot() { S.boot = await api("/api/bootstrap"); S.role = S.boot.role; }
 
@@ -1953,7 +2091,7 @@ function route() {
   const id = (location.hash.replace(/^#\/?/, "") || "schedule").split("?")[0];
   const r = ROUTES.find((x) => x.id === id && (!x.admin || isAdmin())) || ROUTES[0];
   shell(r.id);
-  ({ schedule: pageSchedule, signup: pageSignup, subs: pageSubs, me: pageMe, stats: pageStats, rowers: pageRowers, boats: pageBoats, coaches: pageCoaches, settings: pageSettings })[r.id]();
+  ({ schedule: pageSchedule, signup: pageSignup, subs: pageSubs, races: pageRaces, me: pageMe, stats: pageStats, rowers: pageRowers, boats: pageBoats, coaches: pageCoaches, settings: pageSettings })[r.id]();
   window.scrollTo(0, 0);
 }
 

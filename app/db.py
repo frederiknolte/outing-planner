@@ -123,6 +123,39 @@ CREATE TABLE IF NOT EXISTS places (
     lon REAL
 );
 
+-- Races: admins list them, members say whether they're available
+CREATE TABLE IF NOT EXISTS races (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    date TEXT NOT NULL,                            -- YYYY-MM-DD
+    term TEXT NOT NULL DEFAULT '',                 -- Michaelmas | Hilary | Trinity
+    city TEXT NOT NULL DEFAULT '',
+    time_slot TEXT NOT NULL DEFAULT '',            -- free text, e.g. "Morning" or "09:00-13:00"
+    entry TEXT NOT NULL DEFAULT 'all',             -- all | novice | senior
+    race_type TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    open INTEGER NOT NULL DEFAULT 1,               -- members can respond
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_races_date ON races(date);
+
+CREATE TABLE IF NOT EXISTS race_links (
+    id INTEGER PRIMARY KEY,
+    race_id INTEGER NOT NULL REFERENCES races(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    label TEXT NOT NULL DEFAULT '',
+    url TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS race_responses (
+    race_id INTEGER NOT NULL REFERENCES races(id) ON DELETE CASCADE,
+    member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,                          -- yes | maybe | no
+    comment TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (race_id, member_id)
+);
+
 CREATE TABLE IF NOT EXISTS signup_availability (
     signup_id INTEGER NOT NULL REFERENCES signups(id) ON DELETE CASCADE,
     slot_id INTEGER NOT NULL REFERENCES signup_slots(id) ON DELETE CASCADE,

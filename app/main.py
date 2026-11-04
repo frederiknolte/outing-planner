@@ -27,6 +27,7 @@ from .timeutil import normalize as norm_time, to_minutes
 from .calendar import router as calendar_router
 from .signup import availability_for_outing, router as signup_router
 from .stats import router as stats_router
+from .races import router as races_router
 from .logic import (BOAT_TYPES, SUBS_PLANS, TERMS, TZ, Rules, monday_of, outing_payload,
                     seat_label, seat_list)
 
@@ -1321,6 +1322,7 @@ async def http_exc(_, exc: HTTPException):
 app.include_router(signup_router)
 app.include_router(calendar_router)
 app.include_router(stats_router)
+app.include_router(races_router)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
