@@ -768,7 +768,8 @@ function copyWeek(target) {
 }
 
 /* Auto-fill: the server proposes crews for the week's empty seats from the sign-ups; nothing is saved until
-   the committee presses Apply, and then exactly the proposal shown is saved (seats stay drafts). */
+   the committee presses Apply, and then exactly the proposal shown is saved (seats stay drafts).
+   Sign-up sessions that aren't on the schedule yet are proposed as new draft sessions and created on Apply. */
 async function autofillWeek(start, includePublished = false) {
   let p;
   try { p = await api("/api/committee/week/autofill", { method: "POST", body: { start, include_published: includePublished } }); } catch (e) { return fail(e); }
@@ -781,8 +782,8 @@ async function autofillWeek(start, includePublished = false) {
     const [stl, stc] = STATUS[x.status];
     return `<article class="card af-outing">
       <div class="af-head"><b>${DAY[dow(x.date)]} ${fmtShort(x.date)}${x.time ? ` · <span class="tnum">${esc(tRange(x))}</span>` : ""}</b>
-        <span class="muted">${esc([x.title, x.boat].filter(Boolean).join(" · "))}</span></div>
-      <div class="af-chips"><span class="chip ${stc}">${stl}</span>${x.added ? `<span class="chip accent">+${x.added}</span>` : ""}${x.category ? `<span class="chip">${x.category === "Novice" ? "Novice crew" : "Senior crew"}</span>` : ""}${x.squad ? squadChip(x.squad) : ""}${x.published ? `<span class="chip warn">Published</span>` : ""}</div>
+        <span class="muted">${esc([x.title, x.boat, x.location].filter(Boolean).join(" · "))}</span></div>
+      <div class="af-chips">${x.new ? `<span class="chip accent" title="Made from the sign-up sheet; created as a draft when you apply">${I.plus}New session</span>` : ""}<span class="chip ${stc}">${stl}</span>${x.added ? `<span class="chip accent">+${x.added}</span>` : ""}${x.category ? `<span class="chip">${x.category === "Novice" ? "Novice crew" : "Senior crew"}</span>` : ""}${x.squad ? squadChip(x.squad) : ""}${x.published ? `<span class="chip warn">Published</span>` : ""}</div>
       <div class="seats">${seatsHtml(x)}</div>
       <div class="small" style="margin-top:6px">${I.whistle} ${x.new_coach ? `Bankrider: <b class="af-new-text">${esc(x.new_coach)}</b>` : x.coach ? `Coach: ${esc(x.coach)}` : `<span class="faint">No coach / bankrider</span>`}</div>
       ${x.notes.length ? `<div class="warnings">${x.notes.map((n) => `<div>${I.alert}<span>${esc(n)}</span></div>`).join("")}</div>` : ""}
@@ -798,13 +799,18 @@ async function autofillWeek(start, includePublished = false) {
       <td class="tnum">${q.bankrides ? given(q.bankrides, q.bankrides_before, 0) : "—"}</td>
       <td class="tnum">${q.total}</td></tr>`).join("")}</tbody></table></div>`;
   const nShort = people.filter(short).length;
-  const changes = p.added + p.bankriders;
-  const body = !p.signups
+  const newWater = p.outings.filter((x) => x.new).length, newLand = p.new_land.length, newN = newWater + newLand;
+  const changes = p.added + p.bankriders + newN;
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const landHtml = newLand ? `<div class="af-land small">${I.land}<span><b>${plural(newLand, "land session")}</b> from the sign-up sheet will be added as drafts (rowers join them once published):
+      ${p.new_land.map((x) => `${esc(x.title || "Land")} ${DAY[dow(x.date)]} ${fmtShort(x.date)}${x.time ? " " + esc(tRange(x)) : ""}`).join(" · ")}</span></div>` : "";
+  const body = !p.signups && !newN
     ? `<div class="empty">${I.users}<h3>Nobody has signed up for this week yet</h3><p>Auto-fill uses the weekly sign-up. Open the sign-up form for this week first.</p></div>`
-    : !p.outings.length
-    ? `<div class="empty">${I.water}<h3>No draft water outings to fill</h3><p>Create this week's water outings on the Schedule first (or copy last week's schedule without crews), then auto-fill them.</p></div>`
-    : `<div class="callout">${I.info}<div>${changes ? `Puts <b>${p.added}</b> ${p.added === 1 ? "person" : "people"} into empty seats${p.bankriders ? ` and adds <b>${p.bankriders}</b> bankrider${p.bankriders === 1 ? "" : "s"}` : ""}. ` : "There's nothing auto-fill can add right now. "}
-        People you've already placed stay where they are. Nothing is saved until you press <b>Apply</b>, and sessions stay as drafts so you can adjust them before publishing.</div></div>
+    : !p.outings.length && !newLand
+    ? `<div class="empty">${I.water}<h3>No sessions to fill</h3><p>Add this week's sessions in the Sign-up tab (or create water outings on the Schedule), then auto-fill them.</p></div>`
+    : `<div class="callout">${I.info}<div>${newN ? `Adds <b>${plural(newN, "new draft session")}</b> from the sign-up sheet. ` : ""}${p.added || p.bankriders ? `Puts <b>${p.added}</b> ${p.added === 1 ? "person" : "people"} into empty seats${p.bankriders ? ` and adds <b>${plural(p.bankriders, "bankrider")}</b>` : ""}. ` : changes ? "" : "There's nothing auto-fill can add right now. "}
+        People you've already placed stay where they are. Nothing is saved until you press <b>Apply</b>, and sessions stay as drafts so you can adjust them before publishing.${newWater ? " New water sessions get one boat each: add another outing on the Schedule if more people are free." : ""}</div></div>
+      ${landHtml}
       <div class="af-summary small muted">${p.full} complete · ${p.partial} still short · ${nShort ? `${nShort} ${nShort === 1 ? "person gets" : "people get"} fewer outings than they asked for` : "everyone gets what they asked for"}</div>
       ${p.excluded_published || includePublished ? `<label class="check small"><input type="checkbox" id="af-pub" ${includePublished ? "checked" : ""}> Also fill published sessions${p.excluded_published ? ` (${p.excluded_published} with empty seats)` : ""}</label>` : ""}
       <div class="af-grid">${p.outings.map(outingHtml).join("")}</div>
@@ -818,12 +824,12 @@ async function autofillWeek(start, includePublished = false) {
       const go = $("#af-go", m);
       if (go) go.onclick = async () => {
         go.disabled = true;
-        const outings = p.outings.filter((x) => x.added || x.new_coach).map((x) => ({
+        const outings = p.outings.filter((x) => x.new || x.added || x.new_coach).map((x) => ({
           id: x.id, coach: x.new_coach, seats: Object.fromEntries(x.seats.filter((s) => s.new).map((s) => [String(s.seat), s.member.id])) }));
         try {
-          const r = await api("/api/committee/week/autofill/apply", { method: "POST", body: { start: p.start, outings } });
+          const r = await api("/api/committee/week/autofill/apply", { method: "POST", body: { start: p.start, outings, land_slots: p.new_land.map((x) => x.slot_id) } });
           close();
-          toast(`Added ${r.added} ${r.added === 1 ? "person" : "people"}${r.coaches ? ` and ${r.coaches} bankrider${r.coaches === 1 ? "" : "s"}` : ""}${r.skipped ? ` · ${r.skipped} skipped (changed since the preview)` : ""}`, !!r.skipped);
+          toast(`${r.created ? `Created ${plural(r.created, "draft session")} · ` : ""}Added ${r.added} ${r.added === 1 ? "person" : "people"}${r.coaches ? ` and ${plural(r.coaches, "bankrider")}` : ""}${r.skipped ? ` · ${r.skipped} skipped (changed since the preview)` : ""}`, !!r.skipped);
           showWeek(p.start);
         } catch (e) { go.disabled = false; fail(e); }
       };
@@ -3236,7 +3242,7 @@ async function pageSignupCommittee() {
         <div class="weekbar"><button class="btn icon" id="sw-prev">${I.left}</button><button class="btn icon" id="sw-next">${I.right}</button></div>
         <a class="btn" href="#/signup?form=1">${I.eye}Open form</a>
         <button class="btn" id="sw-copy-week" title="Copy last week's outings and land sessions into this week's schedule">${I.copy}Copy last week's schedule</button>
-        <button class="btn" id="sw-auto" title="Suggest crews for this week's empty seats from these sign-ups">${I.wand}Auto-fill crews</button>
+        <button class="btn" id="sw-auto" title="Put these sessions on the schedule as drafts and suggest crews from the sign-ups">${I.wand}Auto-fill crews</button>
         ${d.week.open ? `<button class="btn" id="sw-toggle">Close sign-ups</button>` : `<button class="btn primary" id="sw-toggle">${I.send}Open sign-ups</button>`}
       </div></div>
     ${!d.week.open && !d.slots.length ? `<div class="callout warn" style="margin-bottom:16px">${I.info}<div><b>Next step:</b> add this week's water, erg and tank sessions so rowers can tick when they're free, then open sign-ups. <a href="#" id="sw-go-sessions">Add sessions</a> or <a href="#" id="sw-copy-top">copy last week's</a>.</div></div>` : ""}

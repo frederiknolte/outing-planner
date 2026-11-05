@@ -122,6 +122,32 @@ def side_of(seat: int, sweep: bool) -> str:
 
 
 # ------------------------------------------------------------- planner ----
+SLOT_CAPACITY = {"water": (8, 1), "land": (8, 0)}   # (seats, coxed) for sessions made from the sign-up sheet
+
+
+def _covered(slot: dict, outings: list[dict]) -> bool:
+    """Is there already a (not cancelled) outing for this sign-up session: same day, same type, same time?"""
+    kind = "water" if slot["kind"] == "water" else "land"
+    return any(o["kind"] == kind and o["date"] == slot["date"] and (not o["time"] or not slot["time"] or o["time"] == slot["time"])
+               for o in outings)
+
+
+def uncovered_slots(conn, ws: date, outings: list[dict], today: str) -> list[dict]:
+    """The week's sign-up sessions (from today on) that have no outing on the schedule yet."""
+    return [dict(s) for s in conn.execute("SELECT * FROM signup_slots WHERE week_start = ? AND date >= ? ORDER BY date, time, id",
+                                          (ws.isoformat(), today)) if not _covered(dict(s), outings)]
+
+
+def slot_outing(slot: dict) -> dict:
+    """A draft outing for a sign-up session (not saved). Its id is minus the slot id until it's created."""
+    kind = "water" if slot["kind"] == "water" else "land"
+    cap, coxed = SLOT_CAPACITY[kind]
+    title = "" if kind == "water" else {"erg": "Erg", "tank": "Tank"}.get(slot["kind"], "")
+    return {"id": -slot["id"], "slot_id": slot["id"], "kind": kind, "date": slot["date"], "time": slot["time"],
+            "end_time": slot.get("end_time") or "", "location": slot["location"], "title": title, "coach": "",
+            "boat_id": None, "capacity": cap, "coxed": coxed, "published": 0, "cancelled": 0, "notes": slot["note"]}
+
+
 class Planner:
     def __init__(self, conn, ws: date, include_published: bool = False):
         self.conn = conn
@@ -133,11 +159,16 @@ class Planner:
         week = [dict(o) for o in conn.execute(
             "SELECT * FROM outings WHERE date BETWEEN ? AND ? AND cancelled = 0 ORDER BY date, time, id",
             (ws.isoformat(), we.isoformat()))]
+        # Sign-up sessions without an outing yet become draft outings (created only when the proposal is applied).
+        new = [slot_outing(sl) for sl in uncovered_slots(conn, ws, week, r.today.isoformat())]
+        self.new_land = [o for o in new if o["kind"] == "land"]
+        week = sorted(week + [o for o in new if o["kind"] == "water"], key=lambda o: (o["date"], o["time"], o["id"]))
         self.outings = {o["id"]: o for o in week}
         self.crew: dict[int, dict[int, int]] = defaultdict(dict)  # outing -> seat -> member (saved)
-        if week:
-            qs = ",".join("?" * len(week))
-            for a in conn.execute(f"SELECT * FROM assignments WHERE outing_id IN ({qs})", [o["id"] for o in week]):
+        saved = [o["id"] for o in week if o["id"] > 0]
+        if saved:
+            qs = ",".join("?" * len(saved))
+            for a in conn.execute(f"SELECT * FROM assignments WHERE outing_id IN ({qs})", saved):
                 if a["member_id"] in r.members:
                     self.crew[a["outing_id"]][a["seat"]] = a["member_id"]
         self.new: dict[int, dict[int, int]] = defaultdict(dict)  # outing -> seat -> member (planned)
@@ -511,7 +542,8 @@ class Planner:
                       else "full" if not empty else "partial")
             boat = self.boats.get(o["boat_id"])
             outs.append({
-                "id": oid, "date": o["date"], "time": o["time"], "end_time": o["end_time"], "title": o["title"],
+                "id": oid, "new": oid < 0, "date": o["date"], "time": o["time"], "end_time": o["end_time"], "title": o["title"],
+                "location": o["location"],
                 "boat": boat["name"] if boat else "", "published": bool(o["published"]),
                 "coach": o["coach"], "new_coach": self.new_coach.get(oid, ""),
                 "squad": info["squad"], "category": info["category"],
@@ -535,6 +567,7 @@ class Planner:
             "full": sum(1 for o in outs if o["status"] == "full"),
             "partial": sum(1 for o in outs if o["status"] == "partial"),
             "excluded_published": self.excluded_published,
+            "new_land": [{k: o[k] for k in ("slot_id", "date", "time", "end_time", "location", "title")} for o in self.new_land],
         }
 
 
@@ -567,7 +600,8 @@ class ApplyOuting(BaseModel):
 
 class ApplyIn(BaseModel):
     start: str
-    outings: list[ApplyOuting] = Field([], max_length=100)
+    outings: list[ApplyOuting] = Field([], max_length=100)   # negative id = create from sign-up session -id
+    land_slots: list[int] = Field([], max_length=100)       # sign-up sessions to create as draft land sessions
 
 
 @router.post("/api/committee/week/autofill/apply")
@@ -576,9 +610,24 @@ def autofill_apply(b: ApplyIn, request: Request, _: str = Depends(require_commit
     with people who aren't already in that outing; a bankrider is only set if the field is still empty."""
     ws = _monday(b.start)
     we = (ws + timedelta(days=6)).isoformat()
-    added = coaches = skipped = 0
+    added = coaches = skipped = created = 0
     with db.get_conn() as conn:
-        before = push.snapshot(conn, ids=[x.id for x in b.outings])
+        # First create the draft outings for sign-up sessions that had none (unless one has appeared since the preview).
+        week = [dict(o) for o in conn.execute("SELECT * FROM outings WHERE date BETWEEN ? AND ? AND cancelled = 0", (ws.isoformat(), we))]
+        slots = {sl["id"]: sl for sl in uncovered_slots(conn, ws, week, "")}
+        ids = {}
+        for sid in {-x.id for x in b.outings if x.id < 0} | set(b.land_slots):
+            if sid not in slots:
+                continue
+            o = slot_outing(slots[sid])
+            ids[-sid] = conn.execute(
+                """INSERT INTO outings(kind, date, time, end_time, location, title, coach, boat_id, capacity, coxed, notes, published)
+                   VALUES (?, ?, ?, ?, ?, ?, '', NULL, ?, ?, ?, 0)""",
+                (o["kind"], o["date"], o["time"], o["end_time"], o["location"], o["title"], o["capacity"], o["coxed"], o["notes"])).lastrowid
+            created += 1
+        for x in b.outings:
+            x.id = ids.get(x.id, x.id)
+        before = push.snapshot(conn, ids=[x.id for x in b.outings if x.id > 0])
         members = {r["id"] for r in conn.execute("SELECT id FROM members")}
         who = crewlog.actor(request, conn)
         for x in b.outings:
@@ -612,4 +661,4 @@ def autofill_apply(b: ApplyIn, request: Request, _: str = Depends(require_commit
             crewlog.record(conn, x.id, crew_before, who, "autofill")
         msgs = push.crew_changes(conn, before)
     push.dispatch(msgs)
-    return {"added": added, "coaches": coaches, "skipped": skipped}
+    return {"added": added, "coaches": coaches, "skipped": skipped, "created": created}

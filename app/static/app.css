@@ -808,6 +808,8 @@ button.race-person:hover { border-color: var(--accent); }
 
 /* ------------------------------------------------------------- auto-fill -- */
 .af-summary { margin: 10px 0 6px; }
+.af-land { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); color: var(--text-2); }
+.af-land svg { width: 16px; height: 16px; flex: none; margin-top: 1px; color: var(--land); }
 .af-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; margin-top: 12px; }
 .af-outing { padding: 12px; position: relative; overflow: hidden; }
 .af-outing::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--water); }
