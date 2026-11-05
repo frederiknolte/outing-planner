@@ -212,6 +212,52 @@ function combo(container, { items, value, placeholder = "Search…", onChange, r
   return { get: () => cur, set: (v) => { cur = v; sync(); }, refresh: sync };
 }
 
+/* Dropdown for a name box that also takes free text: pick from the list or type anything else. The value
+   is simply the input's text. entries: () => [{name, rank, dim}]; why: chips for an entry. With multi, the box
+   holds a comma-separated list and a pick fills in the last name. onChange fires on a pick or clear, not on typing. */
+function nameSuggest(inp, { entries, why, multi = false, onChange }) {
+  const wrap = inp.parentElement;
+  wrap.classList.add("combo");
+  wrap.insertAdjacentHTML("beforeend", `<button type="button" class="clear" tabindex="-1" aria-label="Clear">×</button>`);
+  const clr = $(".clear", wrap);
+  let list = null, hl = 0, shown = [], typed = false;   // until something is typed, show everyone rather than filter by the saved name
+  const parts = () => (multi ? inp.value.split(/\s*,\s*/) : [inp.value]);
+  const sync = () => { clr.style.display = inp.value ? "" : "none"; };
+  const close = () => { list?.remove(); list = null; };
+  const draw = () => {
+    const ps = parts(), q = typed ? fold((ps[ps.length - 1] || "").trim()) : "";
+    const taken = new Set(ps.slice(0, -1).map((x) => fold(x.trim())));
+    shown = entries().filter((e) => !taken.has(fold(e.name)) && (!q || fold(e.name).includes(q)))
+      .sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0) || a.name.localeCompare(b.name)).slice(0, 80);
+    hl = Math.min(hl, Math.max(0, shown.length - 1));
+    if (!list) { list = document.createElement("div"); list.className = "combo-list"; wrap.appendChild(list); }
+    list.innerHTML = shown.length ? shown.map((e, k) => `<div class="combo-item ${k === hl ? "hl" : ""} ${e.dim ? "dim" : ""}" data-k="${k}"><span class="nm">${esc(e.name)}</span><span class="why">${why ? why(e) : ""}</span></div>`).join("")
+      : `<div class="combo-empty">No match. The name you typed will be used as it is.</div>`;
+    $$(".combo-item", list).forEach((el) => el.addEventListener("mousedown", (ev) => { ev.preventDefault(); pick(shown[+el.dataset.k]); }));
+    const h = $(".hl", list); h && h.scrollIntoView({ block: "nearest" });
+  };
+  const pick = (e) => {
+    const ps = parts(); ps[ps.length - 1] = e.name;
+    inp.value = ps.map((x) => x.trim()).filter(Boolean).join(", ");
+    typed = false; close(); sync(); onChange && onChange(inp.value);
+    if (!multi) inp.blur();   // a list stays focused, ready for ", next name"
+  };
+  inp.addEventListener("focus", () => { typed = false; hl = 0; if (!multi) inp.select(); draw(); });
+  inp.addEventListener("click", () => { if (!list) { hl = 0; draw(); } });
+  inp.addEventListener("input", () => { typed = true; hl = 0; sync(); draw(); });
+  inp.addEventListener("blur", () => setTimeout(close, 120));
+  inp.addEventListener("keydown", (ev) => {
+    if (!list) { if (ev.key === "ArrowDown") draw(); return; }
+    if (ev.key === "ArrowDown") { hl = Math.min(hl + 1, shown.length - 1); draw(); ev.preventDefault(); }
+    else if (ev.key === "ArrowUp") { hl = Math.max(hl - 1, 0); draw(); ev.preventDefault(); }
+    else if (ev.key === "Enter") { ev.preventDefault(); if (shown[hl]) pick(shown[hl]); else close(); }
+    else if (ev.key === "Escape") { ev.stopPropagation(); close(); }
+  });
+  clr.addEventListener("click", () => { inp.value = ""; typed = false; close(); sync(); onChange && onChange(""); });
+  sync();
+  return { refresh: sync };
+}
+
 // ------------------------------------------------------------------ login --
 function renderLogin() {
   $("#modal-root").innerHTML = "";
@@ -1068,6 +1114,7 @@ async function editOuting(o, defaults = {}) {
         const parts = inp.value.split(/\s*(?:,|&| and )\s*/).filter(Boolean);
         const has = parts.some((x) => x.toLowerCase() === name.toLowerCase());
         inp.value = (has ? parts.filter((x) => x.toLowerCase() !== name.toLowerCase()) : [...parts, name]).join(", ");
+        coachBox.refresh();
         status();
       };
       const drawPool = () => {
@@ -1116,23 +1163,15 @@ async function editOuting(o, defaults = {}) {
       };
       // ---- coach / bankrider: dropdown of everyone (coaches + all members), free text still allowed ----
       function coachPicker() {
-        const inp = $("#oe-coach", m), wrap = $("#oe-coach-wrap", m);
-        let list = null, hl = 0, shown = [];
-        const parts = () => inp.value.split(/\s*,\s*/);
-        const build = () => {
-          const ps = parts(), q = fold((ps[ps.length - 1] || "").trim());
-          const taken = new Set(ps.slice(0, -1).map((x) => fold(x.trim())));
+        const entries = () => {
           const byName = new Map();
           coaches.forEach((c) => byName.set(fold(c.name), { name: c.name, coach: true }));
           members.forEach((mm) => { const k = fold(mm.name); byName.set(k, { ...(byName.get(k) || { name: mm.name }), mid: mm.id }); });
-          return [...byName.values()]
-            .filter((e) => !taken.has(fold(e.name)) && (!q || fold(e.name).includes(q)))
-            .map((e) => {
-              const c = e.mid != null ? cand[e.mid] || {} : {}, su = c.signup;
-              const br = !!(su && su.can_bankride), free = !!(su && su.available), inBoat = e.mid != null && seatOf(e.mid) != null;
-              return { ...e, br, free, inBoat, busy: !!c.busy, rank: inBoat || c.busy ? 5 : br && free ? 0 : e.coach ? 1 : br ? 2 : free ? 3 : 4 };
-            })
-            .sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name)).slice(0, 80);
+          return [...byName.values()].map((e) => {
+            const c = e.mid != null ? cand[e.mid] || {} : {}, su = c.signup;
+            const br = !!(su && su.can_bankride), free = !!(su && su.available), inBoat = e.mid != null && seatOf(e.mid) != null;
+            return { ...e, br, free, inBoat, busy: !!c.busy, dim: inBoat || !!c.busy, rank: inBoat || c.busy ? 5 : br && free ? 0 : e.coach ? 1 : br ? 2 : free ? 3 : 4 };
+          });
         };
         const why = (e) => [
           e.br && e.free ? `<span class="chip ok">${I.check}Can bankride · free</span>` : e.br ? `<span class="chip ok">Can bankride</span>` : "",
@@ -1141,31 +1180,7 @@ async function editOuting(o, defaults = {}) {
           e.inBoat ? `<span class="chip warn">In the boat</span>` : "",
           e.busy ? `<span class="chip bad">Booked at this time</span>` : "",
         ].join(" ");
-        const close = () => { list?.remove(); list = null; };
-        const draw = () => {
-          shown = build(); hl = Math.min(hl, Math.max(0, shown.length - 1));
-          if (!list) { list = document.createElement("div"); list.className = "combo-list"; wrap.appendChild(list); }
-          list.innerHTML = shown.length ? shown.map((e, k) => `<div class="combo-item ${k === hl ? "hl" : ""} ${e.inBoat || e.busy ? "dim" : ""}" data-k="${k}"><span class="nm">${esc(e.name)}</span><span class="why">${why(e)}</span></div>`).join("")
-            : `<div class="combo-empty">No match. The name you typed will be used as it is.</div>`;
-          $$(".combo-item", list).forEach((el) => el.addEventListener("mousedown", (ev) => { ev.preventDefault(); pick(shown[+el.dataset.k]); }));
-          const h = $(".hl", list); h && h.scrollIntoView({ block: "nearest" });
-        };
-        const pick = (e) => {
-          const ps = parts(); ps[ps.length - 1] = e.name;
-          inp.value = ps.map((x) => x.trim()).filter(Boolean).join(", ");
-          close(); status();
-        };
-        inp.addEventListener("focus", () => { hl = 0; draw(); });
-        inp.addEventListener("input", () => { hl = 0; draw(); });
-        inp.addEventListener("blur", () => setTimeout(close, 120));
-        inp.addEventListener("keydown", (ev) => {
-          if (!list && (ev.key === "ArrowDown")) { draw(); return; }
-          if (!list) return;
-          if (ev.key === "ArrowDown") { hl = Math.min(hl + 1, shown.length - 1); draw(); ev.preventDefault(); }
-          else if (ev.key === "ArrowUp") { hl = Math.max(hl - 1, 0); draw(); ev.preventDefault(); }
-          else if (ev.key === "Enter") { ev.preventDefault(); if (shown[hl]) pick(shown[hl]); }
-          else if (ev.key === "Escape") { ev.stopPropagation(); close(); }
-        });
+        return nameSuggest($("#oe-coach", m), { entries, why, multi: true, onChange: status });
       }
 
       $("#oe-clear", m).onclick = (e) => { e.preventDefault(); st.seats = {}; target = null; drawSeats(); };
@@ -1192,7 +1207,7 @@ async function editOuting(o, defaults = {}) {
       $("#oe-time", m).onchange = (e) => { st.time = e.target.value.trim(); loadCand(); };
       $("#oe-coach", m).oninput = status;
       $("#oe-end", m).onchange = riverCheck;
-      coachPicker();
+      const coachBox = coachPicker();
       const save = async (published) => {
         const body = {
           kind: st.kind, date: st.date, time: $("#oe-time", m).value.trim(), end_time: $("#oe-end", m).value.trim(), location: $("#oe-loc", m).value,
@@ -2712,7 +2727,7 @@ async function pageTasks() {
     <div class="filters">
       <input class="input" id="tk-q" placeholder="Search tasks…" style="max-width:240px" value="${esc(S.taskQ || "")}">
       <div class="seg" id="tk-f">${[["open", "Open"], ["done", "Done"], ["all", "All"]].map(([k, l]) => `<button data-f="${k}" class="${S.taskFilter === k ? "on" : ""}">${l}</button>`).join("")}</div>
-      ${d.owners.length ? `<select class="input" id="tk-owner" style="width:auto"><option value="">Everyone</option>${d.owners.map((o) => `<option ${S.taskOwner === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>` : ""}
+      ${d.owners.length ? `<div id="tk-owner" style="width:200px"></div>` : ""}
     </div>
     ${shown.length ? `<div class="issue-list">${shown.map((t) => `<button class="card issue-row task-row ${t.status === "done" ? "done" : ""}" data-task="${t.id}">
         <div class="issue-main"><div class="issue-title">${esc(t.title)}</div>
@@ -2724,7 +2739,7 @@ async function pageTasks() {
   $("#tk-new").onclick = () => editTask(null, d);
   const n2 = $("#tk-new2"); if (n2) n2.onclick = () => editTask(null, d);
   $$("#tk-f button").forEach((b) => b.onclick = () => { S.taskFilter = b.dataset.f; pageTasks(); });
-  const ow = $("#tk-owner"); if (ow) ow.onchange = (e) => { S.taskOwner = e.target.value; pageTasks(); };
+  const ow = $("#tk-owner"); if (ow) combo(ow, { items: () => d.owners.map((o) => ({ id: o, label: o })), value: S.taskOwner || null, placeholder: "Everyone", onChange: (v) => { S.taskOwner = v || ""; pageTasks(); } });
   let tq; $("#tk-q").oninput = (e) => { clearTimeout(tq); tq = setTimeout(() => { S.taskQ = e.target.value; pageTasks().then(() => { const i = $("#tk-q"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 250); };
   $$("[data-task]").forEach((b) => b.onclick = () => openTask(+b.dataset.task, d));
 }
@@ -2781,13 +2796,14 @@ async function editTask(t, d) {
     title: t ? "Edit task" : "New task", wide: true,
     body: `<label class="field"><span>Task</span><input class="input" id="te-title" maxlength="300" value="${esc(v.title)}" placeholder="e.g. Renew insurance (BR Affiliation Plus)"></label>
       <div class="grid-2"><div class="field"><span>Priority</span><div class="seg" id="te-pri">${[["high", "High"], ["medium", "Medium"], ["low", "Low"], ["", "None"]].map(([k, l]) => `<button type="button" data-v="${k}" class="${pri === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
-        <label class="field"><span>Who's doing it</span><input class="input" id="te-owner" list="te-owners" maxlength="200" value="${esc(v.owner)}" placeholder="e.g. Sophie, or Captains"><datalist id="te-owners">${who.map((x) => `<option value="${esc(x)}">`).join("")}</datalist></label></div>
+        <div class="field"><span>Who's doing it</span><div><input class="input" id="te-owner" maxlength="200" autocomplete="off" value="${esc(v.owner)}" placeholder="e.g. Sophie, or Captains" aria-label="Who's doing it"></div></div></div>
       <div class="grid-2"><label class="field"><span>Due date (optional)</span><input class="input" type="date" id="te-due" value="${esc(v.due)}"></label>
         <label class="field"><span>Repeats</span><select class="input" id="te-rep">${Object.entries(d.repeats).map(([k, l]) => `<option value="${k}" ${v.repeat === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
           <span class="hint">Comes back when it's marked done. Every term: due the same week of next term (e.g. termly subs). Every year: e.g. insurance, BR affiliation, safety audit.</span></label></div>
       <label class="field"><span>Plan of action</span><textarea class="input" id="te-plan" rows="6" maxlength="8000" placeholder="Steps, contacts, links, costs…">${esc(v.plan)}</textarea></label>`,
     foot: `<div class="r"><button class="btn" id="te-cancel">Cancel</button><button class="btn primary" id="te-save">Save</button></div>`,
     onMount: (m, close) => {
+      nameSuggest($("#te-owner", m), { entries: () => who.map((name) => ({ name })) });
       $$("#te-pri button", m).forEach((b) => b.onclick = () => { pri = b.dataset.v; $$("#te-pri button", m).forEach((x) => x.classList.toggle("on", x === b)); });
       $("#te-cancel", m).onclick = () => (t ? openTask(t.id, d) : close());
       $("#te-save", m).onclick = async () => {
@@ -3611,7 +3627,7 @@ function raceCrewsModal(r, data) {
   r.crews.forEach((c) => c.reserves.forEach((x) => { if (!people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: "", cox_status: "" }); }));
   r.responses.forEach((x) => { if (!people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: x.category, cox_status: "" }); });
   const resp = new Map(r.responses.map((x) => [x.member_id, x]));
-  let active = 0, target = null, pubArmed = false;   // target: [crew index, seat or RESERVE] picked by clicking a seat label
+  let active = 0, target = null, pubArmed = false, coaches = [];   // target: [crew index, seat or RESERVE] picked by clicking a seat label
   const RESERVE = -1;   // stands in for the seat number when working out what someone is doing in a crew
   const bt = (c) => BT[c.boat_type] || BT.Other;
   const seatsOf = (c) => boatSeats(bt(c).rowers, bt(c).coxed);
@@ -3671,7 +3687,6 @@ function raceCrewsModal(r, data) {
             <button type="button" class="btn sm primary" id="rcb-auto">${I.wand}Make crews</button></div>
             <span class="hint">Puts everyone available who isn't in a crew yet into as many boats as needed, on their side, with coxes. Empty seats are left as <b>Sub needed</b>. Then adjust by hand.</span></div>
           <p class="oe-hint">Click a name on the right to put them in the highlighted crew (rowers go on their side); click it again to take them out. To choose the seat yourself, click the seat's name first. Empty seats show as <b>Sub needed</b> until you fill them. Each crew can also have a bankrider and reserves; click <b>Reserve</b> first to add a name from the right as a reserve.</p>
-          <datalist id="rcb-names"></datalist>
           <div id="rcb-crews"></div>
           <button type="button" class="btn sm" id="rcb-add" style="align-self:flex-start">${I.plus}Add crew</button></div>
         <aside class="oe-pool" id="rcb-pool"></aside>
@@ -3770,6 +3785,20 @@ function raceCrewsModal(r, data) {
         return { id: mm.id, label: mm.name, x, w, mm, elsewhere, dim: elsewhere || !x || s0 === "no", cls: s0 === "no" ? "bad" : "",
           rank: (elsewhere ? 8 : 0) + ({ yes: 0, maybe: 2, "": 4, no: 6 })[s0] - (fit ? 1 : 0) };
       });
+      // Bankrider: members and coaches. Being in another crew is only a note, so they aren't taken out of it.
+      const bankriderEntries = (ci) => () => {
+        const byName = new Map();
+        coaches.forEach((co) => byName.set(fold(co.name), { name: co.name, coach: true }));
+        people.forEach((mm) => { const k = fold(mm.name); byName.set(k, { ...(byName.get(k) || { name: mm.name }), mid: mm.id }); });
+        return [...byName.values()].map((e) => {
+          const w = e.mid != null ? where(e.mid) : null, inCrew = (w && w[0] === ci) || crews[ci].reserves.includes(e.mid);
+          return { ...e, w, inCrew, x: resp.get(e.mid), dim: inCrew, rank: inCrew ? 3 : w ? 2 : e.coach ? 0 : 1 };
+        });
+      };
+      const bankriderWhy = (e) => [
+        e.coach ? `<span class="chip violet">Coach</span>` : "",
+        e.inCrew ? `<span class="chip warn">In this crew</span>` : e.w ? `<span class="faint">in ${esc(crewName(e.w[0]))} · ${esc(lbl(crews[e.w[0]], e.w[1]))}</span>` : e.x ? statusChip(e.x) : "",
+      ].join(" ");
       const why = (st) => (i) => {
         if (i.elsewhere) return `<span class="faint">in ${esc(crewName(i.w[0]))} · ${esc(lbl(crews[i.w[0]], i.w[1]))}</span>`;
         const bits = [statusChip(i.x)];
@@ -3797,7 +3826,7 @@ function raceCrewsModal(r, data) {
               return `<div class="se-wrap ${armed ? "armed" : ""}"><div class="se-row"><button type="button" class="sl sl-btn" data-target="${st}" title="Click, then pick a name on the right to put them in this seat">${esc(lbl(c, st))}${sideOf(c, st) ? `<i>${sideOf(c, st)}</i>` : ""}</button><div data-seat="${st}"></div></div>
                 ${iss.length ? `<div class="se-status small">${iss.map(([lv, t]) => `<span class="t-${lv}">${esc(t)}</span>`).join(" · ")}</div>` : ""}</div>`; }).join("")}</div>
             <div class="seat-editor rcb-extra">
-              <div class="se-wrap"><div class="se-row"><span class="sl">Bankrider</span><input class="input" data-k="bankrider" list="rcb-names" value="${esc(c.bankrider)}" placeholder="Optional · member, coach or anyone" maxlength="120" autocomplete="off" aria-label="Bankrider"></div>
+              <div class="se-wrap"><div class="se-row"><span class="sl">Bankrider</span><div><input class="input" data-k="bankrider" value="${esc(c.bankrider)}" placeholder="Optional · member, coach or anyone" maxlength="120" autocomplete="off" aria-label="Bankrider"></div></div>
                 <div class="se-status small t-warn" data-br-warn>${esc(bankriderWarning(c))}</div></div>
               ${[...c.reserves, null].slice(0, MAX_RESERVES).map((mid, ri) => {
                 const armed = mid == null && target && target[0] === ci && target[1] === RESERVE, iss = mid != null ? issues(mid, RESERVE) : [];
@@ -3829,6 +3858,8 @@ function raceCrewsModal(r, data) {
             combo(el, { items: items(ci, st), value: c.seats[st] ?? null, placeholder: st === 0 ? "Sub needed · pick cox…" : "Sub needed · pick rower…", renderWhy: why(st),
               onChange: (v) => { if (v != null) { unseat(v); dropReserve(ci, v); } setSeat(ci, st, v); active = ci; draw(); } });
           });
+          nameSuggest($('input[data-k="bankrider"]', sec), { entries: bankriderEntries(ci), why: bankriderWhy, multi: true,
+            onChange: (v) => { c.bankrider = v; $("[data-br-warn]", sec).textContent = bankriderWarning(c); } });
           $$("[data-reserve]", sec).forEach((el) => {
             const ri = +el.dataset.reserve, cur = c.reserves[ri] ?? null;
             const list = items(ci, RESERVE);   // everyone except this crew's other reserves
@@ -3900,13 +3931,7 @@ function raceCrewsModal(r, data) {
       $("#rcb-draft", m).onclick = () => save(false);
       $("#rcb-pub", m).onclick = () => save(true);
       draw();
-      // Suggestions for the bankrider box: members and coaches. Any other name can still be typed.
-      const suggest = (coaches) => {
-        const names = [...new Set([...coaches.map((c) => c.name), ...S.boot.members.map((mm) => mm.name)])].sort((a, b) => a.localeCompare(b));
-        $("#rcb-names", m).innerHTML = names.map((n) => `<option value="${esc(n)}"></option>`).join("");
-      };
-      suggest([]);
-      api("/api/committee/coaches").then(suggest).catch(() => {});
+      api("/api/committee/coaches").then((list) => { coaches = list; }).catch(() => {});
     },
   });
 }
