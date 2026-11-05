@@ -297,6 +297,14 @@ CREATE TABLE IF NOT EXISTS race_crew_seats (
 );
 CREATE INDEX IF NOT EXISTS idx_race_crew_seats_member ON race_crew_seats(member_id);
 
+CREATE TABLE IF NOT EXISTS race_crew_reserves (
+    crew_id INTEGER NOT NULL REFERENCES race_crews(id) ON DELETE CASCADE,
+    member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (crew_id, member_id)
+);
+CREATE INDEX IF NOT EXISTS idx_race_crew_reserves_member ON race_crew_reserves(member_id);
+
 -- Year-end handover: a snapshot of each finished season (see handover.py)
 CREATE TABLE IF NOT EXISTS season_archives (
     id INTEGER PRIMARY KEY,
@@ -339,6 +347,7 @@ MIGRATIONS = {
         "cancel_category": "TEXT NOT NULL DEFAULT ''", # flag | weather | bankrider | numbers | other (see logic.CANCEL_REASONS)
     },
     "boats": {"last_serviced": "TEXT NOT NULL DEFAULT ''"},       # YYYY-MM-DD or '' (see usage.py)
+    "race_crews": {"bankrider": "TEXT NOT NULL DEFAULT ''"},      # free text like outings.coach: a member, a coach or anyone else
     "races": {
         "squad": "TEXT NOT NULL DEFAULT 'any'",                     # any | open | women
         "opens_at": "TEXT NOT NULL DEFAULT ''",                     # when entries open, local "YYYY-MM-DDTHH:MM" or ''

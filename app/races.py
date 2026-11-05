@@ -12,9 +12,14 @@ Women's race needs a rower from that squad. Coxes have no squad and aren't held 
 the squad rule (anyone can cox either squad's crew). Rowers can't submit an ineligible
 response; the committee is warned and can override.
 
-Crews: from the responses the committee forms crews (name, boat type, who sits where).
-They stay a draft only the committee sees until the crews are published; publishing
-notifies everyone whose seat is new or changed.
+Crews: from the responses the committee forms crews (name, boat type, who sits where,
+plus an optional bankrider and reserves). They stay a draft only the committee sees until
+the crews are published; publishing notifies everyone whose place is new or changed.
+
+Like an outing's coach, the bankrider is free text, because it's often a coach who isn't a
+member. Names that match a member count as that member (bankrider_ids). One person can
+hold a place in several crews, e.g. row in one and bankride or be a reserve for another,
+but not two places in the same crew.
 """
 from __future__ import annotations
 
@@ -39,6 +44,7 @@ STATUSES = {"yes": "Available", "maybe": "Maybe", "no": "Not available"}
 ROLES = {"rower": "Rower", "cox": "Cox", "both": "Rower or cox"}
 MAX_LINKS = 10
 MAX_CREWS = 20
+MAX_RESERVES = 10
 
 
 class LinkIn(BaseModel):
@@ -78,6 +84,8 @@ class CrewIn(BaseModel):
     boat_type: str = "8+"
     notes: str = Field("", max_length=500)
     seats: dict[int, int] = {}          # seat (0 = cox) -> member id
+    bankrider: str = Field("", max_length=120)
+    reserves: list[int] = []            # member ids, in order
 
 
 class CrewsIn(BaseModel):
@@ -181,13 +189,24 @@ def _save_links(conn, race_id: int, links: list[tuple[str, str]]) -> None:
 
 
 
+def _bankrider_ids(text: str, member_ids: dict[str, int]) -> list[int]:
+    """The members named in a bankrider field ("Sam Lee, Coach Bob"), given lowercase name -> member id."""
+    parts = (p.strip().lower() for p in re.split(r"\s*(?:,|&|\band\b)\s*", text))
+    return [member_ids[p] for p in parts if p in member_ids]
+
+
+def _member_ids(conn) -> dict[str, int]:
+    return {r["name"].strip().lower(): r["id"] for r in conn.execute("SELECT id, name FROM members")}
+
+
 def _load_crews(conn, race_ids=None) -> dict[int, list[dict]]:
     """race id -> crews. Each crew lists every seat of its boat (cox first, then stroke down to bow);
-    empty seats have member_id None (they need a sub)."""
+    empty seats have member_id None (they need a sub). Also its bankrider and reserves."""
     where = f"WHERE race_id IN ({','.join('?' * len(race_ids))})" if race_ids is not None else ""
     crews, by_id = {}, {}
     for c in conn.execute(f"SELECT * FROM race_crews {where} ORDER BY race_id, position, id", list(race_ids or [])):
-        crew = {"id": c["id"], "name": c["name"], "boat_type": c["boat_type"], "notes": c["notes"], "seats": {}}
+        crew = {"id": c["id"], "name": c["name"], "boat_type": c["boat_type"], "notes": c["notes"], "seats": {},
+                "bankrider": c["bankrider"], "reserves": []}
         crews.setdefault(c["race_id"], []).append(crew)
         by_id[c["id"]] = crew
     if by_id:
@@ -195,11 +214,17 @@ def _load_crews(conn, race_ids=None) -> dict[int, list[dict]]:
                 f"""SELECT s.crew_id, s.seat, s.member_id, m.name FROM race_crew_seats s JOIN members m ON m.id = s.member_id
                     WHERE s.crew_id IN ({','.join('?' * len(by_id))})""", list(by_id)):
             by_id[s["crew_id"]]["seats"][s["seat"]] = (s["member_id"], s["name"])
+        for s in conn.execute(
+                f"""SELECT s.crew_id, s.member_id, m.name FROM race_crew_reserves s JOIN members m ON m.id = s.member_id
+                    WHERE s.crew_id IN ({','.join('?' * len(by_id))}) ORDER BY s.position""", list(by_id)):
+            by_id[s["crew_id"]]["reserves"].append({"member_id": s["member_id"], "name": s["name"]})
+        ids = _member_ids(conn)
         for crew in by_id.values():
             rowers, seats = boat_seats(crew["boat_type"])
             taken = crew["seats"]
             crew["seats"] = [{"seat": n, "label": seat_label(n, rowers, "water"),
                               "member_id": taken.get(n, (None, ""))[0], "name": taken.get(n, (None, ""))[1]} for n in seats]
+            crew["bankrider_ids"] = _bankrider_ids(crew["bankrider"], ids)
     return crews
 
 
@@ -288,9 +313,18 @@ def race_delete(race_id: int, _: str = Depends(require_committee)):
         return {"ok": True}
 
 
-def _assignments(crews) -> dict[int, tuple[str, str]]:
-    """member id -> (crew name, seat name), from (name, boat_type, {seat: member id}) triples."""
-    return {mid: (name, seat_name(seat, boat_seats(bt)[0], "water")) for name, bt, seats in crews for seat, mid in seats.items()}
+def _assignments(crews) -> dict[int, list[str]]:
+    """member id -> their places, as phrases that follow "You're ...".
+    From (name, boat_type, {seat: member id}, bankrider member ids, reserve member ids) tuples."""
+    out: dict[int, list[str]] = {}
+    for name, bt, seats, bankriders, reserves in crews:
+        for seat, mid in seats.items():
+            out.setdefault(mid, []).append(f"in {name} ({seat_name(seat, boat_seats(bt)[0], 'water')})")
+        for mid in bankriders:
+            out.setdefault(mid, []).append(f"bankriding for {name}")
+        for mid in reserves:
+            out.setdefault(mid, []).append(f"a reserve for {name}")
+    return out
 
 
 @router.put("/api/committee/races/{race_id}/crews")
@@ -313,34 +347,45 @@ def race_crews_save(race_id: int, b: CrewsIn, _: str = Depends(require_committee
                 raise HTTPException(400, f"Someone is in two seats ({seen[mid]} and {name})")
             seen[mid] = name
             seats[seat] = mid
-        clean.append((name, c.boat_type, c.notes.strip(), seats))
+        reserves = list(dict.fromkeys(c.reserves))
+        if len(reserves) > MAX_RESERVES:
+            raise HTTPException(400, f"{name}: at most {MAX_RESERVES} reserves")
+        if set(reserves) & set(seats.values()):
+            raise HTTPException(400, f"{name}: someone is both in a seat and a reserve")
+        clean.append((name, c.boat_type, c.notes.strip(), seats, c.bankrider.strip(), reserves))
     with db.get_conn() as conn:
         race = conn.execute("SELECT id, title, date, crews_published FROM races WHERE id = ?", (race_id,)).fetchone()
         if not race:
             raise HTTPException(404, "Race not found")
-        if seen:
-            ok = {r["id"] for r in conn.execute(f"SELECT id FROM members WHERE id IN ({','.join('?' * len(seen))})", list(seen))}
-            if len(ok) != len(seen):
+        everyone = set(seen).union(*(c[5] for c in clean))
+        if everyone:
+            ok = {r["id"] for r in conn.execute(f"SELECT id FROM members WHERE id IN ({','.join('?' * len(everyone))})", list(everyone))}
+            if len(ok) != len(everyone):
                 raise HTTPException(400, "Unknown member in a crew")
-        before = _assignments((c["name"], c["boat_type"], {x["seat"]: x["member_id"] for x in c["seats"] if x["member_id"]})
+        before = _assignments((c["name"], c["boat_type"], {x["seat"]: x["member_id"] for x in c["seats"] if x["member_id"]},
+                               c["bankrider_ids"], [x["member_id"] for x in c["reserves"]])
                               for c in _load_crews(conn, [race_id]).get(race_id, [])) if race["crews_published"] else {}
         conn.execute("DELETE FROM race_crews WHERE race_id = ?", (race_id,))
-        for pos, (name, boat_type, notes, seats) in enumerate(clean):
-            cid = conn.execute("INSERT INTO race_crews(race_id, position, name, boat_type, notes) VALUES (?, ?, ?, ?, ?)",
-                               (race_id, pos, name, boat_type, notes)).lastrowid
+        for pos, (name, boat_type, notes, seats, bankrider, reserves) in enumerate(clean):
+            cid = conn.execute("INSERT INTO race_crews(race_id, position, name, boat_type, notes, bankrider) VALUES (?, ?, ?, ?, ?, ?)",
+                               (race_id, pos, name, boat_type, notes, bankrider)).lastrowid
+            for i, mid in enumerate(reserves):
+                conn.execute("INSERT INTO race_crew_reserves(crew_id, member_id, position) VALUES (?, ?, ?)", (cid, mid, i))
             for seat, mid in seats.items():
                 conn.execute("INSERT INTO race_crew_seats(crew_id, seat, member_id) VALUES (?, ?, ?)", (cid, seat, mid))
         conn.execute("UPDATE races SET crews_published = ? WHERE id = ?", (int(b.publish), race_id))
-        after = _assignments((name, bt, seats) for name, bt, _, seats in clean)
+        ids = _member_ids(conn)
+        after = _assignments((name, bt, seats, _bankrider_ids(bankrider, ids), reserves)
+                             for name, bt, _, seats, bankrider, reserves in clean)
     msgs = []
     if b.publish:
-        # Tell people about a new or changed seat (and, once published, about being taken out).
-        for mid, (crew, seat) in after.items():
-            if before.get(mid) != (crew, seat):
-                msgs.append(push._msg([mid], f"Race crew · {race['title']}", f"You're in {crew} ({seat}).",
+        # Tell people about a new or changed place (and, once published, about being taken out).
+        for mid, places in after.items():
+            if sorted(before.get(mid, [])) != sorted(places):
+                msgs.append(push._msg([mid], f"Race crew · {race['title']}", f"You're {' and '.join(places)}.",
                                       f"race-crew-{race_id}", "/#/races"))
         for mid in before.keys() - after.keys():
-            msgs.append(push._msg([mid], f"Race crew · {race['title']}", "You're no longer in a crew for this race.",
+            msgs.append(push._msg([mid], f"Race crew · {race['title']}", "You're no longer assigned to a crew for this race.",
                                   f"race-crew-{race_id}", "/#/races"))
     push.dispatch(msgs)
     return {"ok": True, "published": b.publish, "notified": len(msgs)}

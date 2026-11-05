@@ -587,7 +587,7 @@ function outingCard(o) {
 function raceScheduleCard(rc) {
   const committee = isCommittee();
   const crew = (c) => `<div class="rs-crew"><div class="rs-crew-h"><b>${esc(c.name)}</b><span class="faint">${esc(c.boat_type)}</span></div>
-    <div class="seats">${c.seats.map(raceSeatRow).join("")}</div></div>`;
+    <div class="seats">${c.seats.map(raceSeatRow).join("")}</div>${raceCrewExtras(c)}</div>`;
   return `<article class="card outing race-out ${rc.published ? "" : "draft"} clickable" data-race-go="${rc.id}" title="Open in Races">
     <div class="o-top"><div><div class="o-time">${esc(rc.time_slot || "Race day")}</div><div class="o-title">${esc(rc.title)}</div></div>
       <div class="o-tags"><span class="chip violet">${I.trophy}Race</span>${committee && !rc.published ? `<span class="chip">Draft</span>` : ""}</div></div>
@@ -610,7 +610,7 @@ async function pageSchedule() {
     : data.published === 0 ? `<span class="status-pill" style="background:var(--surface-3);color:var(--text-2)"><span class="dot"></span>Draft — not visible to rowers</span>`
     : `<span class="status-pill" style="background:var(--warn-soft);color:var(--warn)"><span class="dot"></span>${data.published}/${data.total} published</span>`;
   const outs = data.outings.filter((o) => S.filter === "all" || (S.filter === "mine" ? o.seats.some((s) => s.member && s.member.id === S.me) : S.filter === "subs" ? o.open_subs > 0 : S.filter === "open" ? (o.kind === "land" && o.spots > 0 && !o.past && !o.cancelled) : o.kind === S.filter));
-  const inRace = (rc) => rc.crews.some((c) => c.seats.some((x) => x.member_id != null && x.member_id === S.me));
+  const inRace = (rc) => S.me != null && racePlaces(rc, S.me).length > 0;
   const raceSubs = (rc) => rc.crews.some((c) => c.seats.some((x) => x.member_id == null));
   const races = (data.races || []).filter((rc) => S.filter === "all" || (S.filter === "mine" && inRace(rc)) || (S.filter === "subs" && raceSubs(rc)) || S.filter === "water");
   const myCount = data.outings.filter((o) => o.seats.some((s) => s.member && s.member.id === S.me)).length + (data.races || []).filter(inRace).length;
@@ -3510,8 +3510,19 @@ function raceWindow(r) {
   return `<div class="small race-window ${days <= 2 ? "soon" : ""}">${I.calendar}<span><b>${esc(next[0])}</b> ${esc(next[2])}${when ? ` <span class="faint">· ${when}</span>` : ""}</span></div>`;
 }
 
-/* Where someone sits in this race's crews: [crew, seat] or null. */
-const raceSeatOf = (r, mid) => { for (const c of r.crews) { const x = c.seats.find((y) => y.member_id === mid); if (x) return [c, x]; } return null; };
+/* Someone's places in this race's crews, as HTML phrases that follow "You're ...". */
+const racePlaces = (r, mid) => r.crews.flatMap((c) => {
+  const x = c.seats.find((y) => y.member_id === mid), name = esc(c.name);
+  return [
+    x && `in <b>${name} · ${esc(/^\d+$/.test(x.label) ? "seat " + x.label : x.label)}</b>`,
+    c.bankrider_ids.includes(mid) && `bankriding for <b>${name}</b>`,
+    c.reserves.some((y) => y.member_id === mid) && `a reserve for <b>${name}</b>`,
+  ].filter(Boolean);
+});
+/* A crew's bankrider and reserves (if any), under its seats. Also used on the schedule. */
+const raceCrewExtras = (c) => c.bankrider || c.reserves.length ? `<div class="race-extras">
+    ${c.bankrider ? `<div><b>Bankrider:</b> <span class="${c.bankrider_ids.includes(S.me) ? "me" : ""}">${esc(c.bankrider)}</span></div>` : ""}
+    ${c.reserves.length ? `<div><b>Reserve${c.reserves.length === 1 ? "" : "s"}:</b> ${c.reserves.map((x) => `<span class="${x.member_id === S.me ? "me" : ""}">${esc(x.name)}</span>`).join(", ")}</div>` : ""}</div>` : "";
 /* A crew seat row, also used on the schedule. Empty seats need a sub (the committee fills them). */
 const raceSeatRow = (x) => x.member_id == null
   ? `<div class="seat open subneed"><span class="sl">${esc(seatShort(x.label))}</span><span class="sn">Sub needed</span></div>`
@@ -3523,6 +3534,7 @@ function raceCrewBlock(c) {
   return `<div class="race-boat">
     <div class="rb-top"><b>${esc(c.name)}</b><span class="faint small">${esc(c.boat_type)}</span>${subs ? `<span class="chip warn">${subs} sub${subs === 1 ? "" : "s"} needed</span>` : ""}</div>
     <div class="seats">${c.seats.map(raceSeatRow).join("")}</div>
+    ${raceCrewExtras(c)}
     ${c.notes ? `<div class="small muted race-notes">${esc(c.notes)}</div>` : ""}</div>`;
 }
 /* Shared by the race card and the details popup. */
@@ -3538,10 +3550,10 @@ function raceCard(r, data) {
   const committee = isCommittee();
   const d = pd(r.date), me = S.boot.members.find((m) => m.id === S.me);
   const mine = r.responses.find((x) => x.member_id === S.me);
-  const seated = S.me && r.crews_published ? raceSeatOf(r, S.me) : null;
+  const places = S.me && r.crews_published ? racePlaces(r, S.me) : [];
   const locked = r.past || !r.open;
   // Your answer, in one box. Seats are the committee's to change; rowers can still update whether they're available.
-  const seatLine = seated ? `<div class="race-mine">${I.check}<span>You're in <b>${esc(seated[0].name)} · ${esc(/^\d+$/.test(seated[1].label) ? "seat " + seated[1].label : seated[1].label)}</b>${locked && !committee ? "" : ". If you can't make it, change your answer and tell the committee."}</span></div>` : "";
+  const seatLine = places.length ? `<div class="race-mine">${I.check}<span>You're ${places.join(" and ")}${locked && !committee ? "" : ". If you can't make it, change your answer and tell the committee."}</span></div>` : "";
   const summary = mine && raceRespSummary(mine, data);
   const you = locked && !committee
     ? `<div class="race-you">${seatLine}<div class="small muted">${r.past ? "This race has happened." : "Sign-up is closed."}${mine ? ` You said <b>${esc(RACE_ST[mine.status][0].toLowerCase())}</b>.` : ""}</div></div>`
@@ -3590,14 +3602,17 @@ function raceInfoModal(r, data) {
 
 /* Committee: form crews from the race responses. Saved as a draft (committee only) or published to rowers. */
 function raceCrewsModal(r, data) {
-  const BT = data.boat_types;
-  const crews = r.crews.map((c) => ({ name: c.name, boat_type: c.boat_type, notes: c.notes, seats: Object.fromEntries(c.seats.filter((x) => x.member_id != null).map((x) => [x.seat, x.member_id])) }));
-  if (!crews.length) crews.push({ name: "Crew 1", boat_type: "8+", notes: "", seats: {} });
+  const BT = data.boat_types, MAX_RESERVES = 10;
+  const newCrew = (name, boat_type) => ({ name, boat_type, notes: "", seats: {}, bankrider: "", reserves: [] });
+  const crews = r.crews.map((c) => ({ name: c.name, boat_type: c.boat_type, notes: c.notes, seats: Object.fromEntries(c.seats.filter((x) => x.member_id != null).map((x) => [x.seat, x.member_id])), bankrider: c.bankrider, reserves: c.reserves.map((x) => x.member_id) }));
+  if (!crews.length) crews.push(newCrew("Crew 1", "8+"));
   const people = new Map(S.boot.members.map((mm) => [mm.id, mm]));
   r.crews.forEach((c) => c.seats.forEach((x) => { if (x.member_id != null && !people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: "", cox_status: "" }); }));
+  r.crews.forEach((c) => c.reserves.forEach((x) => { if (!people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: "", cox_status: "" }); }));
   r.responses.forEach((x) => { if (!people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: x.category, cox_status: "" }); });
   const resp = new Map(r.responses.map((x) => [x.member_id, x]));
-  let active = 0, target = null, pubArmed = false;   // target: [crew index, seat] picked by clicking a seat label
+  let active = 0, target = null, pubArmed = false;   // target: [crew index, seat or RESERVE] picked by clicking a seat label
+  const RESERVE = -1;   // stands in for the seat number when working out what someone is doing in a crew
   const bt = (c) => BT[c.boat_type] || BT.Other;
   const seatsOf = (c) => boatSeats(bt(c).rowers, bt(c).coxed);
   const lbl = (c, st) => seatLabel(st, bt(c).rowers);
@@ -3612,6 +3627,20 @@ function raceCrewsModal(r, data) {
   };
   const setSeat = (ci, st, mid) => { if (mid == null) delete crews[ci].seats[st]; else crews[ci].seats[st] = mid; changed(); };
   const unseat = (mid) => { const w = where(mid); if (w) setSeat(w[0], w[1], null); };
+  const reserveCrew = (mid) => crews.findIndex((c) => c.reserves.includes(mid));
+  const dropReserve = (ci, mid) => { crews[ci].reserves = crews[ci].reserves.filter((q) => q !== mid); };
+  // Reserving someone takes them out of a seat in that crew; a seat in another crew is fine.
+  const addReserve = (ci, mid) => {
+    const w = where(mid);
+    if (w && w[0] === ci) unseat(mid);
+    if (!crews[ci].reserves.includes(mid)) crews[ci].reserves.push(mid);
+  };
+  const crewEmpty = (c) => !Object.keys(c.seats).length && !c.reserves.length && !c.bankrider.trim();
+  const bankriderWarning = (c) => {
+    const names = c.bankrider.toLowerCase().split(/\s*(?:,|&|\band\b)\s*/);
+    const inCrew = [...Object.values(c.seats), ...c.reserves].filter((mid) => names.includes((people.get(mid)?.name || "").trim().toLowerCase()));
+    return inCrew.length ? `${people.get(inCrew[0]).name} is also in this crew` : "";
+  };
   const crewName = (i) => crews[i].name.trim() || `Crew ${i + 1}`;
   const issues = (mid, st) => {
     const x = resp.get(mid), mm = people.get(mid), out = [];
@@ -3620,7 +3649,7 @@ function raceCrewsModal(r, data) {
     else if (x.status === "maybe") out.push(["warn", "Said maybe"]);
     if (x && x.status !== "no") {
       if (st === 0 && x.role === "rower") out.push(["warn", "Wants to row, not cox"]);
-      if (st !== 0 && x.role === "cox") out.push(["warn", "Wants to cox, not row"]);
+      if (st > 0 && x.role === "cox") out.push(["warn", "Wants to cox, not row"]);
       const p = (x.problems || []).filter((q) => st !== 0 || !q.includes("could still cox"));
       if (p.length) out.push(["bad", "Not eligible: " + p.join(". ")]);
     }
@@ -3631,7 +3660,7 @@ function raceCrewsModal(r, data) {
 
   modal({
     title: `Crews · ${esc(r.title)}`, wide: "xl",
-    body: `${r.crews_published ? `<div class="callout">${I.info}<div>These crews are <b>published</b>: rowers can see them, and saving tells anyone whose seat changed.</div></div>`
+    body: `${r.crews_published ? `<div class="callout">${I.info}<div>These crews are <b>published</b>: rowers can see them, and saving tells anyone whose place changed.</div></div>`
         : `<div class="callout warn">${I.info}<div>Drafts are only visible to the committee. Publish when the crews are ready: everyone in a crew gets a notification.</div></div>`}
       <div class="oe-crew-wrap">
         <div class="rcb-list">
@@ -3641,7 +3670,8 @@ function raceCrewsModal(r, data) {
             <label class="check small"><input type="checkbox" id="rcb-a-maybe"> Include maybes</label>
             <button type="button" class="btn sm primary" id="rcb-auto">${I.wand}Make crews</button></div>
             <span class="hint">Puts everyone available who isn't in a crew yet into as many boats as needed, on their side, with coxes. Empty seats are left as <b>Sub needed</b>. Then adjust by hand.</span></div>
-          <p class="oe-hint">Click a name on the right to put them in the highlighted crew (rowers go on their side); click it again to take them out. To choose the seat yourself, click the seat's name first. Empty seats show as <b>Sub needed</b> until you fill them.</p>
+          <p class="oe-hint">Click a name on the right to put them in the highlighted crew (rowers go on their side); click it again to take them out. To choose the seat yourself, click the seat's name first. Empty seats show as <b>Sub needed</b> until you fill them. Each crew can also have a bankrider and reserves; click <b>Reserve</b> first to add a name from the right as a reserve.</p>
+          <datalist id="rcb-names"></datalist>
           <div id="rcb-crews"></div>
           <button type="button" class="btn sm" id="rcb-add" style="align-self:flex-start">${I.plus}Add crew</button></div>
         <aside class="oe-pool" id="rcb-pool"></aside>
@@ -3672,7 +3702,7 @@ function raceCrewsModal(r, data) {
         const boat = $("#rcb-a-boat", m).value, n = BT[boat].rowers, coxed = BT[boat].coxed;
         const split = $("#rcb-a-split", m)?.checked, maybes = $("#rcb-a-maybe", m).checked;
         const okFor = (x, cox) => !(x.problems || []).some((q) => !cox || !q.includes("could still cox"));
-        const free = r.responses.filter((x) => (x.status === "yes" || (maybes && x.status === "maybe")) && !where(x.member_id))
+        const free = r.responses.filter((x) => (x.status === "yes" || (maybes && x.status === "maybe")) && !where(x.member_id) && reserveCrew(x.member_id) < 0)
           .sort((a, b) => (a.status === "yes" ? 0 : 1) - (b.status === "yes" ? 0 : 1) || a.name.localeCompare(b.name));
         const coxPool = free.filter((x) => x.role === "cox" && okFor(x, true));
         const groups = {};
@@ -3682,7 +3712,7 @@ function raceCrewsModal(r, data) {
           (groups[g] = groups[g] || { only: [], both: [] })[x.role === "both" ? "both" : "only"].push(x);
         }
         const strictness = (x) => (x.side || "").includes("only") ? 0 : (x.side || "").includes("preferred") ? 1 : 2;
-        crews.splice(0, crews.length, ...crews.filter((c) => Object.keys(c.seats).length));   // drop empty placeholder crews
+        crews.splice(0, crews.length, ...crews.filter((c) => !crewEmpty(c)));   // drop empty placeholder crews
         changed();
         const made = [];
         for (const g of ["open", "women", "unset", "all"].filter((k) => groups[k])) {
@@ -3693,7 +3723,7 @@ function raceCrewsModal(r, data) {
           const prefix = g === "open" ? "Open" : g === "women" ? "Women's" : g === "unset" ? "Squad not set" : r.squad !== "any" ? data.squads[r.squad] : "Crew";
           let num = crews.filter((c) => c.name.startsWith(prefix + " ")).length;
           for (let i = 0; i < k; i++) {
-            crews.push({ name: `${prefix} ${++num}`, boat_type: boat, notes: "", seats: {} });
+            crews.push(newCrew(`${prefix} ${++num}`, boat));
             const ci = crews.length - 1;
             made.push(ci);
             rows.slice(i * n, (i + 1) * n).sort((a, b) => strictness(a) - strictness(b)).forEach((x) => {
@@ -3712,8 +3742,13 @@ function raceCrewsModal(r, data) {
         toast(`Made ${made.length} crew${made.length === 1 ? "" : "s"}${subs ? ` · ${subs} sub${subs === 1 ? "" : "s"} needed` : ""}`);
       };
       const place = (mid, intent) => {
-        const w = where(mid);
+        if (target && target[1] === RESERVE) {
+          if (crews[target[0]].reserves.length >= MAX_RESERVES && !crews[target[0]].reserves.includes(mid)) return toast(`At most ${MAX_RESERVES} reserves`, true);
+          active = target[0]; addReserve(active, mid); target = null; return draw();
+        }
+        const w = where(mid), rc = reserveCrew(mid);
         if (w && !target) { unseat(mid); return draw(); }
+        if (rc >= 0 && !target) { dropReserve(rc, mid); return draw(); }
         let ci, dest;
         if (target) [ci, dest] = target;
         else {
@@ -3723,6 +3758,7 @@ function raceCrewsModal(r, data) {
           if (typeof dest === "string") return toast(dest, true);
         }
         unseat(mid);
+        dropReserve(ci, mid);
         setSeat(ci, dest, mid);
         active = ci; target = null;
         draw();
@@ -3760,6 +3796,16 @@ function raceCrewsModal(r, data) {
               const armed = target && target[0] === ci && target[1] === st;
               return `<div class="se-wrap ${armed ? "armed" : ""}"><div class="se-row"><button type="button" class="sl sl-btn" data-target="${st}" title="Click, then pick a name on the right to put them in this seat">${esc(lbl(c, st))}${sideOf(c, st) ? `<i>${sideOf(c, st)}</i>` : ""}</button><div data-seat="${st}"></div></div>
                 ${iss.length ? `<div class="se-status small">${iss.map(([lv, t]) => `<span class="t-${lv}">${esc(t)}</span>`).join(" · ")}</div>` : ""}</div>`; }).join("")}</div>
+            <div class="seat-editor rcb-extra">
+              <div class="se-wrap"><div class="se-row"><span class="sl">Bankrider</span><input class="input" data-k="bankrider" list="rcb-names" value="${esc(c.bankrider)}" placeholder="Optional · member, coach or anyone" maxlength="120" autocomplete="off" aria-label="Bankrider"></div>
+                <div class="se-status small t-warn" data-br-warn>${esc(bankriderWarning(c))}</div></div>
+              ${[...c.reserves, null].slice(0, MAX_RESERVES).map((mid, ri) => {
+                const armed = mid == null && target && target[0] === ci && target[1] === RESERVE, iss = mid != null ? issues(mid, RESERVE) : [];
+                return `<div class="se-wrap ${armed ? "armed" : ""}"><div class="se-row">${mid == null
+                    ? `<button type="button" class="sl sl-btn" data-target="${RESERVE}" title="Click, then pick a name on the right to add them as a reserve">Reserve</button>`
+                    : `<span class="sl">Reserve</span>`}<div data-reserve="${ri}"></div></div>
+                  ${iss.length ? `<div class="se-status small">${iss.map(([lv, t]) => `<span class="t-${lv}">${esc(t)}</span>`).join(" · ")}</div>` : ""}</div>`; }).join("")}
+            </div>
             <input class="input" data-k="notes" value="${esc(c.notes)}" placeholder="Note for the crew (optional), e.g. boat, boating time" maxlength="500" aria-label="Crew note">
           </section>`;
         }).join("") || `<div class="faint small">No crews. Add one to start.</div>`;
@@ -3767,17 +3813,31 @@ function raceCrewsModal(r, data) {
           const ci = +sec.dataset.ci, c = crews[ci];
           sec.addEventListener("focusin", () => setActive(ci));
           sec.addEventListener("mousedown", () => setActive(ci));
-          $$("input[data-k]", sec).forEach((inp) => inp.oninput = () => { c[inp.dataset.k] = inp.value; if (inp.dataset.k === "name") drawPool(); });
+          $$("input[data-k]", sec).forEach((inp) => inp.oninput = () => {
+            c[inp.dataset.k] = inp.value;
+            if (inp.dataset.k === "name") drawPool();
+            if (inp.dataset.k === "bankrider") $("[data-br-warn]", sec).textContent = bankriderWarning(c);
+          });
           $("select[data-k]", sec).onchange = (e) => { c.boat_type = e.target.value; const ok = seatsOf(c); for (const k of Object.keys(c.seats)) if (!ok.includes(+k)) setSeat(ci, k, null); draw(); };
           $("[data-rm-crew]", sec).onclick = () => {   // (no confirm box: it would replace this window)
             const [gone] = crews.splice(ci, 1); changed(); target = null; draw();
-            if (Object.keys(gone.seats).length) toast(`${gone.name.trim() || "Crew"} removed · everyone in it is back in the list`);
+            if (!crewEmpty(gone)) toast(`${gone.name.trim() || "Crew"} removed · everyone in it is back in the list`);
           };
           $$(".sl-btn", sec).forEach((b) => b.onclick = () => { const st = +b.dataset.target; target = target && target[0] === ci && target[1] === st ? null : [ci, st]; active = ci; draw(); });
           $$("[data-seat]", sec).forEach((el) => {
             const st = +el.dataset.seat;
             combo(el, { items: items(ci, st), value: c.seats[st] ?? null, placeholder: st === 0 ? "Sub needed · pick cox…" : "Sub needed · pick rower…", renderWhy: why(st),
-              onChange: (v) => { if (v != null) unseat(v); setSeat(ci, st, v); active = ci; draw(); } });
+              onChange: (v) => { if (v != null) { unseat(v); dropReserve(ci, v); } setSeat(ci, st, v); active = ci; draw(); } });
+          });
+          $$("[data-reserve]", sec).forEach((el) => {
+            const ri = +el.dataset.reserve, cur = c.reserves[ri] ?? null;
+            const list = items(ci, RESERVE);   // everyone except this crew's other reserves
+            combo(el, { items: () => list().filter((i) => i.id === cur || !c.reserves.includes(i.id)), value: cur, placeholder: "Add reserve…", renderWhy: why(RESERVE),
+              onChange: (v) => {
+                if (cur != null) dropReserve(ci, cur);
+                if (v != null) addReserve(ci, v);
+                active = ci; target = null; draw();
+              } });
           });
         });
         drawPool();
@@ -3786,12 +3846,12 @@ function raceCrewsModal(r, data) {
         const pool = $("#rcb-pool", m);
         const yes = r.responses.filter((x) => x.status === "yes"), maybe = r.responses.filter((x) => x.status === "maybe");
         const item = (x, intent) => {
-          const w = where(x.member_id);
+          const w = where(x.member_id), rc = w ? -1 : reserveCrew(x.member_id);
           const bad = x.problems?.length && (intent !== "cox" || x.problems.some((q) => !q.includes("could still cox")));
-          return `<button type="button" class="pool-item ${w ? "in" : ""} ${bad ? "bad" : ""}" data-pick="${x.member_id}" data-intent="${intent}" title="${w ? "Click to take out of the crew" : "Click to put in the highlighted crew"}">
+          return `<button type="button" class="pool-item ${w || rc >= 0 ? "in" : ""} ${bad ? "bad" : ""}" data-pick="${x.member_id}" data-intent="${intent}" title="${w || rc >= 0 ? "Click to take out of the crew" : "Click to put in the highlighted crew"}">
             <span class="pi-main"><span class="pi-name">${esc(x.name)}</span>
               <span class="pi-meta">${catChip(x.category)}${intent !== "cox" && x.side ? sideChip(x.side) : ""}${intent === "cox" && people.get(x.member_id)?.cox_status ? `<span class="chip violet">Cox ${esc(people.get(x.member_id).cox_status)}</span>` : ""}${x.role === "both" ? `<span class="chip accent">Row/cox</span>` : ""}${bad ? `<span class="chip bad" title="${esc(x.problems.join(". "))}">Not eligible</span>` : ""}</span></span>
-            <span class="pi-state">${w ? `<span class="pi-seat">${esc(crewName(w[0]))} · ${esc(seatShort(lbl(crews[w[0]], w[1])))}</span>` : I.plus}</span></button>`;
+            <span class="pi-state">${w ? `<span class="pi-seat">${esc(crewName(w[0]))} · ${esc(seatShort(lbl(crews[w[0]], w[1])))}</span>` : rc >= 0 ? `<span class="pi-seat">${esc(crewName(rc))} · Reserve</span>` : I.plus}</span></button>`;
         };
         const group = (title, list, intent, hint = "") => list.length ? `<div class="pool-group"><div class="pool-h">${esc(title)} <span class="faint">${list.length}</span>${hint ? `<span class="pool-hint">${hint}</span>` : ""}</div>${list.map((x) => item(x, intent)).join("")}</div>` : "";
         const c = raceCrew(yes), cm = raceCrew(maybe);
@@ -3803,20 +3863,24 @@ function raceCrewsModal(r, data) {
         pool.innerHTML = html;
         if (open) pool.querySelector("details").open = true;
         $$("[data-pick]", pool).forEach((b) => b.onclick = () => place(+b.dataset.pick, b.dataset.intent));
-        const out = yes.filter((x) => !where(x.member_id)).length;
+        const out = yes.filter((x) => !where(x.member_id) && reserveCrew(x.member_id) < 0).length;
         const empty = crews.reduce((n, cr) => n + seatsOf(cr).filter((q) => cr.seats[q] == null).length, 0);
         pubArmed = false; $("#rcb-pub", m).textContent = r.crews_published ? "Save" : "Save & publish"; $("#rcb-pub", m).classList.replace("danger", "primary");
         $("#rcb-sum", m).innerHTML = crews.length ? `<div class="small muted">${empty ? `<span class="t-warn">${empty} seat${empty === 1 ? "" : "s"} will show as Sub needed</span>` : "All seats filled"} · ${out ? `${out} available ${out === 1 ? "person isn't" : "people aren't"} in a crew yet` : "everyone available is in a crew"}</div>` : "";
       };
       $("#rcb-add", m).onclick = () => {
         const last = crews[crews.length - 1];
-        crews.push({ name: `Crew ${crews.length + 1}`, boat_type: last ? last.boat_type : "8+", notes: "", seats: {} });
+        crews.push(newCrew(`Crew ${crews.length + 1}`, last ? last.boat_type : "8+"));
         active = crews.length - 1; target = null; draw();
         $$(".rcb input[data-k=name]", box).pop()?.select();
       };
       const save = async (publish) => {
         if (publish) {
-          const bad = crews.flatMap((c, ci) => Object.entries(c.seats).filter(([st, mid]) => issues(mid, +st).some(([lv]) => lv === "bad")).map(([, mid]) => people.get(mid)?.name)).filter(Boolean);
+          const isBad = (mid, st) => issues(mid, st).some(([lv]) => lv === "bad");
+          const bad = [...new Set(crews.flatMap((c) => [
+            ...Object.entries(c.seats).filter(([st, mid]) => isBad(mid, +st)).map(([, mid]) => mid),
+            ...c.reserves.filter((mid) => isBad(mid, RESERVE)),
+          ]))].map((mid) => people.get(mid)?.name).filter(Boolean);
           if (bad.length && !pubArmed) {   // ask inline: a confirm box would replace this window
             pubArmed = true;
             $("#rcb-sum", m).insertAdjacentHTML("afterbegin", `<div class="callout bad">${I.alert}<div><b>${bad.map(esc).join(", ")}</b> ${bad.length === 1 ? "is" : "are"} marked not available or not eligible. Press the button again to publish anyway.</div></div>`);
@@ -3824,7 +3888,7 @@ function raceCrewsModal(r, data) {
             return;
           }
         }
-        const body = { publish, crews: crews.map((c, i) => ({ name: c.name.trim() || `Crew ${i + 1}`, boat_type: c.boat_type, notes: c.notes, seats: c.seats })) };
+        const body = { publish, crews: crews.map((c, i) => ({ name: c.name.trim() || `Crew ${i + 1}`, boat_type: c.boat_type, notes: c.notes, seats: c.seats, bankrider: c.bankrider.trim(), reserves: c.reserves })) };
         try {
           const res = await api(`/api/committee/races/${r.id}/crews`, { method: "PUT", body });
           close();
@@ -3836,6 +3900,13 @@ function raceCrewsModal(r, data) {
       $("#rcb-draft", m).onclick = () => save(false);
       $("#rcb-pub", m).onclick = () => save(true);
       draw();
+      // Suggestions for the bankrider box: members and coaches. Any other name can still be typed.
+      const suggest = (coaches) => {
+        const names = [...new Set([...coaches.map((c) => c.name), ...S.boot.members.map((mm) => mm.name)])].sort((a, b) => a.localeCompare(b));
+        $("#rcb-names", m).innerHTML = names.map((n) => `<option value="${esc(n)}"></option>`).join("");
+      };
+      suggest([]);
+      api("/api/committee/coaches").then(suggest).catch(() => {});
     },
   });
 }

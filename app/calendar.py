@@ -162,33 +162,51 @@ def build_feed(conn, member: dict, base_url: str) -> str:
 
 
 def _race_events(conn, member: dict, club: str, since: str, base_url: str, host: str, now: str, places: dict) -> list[str]:
-    """One event per race where they're in a published crew, with the whole crew in the description.
+    """One event per race where they have a place in a published crew (a seat, bankriding or reserve),
+    with the whole crew in the description. Someone with places in several crews still gets one event.
     Timed if the race's time slot reads as a time ("09:00-13:00"), otherwise all day."""
     races = {r["id"]: r for r in conn.execute(
-        """SELECT DISTINCT r.* FROM race_crew_seats s JOIN race_crews c ON c.id = s.crew_id JOIN races r ON r.id = c.race_id
-           WHERE s.member_id = ? AND r.crews_published = 1 AND r.date >= ? ORDER BY r.date""", (member["id"], since))}
+        "SELECT * FROM races WHERE crews_published = 1 AND date >= ? ORDER BY date", (since,))}
     lines = []
     for rid, crews in _load_crews(conn, list(races)).items() if races else ():
         r = races[rid]
+        titles, blocks = [], []
         for c in crews:
-            mine = next((x for x in c["seats"] if x["member_id"] == member["id"]), None)
-            if not mine:
+            seat = next((x for x in c["seats"] if x["member_id"] == member["id"]), None)
+            role = (seat_name(seat["seat"], boat_seats(c["boat_type"])[0], "water") if seat
+                    else "Bankrider" if member["id"] in c["bankrider_ids"]
+                    else "Reserve" if any(x["member_id"] == member["id"] for x in c["reserves"]) else "")
+            if not role:
                 continue
-            desc = [f"{club} · Race", f"Crew: {c['name']} ({c['boat_type']})", ""]
-            desc += [f"  {x['label']}: {x['name'] or 'Sub needed'}" for x in c["seats"]]
-            desc += [x for note in (c["notes"], r["notes"]) if note for x in ("", note)]
-            desc += ["", f"Races: {base_url.rstrip('/')}/#/races"]
-            d = date.fromisoformat(r["date"])
-            when = _when(d, r["time_slot"], "", timedelta(hours=RACE_HOURS))
-            if not when:
-                when = _all_day(d)
-                if r["time_slot"]:
-                    desc.insert(1, f"Time: {r['time_slot']}")
-            summary = f"{r['title']} – {c['name']} ({seat_name(mine['seat'], boat_seats(c['boat_type'])[0], 'water')})"
-            lines += ["BEGIN:VEVENT", f"UID:race-{rid}-m{member['id']}@{host}", f"DTSTAMP:{now}", *when,
-                      f"SUMMARY:{_esc(summary)}", f"DESCRIPTION:{_esc(chr(10).join(desc))}",
-                      *(_location_lines(r["city"], places.get(r["city"].strip().lower())) if r["city"] else []),
-                      "STATUS:CONFIRMED", "TRANSP:OPAQUE", "END:VEVENT"]
+            titles.append(f"{c['name']} ({role})")
+            block = [f"Crew: {c['name']} ({c['boat_type']})", ""]
+            block += [f"  {x['label']}: {x['name'] or 'Sub needed'}" for x in c["seats"]]
+            if c["bankrider"]:
+                block.append(f"  Bankrider: {c['bankrider']}")
+            if c["reserves"]:
+                block.append(f"  Reserves: {', '.join(x['name'] for x in c['reserves'])}")
+            if c["notes"]:
+                block += ["", c["notes"]]
+            blocks.append(block)
+        if not titles:
+            continue
+        desc = [f"{club} · Race"]
+        d = date.fromisoformat(r["date"])
+        when = _when(d, r["time_slot"], "", timedelta(hours=RACE_HOURS))
+        if not when:
+            when = _all_day(d)
+            if r["time_slot"]:
+                desc.append(f"Time: {r['time_slot']}")
+        for i, block in enumerate(blocks):
+            desc += ([""] if i else []) + block
+        if r["notes"]:
+            desc += ["", r["notes"]]
+        desc += ["", f"Races: {base_url.rstrip('/')}/#/races"]
+        summary = f"{r['title']} – {', '.join(titles)}"
+        lines += ["BEGIN:VEVENT", f"UID:race-{rid}-m{member['id']}@{host}", f"DTSTAMP:{now}", *when,
+                  f"SUMMARY:{_esc(summary)}", f"DESCRIPTION:{_esc(chr(10).join(desc))}",
+                  *(_location_lines(r["city"], places.get(r["city"].strip().lower())) if r["city"] else []),
+                  "STATUS:CONFIRMED", "TRANSP:OPAQUE", "END:VEVENT"]
     return lines
 
 
