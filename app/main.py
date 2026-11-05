@@ -580,9 +580,10 @@ def outing_leave(oid: int, b: JoinIn, request: Request, role: str = Depends(requ
             raise HTTPException(400, "You're not in this session")
         crew_before = crewlog.state(conn, oid)
         conn.execute("DELETE FROM assignments WHERE outing_id = ? AND member_id = ?", (oid, b.member_id))
-        crewlog.record(conn, oid, crew_before, crewlog.actor(request, conn, b.member_id), "leave")
         conn.execute("""UPDATE sub_requests SET status = 'cancelled', resolved_at = datetime('now')
                         WHERE outing_id = ? AND seat = ? AND status = 'open'""", (oid, a["seat"]))
+        crewlog.compact_land(conn, oid)   # everyone below moves up the list
+        crewlog.record(conn, oid, crew_before, crewlog.actor(request, conn, b.member_id), "leave")
         return {"ok": True}
 
 
@@ -781,7 +782,12 @@ def member_update(member_id: int, m: MemberIn, _: str = Depends(require_committe
 @app.delete("/api/committee/members/{member_id}")
 def member_delete(member_id: int, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
+        land = [r["outing_id"] for r in conn.execute(
+            "SELECT a.outing_id FROM assignments a JOIN outings o ON o.id = a.outing_id WHERE a.member_id = ? AND o.kind = 'land'",
+            (member_id,))]
         conn.execute("DELETE FROM members WHERE id=?", (member_id,))
+        for oid in land:   # the rest of each land list moves up
+            crewlog.compact_land(conn, oid)
         return {"ok": True}
 
 
@@ -1159,6 +1165,7 @@ def _save_outing(conn, rules: Rules, oid: Optional[int], b: OutingIn, msgs: Opti
                     msgs += push.sub_filled(conn, oid, sr["requester_id"], new)
             else:
                 conn.execute("UPDATE sub_requests SET status='cancelled', resolved_at=datetime('now') WHERE id=?", (sr["id"],))
+    crewlog.compact_land(conn, oid)   # a land session is a list: close gaps the committee left, keeping the order
     if who is not None:
         crewlog.record(conn, oid, crew_before, who, "committee")
     if msgs is not None:

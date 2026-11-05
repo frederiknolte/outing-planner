@@ -792,7 +792,7 @@ async function editOuting(o, defaults = {}) {
   const boats = boatsRes.boats.filter((b) => b.status !== "retired" || (o && o.boat && o.boat.id === b.id));
   const st = {
     kind: o?.kind || defaults.kind || "water",
-    date: o?.date || defaults.date, time: o?.time || defaults.time || "", end_time: o?.end_time || defaults.end_time || "", location: o?.location || defaults.location || "",
+    date: o?.date || defaults.date, time: o ? o.time || "" : defaults.time || "06:30", end_time: o ? o.end_time || "" : (defaults.time ? defaults.end_time || "" : "08:00"), location: o?.location || defaults.location || "",
     title: o?.title || defaults.title || "", coach: o?.coach || "", boat_id: o?.boat?.id || null,
     capacity: o?.capacity || 8, coxed: o ? o.coxed : true, notes: o?.notes || "",
     seats: Object.fromEntries((o?.seats || []).filter((s) => s.member).map((s) => [s.seat, s.member.id])),
@@ -930,6 +930,10 @@ async function editOuting(o, defaults = {}) {
         const seats = seatList();
         const cap = seats.filter((s) => s !== 0).length;
         for (const k of Object.keys(st.seats)) if (!seats.includes(+k)) delete st.seats[k];
+        if (st.kind === "land") {   // a land session is a list: no gaps, so when someone is removed the rest move up
+          const order = Object.keys(st.seats).map(Number).sort((x, y) => x - y).map((k) => st.seats[k]);
+          st.seats = Object.fromEntries(order.map((mid, i) => [i + 1, mid]));
+        }
         const box = $("#oe-seats", m);
         box.style.setProperty("--rows", Math.ceil(seats.length / 2));
         if (target != null && !seats.includes(target)) target = null;
@@ -938,7 +942,7 @@ async function editOuting(o, defaults = {}) {
         seats.forEach((s) => {
           const ctl = combo($(`[data-seat="${s}"]`, box), {
             items: items(s), value: st.seats[s] ?? null, placeholder: s === 0 ? "Pick cox…" : "Pick rower…", renderWhy: why,
-            onChange: (v) => { if (v == null) delete st.seats[s]; else st.seats[s] = v; status(); },
+            onChange: (v) => { if (v == null) delete st.seats[s]; else st.seats[s] = v; if (st.kind === "land") drawSeats(); else status(); },
           });
           ctl._seat = s;
         });
@@ -3322,7 +3326,7 @@ function responseDetail(r, d, roleShort) {
 async function editSlot(sl, ws, tpl) {
   await loadPlaces(true);
   const days = Array.from({ length: 7 }, (_, i) => addDays(ws, i));
-  const v = sl || tpl || { date: days[0], time: "", kind: "water", location: "", note: "" };
+  const v = sl || tpl || { date: days[0], time: "06:30", end_time: "08:00", kind: "water", location: "", note: "" };
   // new sessions can go on several days at once; editing keeps a single day
   const picked = new Set(sl ? [v.date] : (v.dates || [v.date]).filter((d) => days.includes(d)));
   modal({

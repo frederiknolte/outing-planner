@@ -45,6 +45,32 @@ def _seats(conn, oid: int) -> dict[int, int]:
     return {r["seat"]: r["member_id"] for r in conn.execute("SELECT seat, member_id FROM assignments WHERE outing_id = ?", (oid,))}
 
 
+def compact_land(conn, oid: int, insert: Optional[tuple[int, int]] = None) -> None:
+    """Land sessions are a list, not seats: keep spots numbered 1..n with no gaps, so when someone
+    leaves everyone below moves up. `insert=(pos, member_id)` puts someone back at that place in the
+    list. Open sub requests follow their requester to the new spot. No-op for water outings."""
+    o = conn.execute("SELECT kind FROM outings WHERE id = ?", (oid,)).fetchone()
+    if not o or o["kind"] != "land":
+        return
+    old = _seats(conn, oid)
+    order = [m for _, m in sorted(old.items())]
+    if insert:
+        pos, mid = insert
+        order.insert(max(0, min((pos or len(order) + 1) - 1, len(order))), mid)
+    new = {i: m for i, m in enumerate(order, 1)}
+    if new == old:
+        return
+    was = {m: s for s, m in old.items()}
+    conn.execute("DELETE FROM assignments WHERE outing_id = ?", (oid,))
+    conn.executemany("INSERT INTO assignments(outing_id, seat, member_id) VALUES (?, ?, ?)",
+                     [(oid, s, m) for s, m in new.items()])
+    subs = conn.execute("SELECT id, seat, requester_id FROM sub_requests WHERE outing_id = ? AND status = 'open'", (oid,)).fetchall()
+    for sr in subs:
+        if was.get(sr["requester_id"]) == sr["seat"]:
+            to = next(s for s, m in new.items() if m == sr["requester_id"])
+            conn.execute("UPDATE sub_requests SET seat = ? WHERE id = ?", (to, sr["id"]))
+
+
 def state(conn, oid: Optional[int]) -> Optional[dict]:
     """The outing's crew before a change; pass it to record() afterwards."""
     if not oid:
@@ -107,6 +133,9 @@ def record(conn, oid: int, before: Optional[dict], who: dict, source: str, sub_r
     if not before or not (before["published"] or force):
         return 0
     events = diff(before["seats"], _seats(conn, oid))
+    o = conn.execute("SELECT kind FROM outings WHERE id = ?", (oid,)).fetchone()
+    if o and o["kind"] == "land":   # a land session is a list: moving up it isn't a change worth logging
+        events = [ev for ev in events if ev["action"] not in ("move", "swap")]
     for ev in events:
         add(conn, oid, ev, who, source, sub_request_id, note)
     return len(events)
@@ -234,6 +263,9 @@ def undo(entry_id: int, request: Request, _: str = Depends(require_committee)):
         before = state(conn, oid)
         pushed = push.snapshot(conn, ids=[oid])
         a = e["action"]
+        if kind == "land":   # positions in a land list shift as people leave, so look rowers up by who they are
+            s = where.get(m, s) if a != "leave" else s
+            f = where.get(n, f) if a == "swap" else f
         if a in SEAT_ACTIONS and m is None:
             raise HTTPException(409, "The rower in this change has been deleted")
         if a == "join":
@@ -243,7 +275,12 @@ def undo(entry_id: int, request: Request, _: str = Depends(require_committee)):
         elif a == "leave":
             if m in where:
                 raise HTTPException(409, f"{mname} is already back in this outing")
-            conn.execute("INSERT INTO assignments(outing_id, seat, member_id) VALUES (?, ?, ?)", (oid, free_seat(s), m))
+            if kind == "land":
+                if len(seats) >= cap:
+                    raise HTTPException(409, "The session is full, so they can't be put back")
+                compact_land(conn, oid, insert=(s, m))   # back in their old place in the list
+            else:
+                conn.execute("INSERT INTO assignments(outing_id, seat, member_id) VALUES (?, ?, ?)", (oid, free_seat(s), m))
         elif a == "replace":
             if n is None:
                 raise HTTPException(409, "The rower who left has been deleted")
@@ -289,6 +326,7 @@ def undo(entry_id: int, request: Request, _: str = Depends(require_committee)):
         else:
             raise HTTPException(400, "This change can't be undone")
         if a in SEAT_ACTIONS:
+            compact_land(conn, oid)
             _cleanup_subs(conn, oid)
             record(conn, oid, before, who, "undo", force=True)
         conn.execute("UPDATE crew_log SET undone_at = datetime('now'), undone_by = ? WHERE id = ?", (by_label(who["name"], who["role"]), entry_id))
