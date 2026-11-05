@@ -3509,38 +3509,40 @@ function raceCard(r, data) {
   const mine = r.responses.find((x) => x.member_id === S.me);
   const seated = S.me ? raceSeatOf(r, S.me) : null;
   const locked = r.past || !r.open;
-  // Seats are the committee's to change; rowers can still update whether they're available.
-  const seatLine = seated && r.crews_published ? `<div class="small race-mine">${I.check}<span>You're in <b>${esc(seated[0].name)}</b> · ${esc(seated[1].label)}. If you can't make it, update your answer and tell the committee.</span></div>` : "";
-  let respond = "";
-  if (locked && !committee) respond = `<div class="small muted">${r.past ? "This race has happened." : "Sign-up is closed."}${mine ? ` You said <b>${esc(RACE_ST[mine.status][0].toLowerCase())}</b>.` : ""}</div>`;
-  else respond = `<div class="race-respond">
-      <span class="small muted">${me ? `${esc(me.name.split(" ")[0])}, can you race?` : "Can you race?"}</span>
-      <div class="seg">${RACE_ORDER.map((k) => `<button data-race-st="${k}" class="${mine?.status === k ? "on " + k : ""}">${esc(RACE_ST[k][0])}</button>`).join("")}</div>
-      ${mine ? `<button class="btn ghost sm" data-race-mine>Edit</button>` : ""}</div>
-      ${mine && raceRespSummary(mine, data) ? `<div class="small muted">You: ${esc(raceRespSummary(mine, data))}${mine.comment ? ` · “${esc(mine.comment)}”` : ""}</div>` : ""}
-      ${me && !mine && r.me_problems.length ? `<div class="small race-warn">${I.alert}${esc(youify(r.me_problems[0]))}.</div>` : ""}`;
+  // Your answer, in one box. Seats are the committee's to change; rowers can still update whether they're available.
+  const seatName = seated ? `${seated[0].name} · ${/^\d+$/.test(seated[1].label) ? "seat " + seated[1].label : seated[1].label}` : "";
+  const summary = mine && raceRespSummary(mine, data);
+  let you;
+  if (locked && !committee) you = `<div class="race-you">
+      ${seated && r.crews_published ? `<div class="race-mine">${I.check}<span>You're in <b>${esc(seatName)}</b></span></div>` : ""}
+      <div class="small muted">${r.past ? "This race has happened." : "Sign-up is closed."}${mine ? ` You said <b>${esc(RACE_ST[mine.status][0].toLowerCase())}</b>.` : ""}</div></div>`;
+  else you = `<div class="race-you">
+      ${seated && r.crews_published ? `<div class="race-mine">${I.check}<span>You're in <b>${esc(seatName)}</b>. If you can't make it, change your answer and tell the committee.</span></div>` : ""}
+      <div class="race-you-h"><span>${me ? `${esc(me.name.split(" ")[0])}, can you race?` : "Can you race?"}</span>${mine ? `<button type="button" class="link-btn small" data-race-mine>Change details</button>` : ""}</div>
+      <div class="seg race-seg">${RACE_ORDER.map((k) => `<button data-race-st="${k}" class="${mine?.status === k ? "on " + k : ""}">${esc(RACE_ST[k][0])}</button>`).join("")}</div>
+      ${summary || mine?.comment ? `<div class="small muted">${esc(summary || "")}${mine.comment ? `${summary ? " · " : ""}“${esc(mine.comment)}”` : ""}</div>` : ""}
+      ${me && !mine && r.me_problems.length ? `<div class="small race-warn">${I.alert}${esc(youify(r.me_problems[0]))}.</div>` : ""}</div>`;
   const n = (k) => r.responses.filter((x) => x.status === k).length;
   const counts = RACE_ORDER.filter((k) => n(k)).map((k) => `<span class="rc-n ${RACE_ST[k][1]}"><b>${n(k)}</b> ${esc(k === "no" ? "can't" : RACE_ST[k][0].toLowerCase())}</span>`).join("");
-  const foot = `<div class="race-foot">
-      <button type="button" class="race-avail" data-race-who="yes" title="See who answered">${counts || `<span class="faint">No responses yet</span>`}${r.responses.length ? `<span class="rc-see">See who ${I.right}</span>` : ""}</button>
-      <button type="button" class="btn ghost sm" data-race-info>Details</button>
-      ${committee && !r.crews.length ? `<button type="button" class="btn sm" data-race-crews>${I.users}Form crews</button>` : ""}</div>`;
-  const crews = r.crews.length ? `<div class="race-crews-sec">
+  const avail = `<button type="button" class="race-avail" data-race-who="yes" title="See who answered">${counts || `<span class="faint">No responses yet</span>`}<span class="rc-see">${r.responses.length ? "See who" : committee ? "Add someone" : ""}${r.responses.length || committee ? I.right : ""}</span></button>`;
+  const side = r.crews.length ? `<div class="race-side">
       <div class="race-crews-h"><span class="section-title" style="margin:0">Crews</span>
         ${committee && !r.crews_published ? `<span class="chip warn" title="Only the committee can see these crews">Draft</span>` : ""}
         ${committee ? `<button type="button" class="btn sm" data-race-crews>${I.users}Edit crews</button>` : ""}</div>
-      <div class="race-crews">${r.crews.map((c) => raceCrewBlock(r, c, data)).join("")}</div></div>` : "";
-  return `<article class="card race ${r.past ? "past" : ""} ${r.crews.length ? "has-crews" : ""}" data-race="${r.id}">
+      <div class="race-crews">${r.crews.map((c) => raceCrewBlock(r, c, data)).join("")}</div></div>`
+    : committee ? `<div class="race-side race-side-empty"><span class="faint small">No crews yet.</span><button type="button" class="btn sm" data-race-crews>${I.users}Form crews</button></div>`
+    : r.past ? "" : `<div class="race-side race-side-empty"><span class="faint small">Crews will show here once the committee publishes them.</span></div>`;
+  return `<article class="card race ${r.past ? "past" : ""}" data-race="${r.id}">
     <div class="race-head"><div class="datebox"><span>${DAY[dow(r.date)]}</span><b>${d.getUTCDate()}</b><span>${MON[d.getUTCMonth()]}</span></div>
-      <div style="flex:1;min-width:0"><button type="button" class="race-title" data-race-info title="Show all details">${esc(r.title)}</button>
-        <div class="o-sub">${r.city ? `<span>${I.pin}${esc(r.city)}</span>` : ""}${r.time_slot ? `<span>${esc(r.time_slot)}</span>` : ""}${r.term ? `<span>${esc(r.term)}</span>` : ""}</div></div>
-      ${committee ? `<button class="btn sm" data-race-edit>Edit</button>` : ""}</div>
-    <div class="race-chips"><span class="chip ${RACE_ENTRY_CHIP[r.entry]}">${esc(data.entry[r.entry])}</span>${r.squad !== "any" ? `<span class="chip violet">${esc(data.squads[r.squad])} squad</span>` : ""}${r.race_type ? `<span class="chip">${esc(r.race_type)}</span>` : ""}${!r.open && !r.past ? `<span class="chip warn">Sign-up closed</span>` : ""}</div>
-    ${raceWindow(r)}
-    ${crews}
-    ${seatLine}
-    ${respond}
-    ${foot}
+      <div class="race-head-main"><button type="button" class="race-title" data-race-info title="Show all details">${esc(r.title)}</button>
+        <div class="o-sub">${r.city ? `<span>${I.pin}${esc(r.city)}</span>` : ""}${r.time_slot ? `<span>${esc(r.time_slot)}</span>` : ""}${r.term ? `<span>${esc(r.term)}</span>` : ""}</div>
+        <div class="race-chips"><span class="chip ${RACE_ENTRY_CHIP[r.entry]}">${esc(data.entry[r.entry])}</span>${r.squad !== "any" ? `<span class="chip violet">${esc(data.squads[r.squad])} squad</span>` : ""}${r.race_type ? `<span class="chip">${esc(r.race_type)}</span>` : ""}${!r.open && !r.past ? `<span class="chip warn">Sign-up closed</span>` : ""}</div>
+        ${raceWindow(r)}</div>
+      <div class="race-actions"><button type="button" class="btn ghost sm" data-race-info>Details</button>${committee ? `<button class="btn sm" data-race-edit>Edit</button>` : ""}</div></div>
+    <div class="race-body ${side ? "" : "solo"}">
+      <div class="race-main">${you}${avail}</div>
+      ${side}
+    </div>
   </article>`;
 }
 

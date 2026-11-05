@@ -687,8 +687,8 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
 .flag-row.on { border-color: var(--accent); background: var(--accent-soft); }
 
 /* ---------------------------------------------------------------- races -- */
-.race-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
-.race { padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.race-list { display: flex; flex-direction: column; gap: 14px; }
+.race { padding: 16px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .race.past { opacity: .8; }
 .race-head { display: flex; gap: 12px; align-items: center; }
 .race-title { font-weight: 700; font-size: 15.5px; overflow-wrap: anywhere; }
@@ -697,8 +697,25 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
 .race-links { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .race-links a { display: inline-flex; gap: 6px; align-items: center; overflow-wrap: anywhere; min-width: 0; }
 .race-links svg { width: 14px; height: 14px; flex: none; }
-.race-respond { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--border); }
-.race-respond .seg { flex-wrap: wrap; }
+.race-head { align-items: flex-start; }
+.race-head-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.race-actions { display: flex; gap: 6px; flex: none; }
+.race-body { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.race-body.solo { grid-template-columns: minmax(0, 420px); }
+.race-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.race-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding-left: 18px; border-left: 1px solid var(--border); }
+.race-side-empty { justify-content: center; align-items: flex-start; }
+.race-you { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; background: var(--surface-2); }
+.race-you-h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13.5px; font-weight: 600; }
+.race-seg { display: flex; width: 100%; }
+.race-seg button { flex: 1; justify-content: center; padding: 6px 4px; min-width: 0; font-size: 13px; }
+.link-btn { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; font-weight: 600; }
+.link-btn:hover { text-decoration: underline; }
+@media (max-width: 760px) {
+  .race-body, .race-body.solo { grid-template-columns: minmax(0, 1fr); }
+  .race-side { padding-left: 0; border-left: 0; padding-top: 12px; border-top: 1px solid var(--border); }
+  .race-actions .btn.ghost { display: none; }
+}
 .seg button.on.yes { background: var(--ok-soft); color: var(--ok); }
 .seg button.on.maybe { background: var(--warn-soft); color: var(--warn); }
 .seg button.on.no { background: var(--bad-soft); color: var(--bad); }
@@ -901,11 +918,10 @@ button.race-title:hover { color: var(--accent); }
 .oe-subs svg { width: 14px; height: 14px; flex: none; }
 
 /* Race crews: on the card (laid out like the schedule's boats), and the committee's crew builder */
-.race.has-crews { grid-column: 1 / -1; }
-.race-crews-sec { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
+.race-crews-sec { display: flex; flex-direction: column; gap: 8px; }
 .race-crews-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .race-crews-h .btn { margin-left: auto; }
-.race-crews { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.race-crews { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; align-items: start; }
 .race-boat { border: 1px solid var(--border); border-radius: 12px; padding: 10px; min-width: 0; background: var(--surface); }
 .rb-top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .rb-top b { overflow-wrap: anywhere; }
@@ -915,8 +931,8 @@ button.race-title:hover { color: var(--accent); }
 .race-mine { display: flex; align-items: flex-start; gap: 6px; color: var(--accent); }
 .race-mine svg { margin-top: 2px; }
 .race-mine svg { width: 14px; height: 14px; flex: none; }
-.race-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.race-avail { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex: 1; min-width: 0; border: 0; background: none; padding: 4px 0; font: inherit; font-size: 13px; color: var(--text-2); cursor: pointer; text-align: left; }
+.race-avail { display: flex; align-items: center; gap: 4px 12px; flex-wrap: wrap; width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 12px; background: none; padding: 9px 12px; font: inherit; font-size: 13px; color: var(--text-2); cursor: pointer; text-align: left; }
+.race-avail:hover { border-color: var(--accent); }
 .race-avail:hover .rc-see { color: var(--accent); }
 .rc-n b { font-size: 15px; }
 .rc-n.ok b { color: var(--ok); }
