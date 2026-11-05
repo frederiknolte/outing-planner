@@ -286,7 +286,7 @@ function shell(active) {
     <div class="top-actions">
       ${S.realRole === "committee" ? `<button class="role-badge ${S.viewAsRower ? "rower" : ""}" id="view-toggle" title="${S.viewAsRower ? "Viewing as a rower — switch back to the committee view" : "Switch to the rower view"}" aria-pressed="${S.viewAsRower}">${S.viewAsRower ? "Rower" : "Committee"}</button>` : ""}
       ${isCommittee() ? `<a class="btn ghost icon top-gear ${active === "settings" ? "on" : ""}" href="#/settings" title="Settings" aria-label="Settings">${I.gear}</a>` : ""}
-      <button class="me-chip" id="me-chip" title="Choose who you are">${name ? `<span class="avatar">${esc(initials(name))}</span><span class="n">${esc(name)}</span>` : `<span class="avatar" style="background:var(--surface-3);color:var(--text-3)">?</span><span class="n">Who are you?</span>`}</button>
+      <button class="me-chip${name ? " solo" : ""}" id="me-chip" title="${name ? `${esc(name)} · change who you are` : "Choose who you are"}">${name ? `<span class="avatar">${esc(initials(name))}</span>` : `<span class="avatar" style="background:var(--surface-3);color:var(--text-3)">?</span><span class="n">Who are you?</span>`}</button>
       <button class="btn ghost icon" id="logout" title="Sign out">${I.logout}</button>
     </div>
   </div></header>

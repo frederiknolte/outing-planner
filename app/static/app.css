@@ -400,6 +400,7 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
 /* identity */
 .me-chip { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px 5px 5px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; font-weight: 600; white-space: nowrap; max-width: 220px; }
 .me-chip:hover { background: var(--surface-3); }
+.me-chip.solo { padding: 4px; }
 .me-chip span.n { overflow: hidden; text-overflow: ellipsis; }
 .avatar { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 800; color: #fff; flex: none; background: linear-gradient(135deg, var(--oxford), var(--crest-green)); }
 .role-badge { font-size: 11px; font-weight: 750; text-transform: uppercase; letter-spacing: .06em; padding: 3px 8px; border-radius: 6px; background: var(--crest-gold); color: #1d1500; border: 0; font-family: inherit; cursor: pointer; }
