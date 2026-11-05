@@ -238,6 +238,7 @@ const countBadge = (key, cls = "count") => `<span class="${cls}" data-count="${k
 function setCount(key, n) {
   S.counts[key] = n;
   $$(`[data-count="${key}"]`).forEach((el) => { el.textContent = n || ""; el.hidden = !n; });
+  fitNav();
 }
 /* Navigate without the hashchange handler (which would close an open modal); returns once the page has rendered. */
 function go(id) { if (location.hash !== `#/${id}`) history.pushState(null, "", `#/${id}`); return route(); }
@@ -253,6 +254,19 @@ function setNavOpen(open) {
 // Close the phone page menu on Escape or a tap outside the header.
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") setNavOpen(false); });
 document.addEventListener("click", (e) => { if (!e.target.closest(".topbar")) setNavOpen(false); });
+/* Collapse the page links into the menu button on phones, and whenever they don't fit on one row
+   beside the club name (narrow or zoomed-in window, or a long committee menu) instead of wrapping. */
+const phoneMq = matchMedia("(max-width: 640px)");
+function fitNav() {
+  const bar = $(".topbar"), nav = $("#main-nav");
+  if (!bar || !nav) return;
+  bar.classList.remove("nav-compact");
+  const compact = phoneMq.matches || nav.scrollWidth > nav.clientWidth + 1;
+  bar.classList.toggle("nav-compact", compact);
+  if (!compact) setNavOpen(false);
+}
+let fitNavRaf = 0;
+addEventListener("resize", () => { cancelAnimationFrame(fitNavRaf); fitNavRaf = requestAnimationFrame(fitNav); });
 
 function shell(active) {
   const routes = ROUTES.filter((r) => !r.parent && !r.gear && routeAllowed(r));
@@ -280,6 +294,8 @@ function shell(active) {
   <div id="race-banner"></div>
   <main class="main" id="main"><div class="spinner"></div></main>`;
   renderRaceBanner();
+  fitNav();
+  if (document.fonts) document.fonts.ready.then(fitNav);
   $("#nav-toggle").onclick = (e) => { e.stopPropagation(); setNavOpen(!$(".topbar").classList.contains("nav-open")); };
   $("#main-nav").onclick = () => setNavOpen(false);
   $("#me-chip").onclick = () => pickIdentity();
@@ -579,7 +595,7 @@ async function pageSchedule() {
       </div>
     </div>
     ${!committee && data.outings.length === 0 ? `<div class="card empty">${I.calendar}<h3>Nothing published yet</h3><p>The schedule for this week hasn't been released. Check back soon.</p></div>` : `
-    <div class="days">${data.days.map((d) => {
+    <div class="days week" id="wk-days">${data.days.map((d) => {
       const list = outs.filter((o) => o.date === d);
       return `<section class="day ${d === data.today ? "today" : ""}"><div class="day-head"><b>${DAY[dow(d)]}</b><span>${d === data.today ? "Today · " : ""}${fmtShort(d)}</span></div>
         ${data.river && data.river.days[d] ? (() => { const x = data.river.days[d]; return `<div class="day-sun" title="Sunrise ${x.sunrise} · sunset ${x.sunset}. Rowing allowed from 1 hour before sunrise to 1 hour after sunset.">On the water ${x.first}–${x.last}</div>`; })() : ""}
@@ -592,6 +608,9 @@ async function pageSchedule() {
       ${committee ? `<span><i class="sw" style="background:var(--bad)"></i>Ineligible (no subs after cutoff / no swim test)</span><span><i class="sw" style="background:repeating-linear-gradient(135deg,var(--surface),var(--surface) 3px,var(--surface-3) 3px,var(--surface-3) 6px);border:1px solid var(--border)"></i>Draft</span>` : ""}
     </div>`;
 
+  // when the week strip scrolls sideways (narrow / zoomed window), start it at today
+  const strip = $("#wk-days"), td = strip && $(".day.today", strip);
+  if (td && strip.scrollWidth > strip.clientWidth) strip.scrollLeft = td.getBoundingClientRect().left - strip.getBoundingClientRect().left - parseFloat(getComputedStyle(strip).paddingLeft);
   $("#wk-prev").onclick = () => { S.week = addDays(data.start, -7); pageSchedule(); };
   $("#wk-next").onclick = () => { S.week = addDays(data.start, 7); pageSchedule(); };
   $("#wk-today").onclick = () => { S.week = S.boot.this_week; pageSchedule(); };

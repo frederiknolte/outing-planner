@@ -230,6 +230,12 @@ textarea.input { resize: vertical; min-height: 64px; }
 .status-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 650; padding: 4px 10px; border-radius: 99px; }
 .days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px; align-items: start; }
 .day { min-width: 0; }
+/* the schedule week stays one row of 7 days; when the window is too narrow (or zoomed in)
+   the strip scrolls sideways instead of wrapping later days far down the page */
+.days.week { grid-template-columns: repeat(7, minmax(172px, 1fr)); overflow-x: auto; scroll-snap-type: x proximity;
+  /* a scrolling box clips its contents; pad it (and cancel the padding with margins) so card shadows and the hover lift show */
+  padding: 4px 12px 28px; margin: -4px -12px -22px; scroll-padding-inline: 12px; }
+.days.week > .day { scroll-snap-align: start; }
 .day-head { display: flex; align-items: baseline; justify-content: space-between; padding: 4px 4px 8px; }
 .day-head b { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-2); }
 .day-head span { font-size: 12.5px; color: var(--text-3); }
@@ -428,16 +434,9 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------- responsive ---------- */
-@media (max-width: 1280px) { .days { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-@media (max-width: 960px) {
-  .days { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .topbar-inner { flex-wrap: wrap; gap: 10px; padding: 10px 16px; }
-  .nav { order: 3; flex-basis: 100%; flex-wrap: wrap; overflow: visible; }
-  .top-actions { margin-left: auto; }
-}
+@media (max-width: 960px) { .topbar-inner { padding: 10px 16px; } }
 @media (max-width: 640px) {
   .main { padding: 16px 16px 80px; }
-  .days { grid-template-columns: minmax(0, 1fr); }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   .seat-editor { grid-template-columns: 1fr; grid-auto-flow: row; grid-template-rows: none; }
   .weekbar .label { min-width: 0; flex: 1; font-size: 15px; }
@@ -446,24 +445,37 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
   .brand-mark { height: 32px; }
   .page-head h1 { font-size: 26px; }
   .me-chip { max-width: 150px; }
-  /* phones: the page links collapse into a menu button that names the current page */
-  .nav-toggle { display: flex; align-items: center; gap: 10px; order: 3; flex-basis: 100%; padding: 9px 12px; border-radius: 10px; cursor: pointer;
-    background: rgba(255, 255, 255, .1); border: 1px solid rgba(255, 255, 255, .2); color: #fff; font: inherit; font-weight: 650; font-size: 15px; text-align: left; }
-  .nav-toggle .count { background: var(--crest-gold); color: #fff; font-size: 11px; border-radius: 99px; padding: 0 6px; line-height: 17px; font-weight: 700; }
-  .nav-toggle .count[hidden] { display: none; }
-  .nav-toggle .chev { margin-left: auto; display: flex; align-items: center; gap: 4px; color: rgba(255, 255, 255, .75); font-size: 13px; font-weight: 550; transition: transform .15s; }
-  .nav-toggle .chev svg { width: 18px; height: 18px; }
-  .topbar.nav-open .nav-toggle .chev { transform: rotate(180deg); }
-  .nav { display: none; order: 4; flex-direction: column; overflow: visible; padding-bottom: 4px; }
-  .topbar.nav-open .nav { display: flex; }
-  .nav a { padding: 11px 12px; font-size: 15px; gap: 10px; }
-  .nav .nav-ic { display: block; }
-  .nav .count { margin-left: auto; }
   .overlay { padding: 0; align-items: flex-end; }
   .modal { border-radius: 18px 18px 0 0; max-height: 92vh; overflow-y: auto; }
   .modal-foot { border-radius: 0; }
   .sub-list { grid-template-columns: 1fr; }
 }
+
+/* Compact header: the page links collapse into a menu button naming the current page. app.js sets
+   .nav-compact on phones and whenever the links don't fit on one row (narrow or zoomed-in window). */
+.topbar.nav-compact .topbar-inner { flex-wrap: wrap; gap: 10px; }
+.topbar.nav-compact .top-actions { margin-left: auto; }
+.topbar.nav-compact .nav-toggle { display: flex; align-items: center; gap: 10px; order: 3; flex-basis: 100%; padding: 9px 12px; border-radius: 10px; cursor: pointer;
+  background: rgba(255, 255, 255, .1); border: 1px solid rgba(255, 255, 255, .2); color: #fff; font: inherit; font-weight: 650; font-size: 15px; text-align: left; }
+.topbar.nav-compact .nav-toggle .count { background: var(--crest-gold); color: #fff; font-size: 11px; border-radius: 99px; padding: 0 6px; line-height: 17px; font-weight: 700; }
+.topbar.nav-compact .nav-toggle .count[hidden] { display: none; }
+.topbar.nav-compact .nav-toggle .chev { margin-left: auto; display: flex; align-items: center; gap: 4px; color: rgba(255, 255, 255, .75); font-size: 13px; font-weight: 550; transition: transform .15s; }
+.topbar.nav-compact .nav-toggle .chev svg { width: 18px; height: 18px; }
+.topbar.nav-compact.nav-open .nav-toggle .chev { transform: rotate(180deg); }
+.topbar.nav-compact .nav { display: none; order: 4; flex-basis: 100%; flex-direction: column; overflow: visible; padding-bottom: 4px; }
+.topbar.nav-compact.nav-open .nav { display: flex; }
+.topbar.nav-compact .nav a { padding: 11px 12px; font-size: 15px; gap: 10px; }
+.topbar.nav-compact .nav .nav-ic { display: block; }
+.topbar.nav-compact .nav .count { margin-left: auto; }
+.topbar.nav-compact .top-gear { display: none; }
+.topbar.nav-compact .nav .nav-settings { display: flex !important; border-top: 1px solid rgba(255, 255, 255, .12); margin-top: 4px; padding-top: 13px; }
+
+/* phones (touch, narrow) keep the familiar stacked day list; a zoomed-in desktop keeps the sideways strip */
+@media (max-width: 640px) and (hover: none) {
+  .days.week { grid-template-columns: minmax(0, 1fr); overflow-x: visible; padding: 0; margin: 0; }
+}
+/* short windows (zoomed in, landscape phones): don't pin the header, it would eat most of the screen */
+@media (max-height: 560px) { .topbar { position: static; } }
 
 /* ---------- weekly sign-up ---------- */
 .su-form { display: flex; flex-direction: column; gap: 14px; max-width: 860px; }
@@ -758,8 +770,6 @@ button.race-person:hover { border-color: var(--accent); }
 .topbar .top-gear.on { background: rgba(255, 255, 255, .14); color: #fff; }
 @media (max-width: 640px) {
   .subnav-inner { padding: 0 12px; }
-  .topbar .top-gear { display: none; }
-  .nav .nav-settings { display: flex !important; border-top: 1px solid rgba(255, 255, 255, .12); margin-top: 4px; padding-top: 13px; }
 }
 
 /* ------------------------------------------------------------- committee -- */
