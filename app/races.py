@@ -54,7 +54,7 @@ class RaceIn(BaseModel):
     open: bool = True
     opens_at: str = ""          # entries open, "YYYY-MM-DDTHH:MM" (local time) or ""
     closes_at: str = ""         # entries close, same format
-    scratch_date: str = ""      # last day to scratch (withdraw), YYYY-MM-DD or ""
+    scratch_date: str = ""      # scratch (withdraw) deadline, YYYY-MM-DD or YYYY-MM-DDTHH:MM, or ""
     links: list[LinkIn] = []
 
 
@@ -136,8 +136,11 @@ def _validate(b: RaceIn) -> dict:
     opens_at, closes_at = _dt(b.opens_at, "entries opening"), _dt(b.closes_at, "entries closing")
     if opens_at and closes_at and closes_at <= opens_at:
         raise HTTPException(400, "Entries must close after they open")
+    # Scratch deadline: a day, optionally with a time ("YYYY-MM-DD" or "YYYY-MM-DDTHH:MM").
     scratch = b.scratch_date.strip()
-    if scratch:
+    if "T" in scratch:
+        scratch = _dt(scratch, "the scratch deadline")
+    elif scratch:
         try:
             scratch = date.fromisoformat(scratch).isoformat()
         except ValueError:

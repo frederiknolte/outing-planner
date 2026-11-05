@@ -789,8 +789,15 @@ async function editOuting(o, defaults = {}) {
     return coxed ? [0, ...arr] : arr;
   };
   const label = (s, cap) => st.kind === "land" ? String(s) : s === 0 ? "Cox" : cap === 1 ? "Sculler" : s === cap ? "Stroke" : s === 1 ? "Bow" : String(s);
+  // What rowers see in the session popup but the editor's seat boxes don't: open sub requests and who's subbing.
+  const subLines = (o?.seats || []).filter((s) => s.member && (s.sub_request || s.subbed_for)).map((s) => s.sub_request
+    ? `<div>${I.alert}<span><b>${esc(s.label)}</b> · ${esc(s.member.name)} needs a sub${s.sub_request.reason ? `: “${esc(s.sub_request.reason)}”` : ""}</span><button type="button" class="btn sm" data-oe-fill="${s.sub_request.id}">Assign a sub</button></div>`
+    : `<div>${I.swap}<span><b>${esc(s.label)}</b> · ${esc(s.member.name)} is subbing for ${esc(s.subbed_for)}</span></div>`);
 
   const body = `
+    ${o && o.cancelled ? `<div class="callout bad">${I.x}<div><b>This session has been cancelled.</b>${cancelText(o) ? ` ${esc(cancelText(o))}` : ""}</div></div>` : ""}
+    ${o && !o.cancelled && !o.past ? `<div class="wx" id="wx" style="margin:0"><span class="small faint">Loading forecast…</span></div>` : ""}
+    ${subLines.length ? `<div class="oe-subs">${subLines.join("")}</div>` : ""}
     <div class="seg" id="oe-kind"><button data-k="water" class="${st.kind === "water" ? "on" : ""}">${I.water}Water</button><button data-k="land" class="${st.kind === "land" ? "on" : ""}">${I.land}Land</button></div>
     <div class="grid-3">
       <label class="field"><span>Day</span><select class="input" id="oe-date">${(week?.days || [st.date]).map((d) => `<option value="${d}" ${d === st.date ? "selected" : ""}>${fmtLong(d)}</option>`).join("")}${week && !week.days.includes(st.date) ? `<option value="${st.date}" selected>${fmtLong(st.date)}</option>` : ""}</select></label>
@@ -829,6 +836,8 @@ async function editOuting(o, defaults = {}) {
   modal({
     title: o ? (o.cancelled ? "Edit session · cancelled" : "Edit session") : st.kind === "water" ? "New water outing" : "New land session", body, foot, wide: "xl",
     onMount: (m, close) => {
+      const wx = $("#wx", m); if (wx) loadWeather(o, wx);
+      $$("[data-oe-fill]", m).forEach((b) => b.onclick = () => { close(); fillSub(+b.dataset.oeFill); });
       const boatSel = $("#oe-boat", m), capSel = $("#oe-cap", m);
       let target = null, loaded = false;
       let rcTimer = null, rcSeq = 0;
@@ -3402,9 +3411,12 @@ function raceWhoModal(r, data, filter) {
 
 const fmtDT = (t) => { const [d, h] = t.split("T"), x = pd(d); return `${DAY[dow(d)]} ${x.getUTCDate()} ${MON[x.getUTCMonth()]}, ${h}`; };
 function raceWindow(r) {
-  const parts = [r.opens_at && `open <b>${esc(fmtDT(r.opens_at))}</b>`, r.closes_at && `close <b>${esc(fmtDT(r.closes_at))}</b>`].filter(Boolean);
-  const bits = [parts.length && `Entries ${parts.join(" · ")}`, r.scratch_date && `Scratch by <b>${esc(fmtDT(r.scratch_date + "T").slice(0, -2))}</b>`].filter(Boolean);
-  return bits.length ? `<div class="small muted race-window">${bits.join(" · ")}</div>` : "";
+  const rows = [
+    r.opens_at && ["Entries open", fmtDT(r.opens_at)],
+    r.closes_at && ["Entries close", fmtDT(r.closes_at)],
+    r.scratch_date && ["Scratch by", r.scratch_date.includes("T") ? fmtDT(r.scratch_date) : fmtDT(r.scratch_date + "T").slice(0, -2)],
+  ].filter(Boolean);
+  return rows.length ? `<dl class="small race-window">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : "";
 }
 
 function raceCard(r, data) {
@@ -3577,7 +3589,7 @@ function editRace(r, data) {
         <label class="field"><span>Race type</span><input class="input" id="r-type" list="r-types" value="${esc(v.race_type)}" placeholder="e.g. Head race, Side-by-side"><datalist id="r-types">${types.map((t) => `<option value="${esc(t)}">`).join("")}</datalist></label></div>
       <div class="grid-3"><label class="field"><span>Entries open</span><input class="input" type="datetime-local" id="r-opens" value="${esc(v.opens_at || "")}"></label>
         <label class="field"><span>Entries close</span><input class="input" type="datetime-local" id="r-closes" value="${esc(v.closes_at || "")}"><span class="hint">The committee gets a reminder banner as this approaches.</span></label>
-        <label class="field"><span>Scratch date</span><input class="input" type="date" id="r-scratch" value="${esc(v.scratch_date || "")}"><span class="hint">Last day to withdraw.</span></label></div>
+        <div class="field"><span>Scratch by</span><div class="time-range"><input class="input" type="date" id="r-scratch" value="${esc((v.scratch_date || "").split("T")[0])}" aria-label="Scratch date"><input class="input tnum" type="time" id="r-scratch-t" value="${esc((v.scratch_date || "").split("T")[1] || "")}" aria-label="Scratch time (optional)"></div><span class="hint">Deadline to withdraw. Time is optional.</span></div></div>
       <label class="field"><span>Notes</span><textarea class="input" id="r-notes" rows="3">${esc(v.notes)}</textarea></label>
       <div class="field"><span>Links / sources</span><div id="r-links" class="race-link-rows"></div><button type="button" class="btn sm" id="r-addlink" style="align-self:flex-start">${I.plus}Add link</button></div>
       <label class="check"><input type="checkbox" id="r-open" ${v.open ? "checked" : ""}> Open for responses</label>`,
@@ -3592,7 +3604,7 @@ function editRace(r, data) {
         sync();
         const body = { title: $("#r-title", m).value.trim(), date: $("#r-date", m).value, term: $("#r-term", m).value, city: $("#r-city", m).value, time_slot: $("#r-slot", m).value,
           entry: $("#r-entry", m).value, squad: $("#r-squad", m).value, race_type: $("#r-type", m).value, notes: $("#r-notes", m).value, open: $("#r-open", m).checked,
-          opens_at: $("#r-opens", m).value, closes_at: $("#r-closes", m).value, scratch_date: $("#r-scratch", m).value,
+          opens_at: $("#r-opens", m).value, closes_at: $("#r-closes", m).value, scratch_date: $("#r-scratch", m).value && $("#r-scratch-t", m).value ? `${$("#r-scratch", m).value}T${$("#r-scratch-t", m).value}` : $("#r-scratch", m).value,
           links: links.filter((l) => l.url.trim()) };
         if (!body.title) return toast("Title is required", true);
         if (!body.date) return toast("Pick a date", true);

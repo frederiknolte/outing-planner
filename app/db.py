@@ -322,7 +322,7 @@ MIGRATIONS = {
         "squad": "TEXT NOT NULL DEFAULT 'any'",                     # any | open | women
         "opens_at": "TEXT NOT NULL DEFAULT ''",                     # when entries open, local "YYYY-MM-DDTHH:MM" or ''
         "closes_at": "TEXT NOT NULL DEFAULT ''",                    # when entries close, same format
-        "scratch_date": "TEXT NOT NULL DEFAULT ''",                 # last day to withdraw (scratch), YYYY-MM-DD or ''
+        "scratch_date": "TEXT NOT NULL DEFAULT ''",                 # scratch (withdraw) deadline, YYYY-MM-DD[THH:MM] or ''
     },
     "race_responses": {
         "squad": "TEXT NOT NULL DEFAULT ''",                        # open | women

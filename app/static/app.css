@@ -852,8 +852,9 @@ button.race-person:hover { border-color: var(--accent); }
 .crew-log li.undone .chip { text-decoration: none; display: inline-block; }
 .crew-log .btn { flex: none; }
 
-.race-window { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
-.race-window svg { width: 14px; height: 14px; }
+.race-window { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 6px 0 0; }
+.race-window dt { color: var(--text-2); }
+.race-window dd { margin: 0; font-weight: 600; white-space: nowrap; }
 .race-banner { display: flex; align-items: center; gap: 12px; max-width: 1400px; margin: 12px auto 0; padding: 10px 14px; border-radius: 12px;
   background: var(--surface); border: 1px solid var(--border); border-left: 6px solid var(--warn, #d9a400); }
 .race-banner.urgent { border-left-color: var(--bad, #d33); }
@@ -875,3 +876,9 @@ button.race-person:hover { border-color: var(--accent); }
 .act-row.on .act-dot { background: var(--ok); }
 .act-who { min-width: 0; }
 .act-when { text-align: right; white-space: nowrap; }
+
+/* ---- session editor: open sub requests / subs ---- */
+.oe-subs { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-radius: 10px; background: var(--warn-soft); border: 1px solid var(--border); }
+.oe-subs > div { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.oe-subs > div > span { flex: 1; min-width: 0; }
+.oe-subs svg { width: 14px; height: 14px; flex: none; }
