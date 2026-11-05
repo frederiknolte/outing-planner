@@ -21,7 +21,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import db
 from .auth import require_committee, require_member, role_of
 from . import privacy
-from . import river, weather
+from . import presence, river, weather
 from . import push
 from . import crewlog
 from .timeutil import normalize as norm_time, to_minutes
@@ -1307,6 +1307,21 @@ def week_copy(b: CopyWeekIn, _: str = Depends(require_committee)):
                                 SELECT ?, seat, member_id FROM assignments WHERE outing_id=?""", (cur.lastrowid, o["id"]))
             n += 1
         return {"copied": n}
+
+
+# ------------------------------------------------------------ activity ----
+_STARTED = time.time()
+
+
+@app.get("/api/committee/activity")
+def activity(request: Request, _: str = Depends(require_committee)):
+    """Recent use of the site by other browsers (not this one), to time a restart."""
+    with db.get_conn() as conn:
+        names = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM members")}
+    rows = presence.recent(presence.session_id(request))
+    for r in rows:
+        r["name"] = names.get(r.pop("member_id"), "")
+    return {"sessions": rows, "uptime_s": int(time.time() - _STARTED)}
 
 
 # ------------------------------------------------------------- weather ----

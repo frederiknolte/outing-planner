@@ -2850,8 +2850,29 @@ async function pageSettings() {
           <div class="field"><span>Boat-issue photos</span><div class="meter"><div id="s-ph-bar"></div></div><span class="hint" id="s-ph-used">…</span></div>
           <div style="display:flex;gap:8px;align-items:flex-end"><label class="field" style="flex:1"><span>Storage limit for photos (MB)</span><input class="input" type="number" min="10" max="100000" id="s-ph-limit"></label><button class="btn" id="s-ph-save">Save</button></div>
         </div>
+        <div class="card card-pad" style="display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><h3 style="margin:0">Recent activity</h3><button class="btn sm ghost" id="s-act-refresh">Refresh</button></div>
+          <p class="muted small" style="margin:0">When other devices last used the site (not this one), to pick a quiet moment for a restart. Only kept since the server last started.</p>
+          <div id="s-act" class="small muted">Loading…</div>
+        </div>
       </div>
     </div>`;
+  const drawActivity = async () => {
+    let a; try { a = await api("/api/committee/activity"); } catch (e) { $("#s-act").textContent = e.message; return; }
+    const ago = (sec) => sec < 60 ? "just now" : sec < 3600 ? `${Math.floor(sec / 60)} min ago` : sec < 86400 ? `${Math.floor(sec / 3600)} h ago` : `${Math.floor(sec / 86400)} d ago`;
+    const what = (p) => (p.replace(/^\/api\/(committee\/)?/, "").split("/")[0] || "").replace(/-/g, " ");
+    const active = a.sessions.filter((x) => x.ago_s < 300), editing = a.sessions.filter((x) => x.write_ago_s != null && x.write_ago_s < 300);
+    const summary = active.length
+      ? `<div class="callout warn">${I.alert}<div><b>${active.length} device${active.length === 1 ? "" : "s"} active in the last 5 minutes</b>${editing.length ? `, ${editing.length} saved something` : ""}. Maybe wait a moment.</div></div>`
+      : `<div class="callout">${I.check}<div><b>Quiet:</b> nobody else has used the site in the last 5 minutes${a.sessions.length ? ` (last: ${ago(a.sessions[0].ago_s)})` : ""}.</div></div>`;
+    const rows = a.sessions.slice(0, 15).map((x) => `<div class="act-row ${x.ago_s < 300 ? "on" : ""}">
+        <span class="act-dot"></span>
+        <span class="act-who"><b>${esc(x.name || "Unknown name")}</b> <span class="chip ${x.role === "committee" ? "violet" : ""}">${x.role === "committee" ? "Committee" : "Rower"}</span>${x.device ? ` <span class="faint">${esc(x.device)}</span>` : ""}</span>
+        <span class="act-when"><b>${ago(x.ago_s)}</b>${what(x.path) ? ` <span class="faint">· ${esc(what(x.path))}</span>` : ""}${x.write_ago_s != null ? `<br><span class="faint">saved ${ago(x.write_ago_s)}</span>` : ""}</span></div>`).join("");
+    $("#s-act").innerHTML = `${summary}${rows ? `<div class="act-list">${rows}</div>` : ""}<div class="faint" style="margin-top:6px">Server up for ${a.uptime_s < 60 ? "under a minute" : ago(a.uptime_s).replace(" ago", "")}.</div>`;
+  };
+  drawActivity();
+  $("#s-act-refresh").onclick = drawActivity;
   const phoneFields = () => ({ phone_mode: $("#s-phone-mode").value, phone_retention_days: Math.max(0, Math.min(3650, +$("#s-phone-days").value || 0)) });
   $("#s-csv").onclick = () => exportModal("/api/committee/members.csv", "all members");
   const drawStorage = (ps) => {

@@ -866,3 +866,12 @@ button.race-person:hover { border-color: var(--accent); }
 .wx-ico { font-size: 28px; line-height: 1; flex: none; }
 .wx-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .wx-gusty { color: var(--warn); }
+
+/* ---- settings: recent activity ---- */
+.act-list { display: flex; flex-direction: column; margin-top: 8px; }
+.act-row { display: grid; grid-template-columns: 10px 1fr auto; gap: 10px; align-items: center; padding: 7px 0; border-top: 1px solid var(--border); }
+.act-row:first-child { border-top: 0; }
+.act-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--surface-3); }
+.act-row.on .act-dot { background: var(--ok); }
+.act-who { min-width: 0; }
+.act-when { text-align: right; white-space: nowrap; }
