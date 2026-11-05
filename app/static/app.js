@@ -308,7 +308,7 @@ function shell(active) {
   const tabs = ROUTES.filter((r) => (r.id === top.id || r.parent === top.id) && routeAllowed(r));
   $("#app").innerHTML = `
   <header class="topbar"><div class="topbar-inner">
-    <a class="brand" href="#/schedule" style="color:inherit"><img class="brand-mark" src="/static/crest.png" alt=""><div>${esc(S.boot.club_name || "Reuben Boat Club")}<small>Outing planner · Oxford</small></div></a>
+    <a class="brand" href="#/schedule" style="color:inherit"><img class="brand-mark" src="/static/crest.png" alt=""><div>${esc(S.boot.club_name || "Reuben Boat Club")}</div></a>
     <button class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="main-nav"><span class="nav-ic">${cur.icon}</span><span class="nav-cur">${esc(routeLabel(cur))}</span>${countBadge("subs")}<span class="chev">${I.down}</span></button>
     <nav class="nav" id="main-nav">${routes.map((r) => `<a href="#/${r.id}" class="${r.id === top.id ? "active" : ""}"${r.id === top.id ? ` aria-current="page"` : ""}><span class="nav-ic">${r.icon}</span><span class="nav-l">${esc(routeLabel(r))}</span>${kidCount(r)}</a>`).join("")}
       ${isCommittee() ? `<a href="#/settings" class="nav-settings ${active === "settings" ? "active" : ""}"><span class="nav-ic">${I.gear}</span><span class="nav-l">Settings</span></a>` : ""}</nav>
