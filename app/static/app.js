@@ -627,7 +627,7 @@ function outingAct(t, o) {
 /* Rowers' read-only view of an outing: full names, who's subbing for whom, and the same seat actions as the card. */
 /* Forecast for a session (Open-Meteo via the server), filled into the popup once it loads. */
 const WX_ICON = { sun: "☀️", partly: "⛅", cloud: "☁️", fog: "🌫️", rain: "🌧️", snow: "🌨️", storm: "⛈️" };
-const WX_GUSTY = 30; // mph: gusts from here on are highlighted
+const WX_GUSTY = 50; // km/h: gusts from here on are highlighted
 async function loadWeather(o, el) {
   let w;
   try { w = await api(`/api/outings/${o.id}/weather`); } catch { w = { available: false, reason: "The forecast couldn't be loaded right now." }; }
@@ -638,7 +638,7 @@ async function loadWeather(o, el) {
   el.innerHTML = `<span class="wx-ico" aria-hidden="true">${WX_ICON[w.icon] || "🌡️"}</span>
     <div class="wx-body">
       <div><b>${esc(w.condition)}</b> · <b class="tnum">${temp}</b>${w.feels != null && w.feels !== w.temp ? ` <span class="faint">(feels ${w.feels}°)</span>` : ""}</div>
-      <div class="small"><span class="${gusty ? "wx-gusty" : ""}">Wind <b class="tnum">${w.wind} mph</b>${w.wind_dir ? ` ${esc(w.wind_dir)}` : ""}${w.gust != null ? `, gusts <b class="tnum">${w.gust}</b>` : ""}</span>${w.rain_chance != null ? ` · Rain <b class="tnum">${w.rain_chance}%</b>${w.rain_mm ? ` (${w.rain_mm} mm)` : ""}` : ""}</div>
+      <div class="small"><span class="${gusty ? "wx-gusty" : ""}">Wind <b class="tnum">${w.wind} km/h</b>${w.wind_dir ? ` ${esc(w.wind_dir)}` : ""}${w.gust != null ? `, gusts <b class="tnum">${w.gust}</b>` : ""}</span>${w.rain_chance != null ? ` · Rain <b class="tnum">${w.rain_chance}%</b>${w.rain_mm ? ` (${w.rain_mm} mm)` : ""}` : ""}</div>
       <div class="small faint">Forecast for ${w.timed ? `${esc(w.hours[0])}–${esc(w.hours[1])}` : "the daytime (no time set)"} · <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a></div>
     </div>`;
 }

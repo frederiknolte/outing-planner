@@ -49,7 +49,7 @@ COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "
 def _fetch(lat: float, lon: float, timeout: float = 8) -> dict:
     q = urllib.parse.urlencode({
         "latitude": f"{lat:.3f}", "longitude": f"{lon:.3f}", "hourly": ",".join(HOURLY),
-        "wind_speed_unit": "mph", "timezone": "Europe/London", "forecast_days": FORECAST_DAYS,
+        "wind_speed_unit": "kmh", "timezone": "Europe/London", "forecast_days": FORECAST_DAYS,
     })
     req = urllib.request.Request(f"{API}?{q}", headers={"User-Agent": "OutingPlanner/1.0", "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 - fixed https URL
