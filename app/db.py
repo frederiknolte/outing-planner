@@ -155,7 +155,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     plan TEXT NOT NULL DEFAULT '',
     owner TEXT NOT NULL DEFAULT '',                -- free text, e.g. "Sophie to chase Toby", "Captains"
     due TEXT NOT NULL DEFAULT '',                  -- YYYY-MM-DD or ''
-    repeat_yearly INTEGER NOT NULL DEFAULT 0,
+    repeat TEXT NOT NULL DEFAULT '',               -- '' | term | year (comes back when done, see tasks.py)
     status TEXT NOT NULL DEFAULT 'open',           -- open | in_progress | waiting | done
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -331,6 +331,7 @@ MIGRATIONS = {
     },
     "signup_slots": {"end_time": "TEXT NOT NULL DEFAULT ''"},
     "signups": {"squad": "TEXT NOT NULL DEFAULT ''"},              # open | women (rowers only)
+    "tasks": {"repeat": "TEXT NOT NULL DEFAULT ''"},               # replaces repeat_yearly (see _migrate_task_repeat)
     "members": {
         "swim_test_date": "TEXT NOT NULL DEFAULT ''",               # YYYY-MM-DD the swim test was passed, or '' (unknown)
         "cox_status_date": "TEXT NOT NULL DEFAULT ''",              # YYYY-MM-DD the cox status was awarded, or ''
@@ -348,6 +349,7 @@ MIGRATIONS = {
 # Columns that were removed again; dropped from existing databases on start-up.
 DROPPED_COLUMNS = [
     ("outings", "happened"),   # the "Happened" confirmation was removed: past + not cancelled = went ahead
+    ("tasks", "repeat_yearly"),  # now tasks.repeat = 'year' (to-dos can also repeat every term)
 ]
 
 DEFAULT_SETTINGS = {
@@ -410,6 +412,7 @@ def init_db() -> None:
             for col, decl in cols.items():
                 if col not in have:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        _migrate_task_repeat(conn)
         for table, col in DROPPED_COLUMNS:
             if col in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
                 conn.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
@@ -423,6 +426,12 @@ def init_db() -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def _migrate_task_repeat(conn) -> None:
+    """Yearly to-dos used to be a repeat_yearly flag; carry it over before the column is dropped."""
+    if "repeat_yearly" in {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}:
+        conn.execute("UPDATE tasks SET repeat = 'year' WHERE repeat_yearly = 1 AND repeat = ''")
 
 
 def _migrate_max_land(conn) -> None:

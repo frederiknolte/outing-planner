@@ -24,9 +24,9 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .db import get_settings
+from .terms import TERMS  # noqa: F401  (Michaelmas, Hilary, Trinity; imported from here by main.py)
 
 TZ = ZoneInfo(os.environ.get("TZ_NAME", os.environ.get("TZ", "Europe/London")) or "Europe/London")
-TERMS = ["Michaelmas", "Hilary", "Trinity"]
 SUBS_PLANS = ["Unpaid", "Single term", "Full year"]
 # Why a session was cancelled (outings.cancel_category). Order = order shown in the app.
 CANCEL_REASONS = {

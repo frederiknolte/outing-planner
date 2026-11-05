@@ -2,9 +2,10 @@
 
 The committee's to-do list. Each task has a title, priority, plan
 of action, who is doing it, an optional due date, a status, and a timeline of
-updates (the old "Completion/update" column, but with history). Yearly tasks
-(insurance, BR affiliation, safety audit, ...) come back with next year's due date
-when they're marked done. A task that turns out to be about one boat can be moved
+updates (the old "Completion/update" column, but with history). Repeating tasks
+come back when they're marked done: yearly ones (insurance, BR affiliation, safety
+audit, ...) with next year's due date, termly ones (subs, ...) due at the same point
+of next term (see terms.shift_to_next_term). A task that turns out to be about one boat can be moved
 to the boat issue tracker.
 
 The handbook is free text for standing information (contacts, how-tos) that the
@@ -17,7 +18,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from . import db
+from . import db, terms
 from .auth import require_committee
 from .issues import SEVERITIES
 
@@ -26,6 +27,7 @@ router = APIRouter()
 STATUSES = {"open": "To do", "in_progress": "In progress", "waiting": "Waiting", "done": "Done"}
 PRIORITIES = {"high": "High", "medium": "Medium", "low": "Low", "": "No priority"}
 PRIORITY_RANK = {"high": 3, "medium": 2, "low": 1, "": 0}
+REPEATS = {"": "Doesn't repeat", "term": "Every term", "year": "Every year"}
 
 
 class TaskIn(BaseModel):
@@ -34,7 +36,7 @@ class TaskIn(BaseModel):
     plan: str = Field("", max_length=8000)
     owner: str = Field("", max_length=200)
     due: str = ""
-    repeat_yearly: bool = False
+    repeat: str = ""
 
 
 class UpdateIn(BaseModel):
@@ -65,10 +67,12 @@ def _validate(b: TaskIn) -> dict:
             due = date.fromisoformat(b.due).isoformat()
         except ValueError:
             raise HTTPException(400, "Due date isn't a valid date")
-    if b.repeat_yearly and not due:
-        raise HTTPException(400, "A yearly task needs a due date")
+    if b.repeat not in REPEATS:
+        raise HTTPException(400, "Unknown repeat")
+    if b.repeat and not due:
+        raise HTTPException(400, "A repeating task needs a due date")
     return {"title": title, "priority": b.priority, "plan": b.plan.strip(), "owner": " ".join(b.owner.split()),
-            "due": due, "repeat_yearly": int(b.repeat_yearly)}
+            "due": due, "repeat": b.repeat}
 
 
 def _task_or_404(conn, task_id: int):
@@ -86,9 +90,20 @@ def _next_year(d: str) -> str:
         return x.replace(year=x.year + 1, day=28).isoformat()
 
 
+def next_due(t) -> str:
+    """When the next copy of a repeating task is due ('' if it doesn't repeat)."""
+    if not t["due"]:
+        return ""
+    if t["repeat"] == "year":
+        return _next_year(t["due"])
+    if t["repeat"] == "term":
+        return terms.shift_to_next_term(t["due"])
+    return ""
+
+
 def _insert(conn, v: dict, author: str = "", note: str = "") -> int:
-    cur = conn.execute("INSERT INTO tasks(title, priority, plan, owner, due, repeat_yearly) VALUES (?, ?, ?, ?, ?, ?)",
-                       (v["title"], v["priority"], v["plan"], v["owner"], v["due"], v["repeat_yearly"]))
+    cur = conn.execute("INSERT INTO tasks(title, priority, plan, owner, due, repeat) VALUES (?, ?, ?, ?, ?, ?)",
+                       (v["title"], v["priority"], v["plan"], v["owner"], v["due"], v["repeat"]))
     conn.execute("INSERT INTO task_updates(task_id, status, note, author) VALUES (?, 'open', ?, ?)",
                  (cur.lastrowid, note, author))
     return cur.lastrowid
@@ -104,12 +119,11 @@ def tasks_list(_: str = Depends(require_committee)):
             latest[u["task_id"]] = dict(u)
         counts = {r[0]: r[1] for r in conn.execute("SELECT task_id, COUNT(*) FROM task_updates WHERE note != '' GROUP BY task_id")}
         for r in rows:
-            r["repeat_yearly"] = bool(r["repeat_yearly"])
             r["latest"] = latest.get(r["id"])
             r["notes"] = counts.get(r["id"], 0)
         rows.sort(key=lambda r: (r["status"] == "done", -PRIORITY_RANK.get(r["priority"], 0), r["due"] or "9999", r["title"].lower()))
         open_issues = conn.execute("SELECT COUNT(*) FROM boat_issues WHERE status IN ('open', 'in_progress', 'waiting')").fetchone()[0]
-        return {"tasks": rows, "statuses": STATUSES, "priorities": PRIORITIES, "open_boat_issues": open_issues,
+        return {"tasks": rows, "statuses": STATUSES, "priorities": PRIORITIES, "repeats": REPEATS, "open_boat_issues": open_issues,
                 "owners": sorted({r["owner"] for r in rows if r["owner"]}, key=str.lower)}
 
 
@@ -117,7 +131,7 @@ def tasks_list(_: str = Depends(require_committee)):
 def task_detail(task_id: int, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         t = dict(_task_or_404(conn, task_id))
-        t["repeat_yearly"] = bool(t["repeat_yearly"])
+        t["next_due"] = next_due(t)
         t["updates"] = [dict(r) for r in conn.execute("SELECT * FROM task_updates WHERE task_id = ? ORDER BY created_at, id", (task_id,))]
         return t
 
@@ -134,8 +148,8 @@ def task_edit(task_id: int, b: TaskIn, _: str = Depends(require_committee)):
     v = _validate(b)
     with db.get_conn() as conn:
         _task_or_404(conn, task_id)
-        conn.execute("""UPDATE tasks SET title=?, priority=?, plan=?, owner=?, due=?, repeat_yearly=?, updated_at=datetime('now')
-                        WHERE id=?""", (v["title"], v["priority"], v["plan"], v["owner"], v["due"], v["repeat_yearly"], task_id))
+        conn.execute("""UPDATE tasks SET title=?, priority=?, plan=?, owner=?, due=?, repeat=?, updated_at=datetime('now')
+                        WHERE id=?""", (v["title"], v["priority"], v["plan"], v["owner"], v["due"], v["repeat"], task_id))
         return {"ok": True}
 
 
@@ -157,10 +171,11 @@ def task_update(task_id: int, b: UpdateIn, _: str = Depends(require_committee)):
                           done_at = CASE WHEN ? = 'done' THEN datetime('now') WHEN ? != '' THEN NULL ELSE done_at END
                         WHERE id = ?""", (status, status, status, task_id))
         next_id = None
-        if status == "done" and t["repeat_yearly"] and t["due"]:
+        if status == "done" and (due := next_due(t)):
             nxt = {"title": t["title"], "priority": t["priority"], "plan": t["plan"], "owner": t["owner"],
-                   "due": _next_year(t["due"]), "repeat_yearly": 1}
-            next_id = _insert(conn, nxt, who, f"Repeats every year. Last year's was done {date.today().strftime('%d %b %Y')}.")
+                   "due": due, "repeat": t["repeat"]}
+            last = "term" if t["repeat"] == "term" else "year"
+            next_id = _insert(conn, nxt, who, f"Repeats every {last}. Last {last}'s was done {date.today().strftime('%d %b %Y')}.")
         return {"ok": True, "next_id": next_id}
 
 

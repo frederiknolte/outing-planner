@@ -227,7 +227,7 @@ const ROUTES = [
   { id: "todo", label: "To-do", parent: "committee", icon: I.todo, committee: true, count: "todo" },
   { id: "handbook", label: "Handbook", parent: "committee", icon: I.info, committee: true },
   { id: "coaches", label: "Coaches", parent: "committee", icon: I.whistle, committee: true },
-  { id: "handover", label: "Handover", parent: "committee", icon: I.repeat, committee: true },
+  { id: "handover", label: "Rollover", parent: "committee", icon: I.repeat, committee: true },
   { id: "settings", label: "Settings", icon: I.gear, committee: true, gear: true },
 ];
 S.counts = {};
@@ -2455,7 +2455,7 @@ async function pageCommittee() {
   const e = $("#cm-edit"); if (e) e.onclick = () => editCommittee(d);
 }
 
-/* Roster editor shared by "Edit committee" and the year-end handover: one name field per seat
+/* Roster editor shared by "Edit committee" and the rollover page: one name field per seat
    (Men's and Women's Captain have two), prefilled from d.holders. */
 async function rosterEditor(d) {
   const all = (await api("/api/committee/members")).members.map((m) => ({ id: m.id, name: m.name, active: !!m.active })).sort((a, b) => a.name.localeCompare(b.name));
@@ -2497,43 +2497,58 @@ async function editCommittee(d) {
   });
 }
 
-// --------------------------------------------------------- year-end handover --
-/* Close the academic year and set up the next one in one go (see handover.py). */
+// ------------------------------------------------------------------ rollover --
+/* Move on to the next term in one go, and at the end of Trinity to the next academic year
+   (see handover.py). The committee itself is handed over separately, usually in March. */
 async function pageHandover() {
   let d, ed;
   try { d = await api("/api/committee/handover"); ed = await rosterEditor(d); } catch (e) { return fail(e); }
-  const cur = d.current, pr = d.proposed, ss = d.season, subs = d.subs;
-  const done = d.already_archived || d.not_started;
-  const lateStart = pr.season_start && d.today >= pr.season_start;
+  const cur = d.current, pr = d.proposed, nx = d.next, subs = d.subs, ss = d.season;
+  const yearly = nx.yearly;
+  const target = yearly ? `${nx.term} ${nx.academic_year}` : nx.term;
+  const blocked = d.not_started || d.already_archived;
+  const early = !d.not_started && d.current_end && d.today <= d.current_end;
+  const lateStart = yearly && pr.season_start && d.today >= pr.season_start;
   const nov = d.novices;
   const novRow = (n) => `<label class="ho-nov"><input type="checkbox" data-nov="${n.id}" ${n.suggest ? "checked" : ""}>
       <span><span class="ho-nov-name">${esc(n.name)}</span>${!n.active ? ` <span class="chip">Inactive</span>` : !n.all_time ? ` <span class="chip warn">Never rowed</span>` : ""}
-      <span class="faint small" style="display:block">${plural(n.season, "sessions")} this season · ${n.all_time} all time</span></span></label>`;
-  const step = (n, title, body) => `<section class="card card-pad ho-step"><h3><span class="ho-n">${n}</span>${title}</h3>${body}</section>`;
+      <span class="faint small" style="display:block">${plural(n.recent, "sessions")} this ${yearly ? "season" : "term"} · ${n.all_time} all time</span></span></label>`;
+  let k = 0;
+  const step = (title, body) => `<section class="card card-pad ho-step"><h3><span class="ho-n">${++k}</span>${title}</h3>${body}</section>`;
+  const termHint = nx.start ? (nx.official ? `University dates: ${esc(fmtShort(nx.start))} – ${esc(fmtShort(nx.end))}.` : `Estimated (the University's dates for ${esc(nx.academic_year)} aren't in the app yet): check the <a href="https://www.ox.ac.uk/about/the-university/facts-and-figures/dates-of-term" target="_blank" rel="noopener">dates of term</a>.`) : "Sunday of 1st week.";
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>Year-end handover</h1><p>${d.not_started ? "Close one academic year and set up the next, once a year." : `Close ${esc(cur.academic_year || "this year")} and set up ${esc(pr.academic_year || "the next one")}. Nothing changes until you press <b>Hand over</b> at the bottom.`}</p></div></div>
-    ${d.not_started ? `<div class="callout" style="margin-bottom:16px">${I.check}<div><b>${esc(cur.academic_year)} is set up and starts on ${esc(fmtShort(cur.season_start))}.</b> The next handover opens once that season is under way.</div></div>`
-      : d.already_archived ? `<div class="callout warn" style="margin-bottom:16px">${I.alert}<div><b>${esc(cur.academic_year)} has already been handed over.</b> Change the academic year under <a href="#/settings">Settings</a> if it should have moved on.</div></div>` : ""}
-    ${d.not_started ? "" : `<div class="ho-steps">
-    ${step(1, "Archive the season", `<p class="muted" style="margin:0">Since ${esc(fmtShort(ss.start))}: <b>${plural(ss.sessions, "sessions")}</b> went ahead, ${plural(ss.seat_sessions, "seats")} filled by ${plural(ss.active_rowers, "rowers")}, ${ss.cancelled} cancelled.
+    <div class="page-head"><div><h1>Rollover</h1><p>Move the club on to the next term: term dates, termly subs and novices to senior. At the end of Trinity this also starts the new academic year and archives the season. The committee changes separately, usually in March (below).</p></div></div>
+    <div class="section-title">${yearly ? `New academic year: ${esc(nx.academic_year)}` : `Next term: ${esc(target)}`}</div>
+    ${d.not_started ? `<div class="callout" style="margin-bottom:16px">${I.check}<div><b>${esc(cur.current_term)} ${esc(cur.academic_year)} is set up${cur.term_start ? ` and 1st week starts on ${esc(fmtShort(cur.term_start))}` : ""}.</b> The next rollover opens once it's under way.</div></div>`
+      : d.already_archived ? `<div class="callout warn" style="margin-bottom:16px">${I.alert}<div><b>${esc(cur.academic_year)} has already been archived.</b> Change the academic year and term under <a href="#/settings">Settings</a> if they should have moved on.</div></div>` : ""}
+    ${d.not_started ? "" : `${early ? `<div class="callout warn" style="margin-bottom:14px">${I.alert}<div>${esc(cur.current_term)} Full Term runs until ${esc(fmtShort(d.current_end))}. Rolling over before then moves subs, river rules and week numbers on to ${esc(nx.term)} early.</div></div>` : ""}
+    <p class="muted" style="margin:0 0 12px">Nothing changes until you press the button at the bottom.</p>
+    <div class="ho-steps">
+    ${yearly ? step("Archive the season", `<p class="muted" style="margin:0">Since ${esc(fmtShort(ss.start))}: <b>${plural(ss.sessions, "sessions")}</b> went ahead, ${plural(ss.seat_sessions, "seats")} filled by ${plural(ss.active_rowers, "rowers")}, ${ss.cancelled} cancelled.
         The leaderboard, boat usage, committee and handbook are saved. Everyone can still look back at the leaderboard (Leaderboard → season picker). Outing history and all-time totals stay as they are.</p>
-      ${lateStart ? `<div class="callout warn">${I.alert}<div>The new season starts on ${esc(fmtShort(pr.season_start))}, but today is later. Outings since then will be counted in ${esc(cur.academic_year)}'s archive.</div></div>` : ""}`)}
-    ${step(2, "Roll over the dates", `<div class="grid-2">
-        <label class="field"><span>New academic year</span><input class="input" id="ho-ay" value="${esc(pr.academic_year)}" placeholder="e.g. 2027-28"><span class="hint">Now ${esc(cur.academic_year || "not set")}. Term goes back to Michaelmas.</span></label>
-        <label class="field"><span>Season starts</span><input class="input" type="date" id="ho-season" value="${esc(pr.season_start)}"><span class="hint">Now ${cur.season_start ? esc(fmtShort(cur.season_start)) : "not set"}. Leaderboard and coaching year count from here.</span></label>
-        <label class="field"><span>Full Term starts</span><input class="input" type="date" id="ho-term" value="${esc(pr.term_start)}"><span class="hint">Sunday of 1st week. Suggested: 52 weeks after this year's. Check the University's dates.</span></label>
-        <label class="field"><span>Subs cutoff</span><input class="input" type="date" id="ho-cut" value="${esc(pr.subs_cutoff)}"><span class="hint">${cur.subs_cutoff ? `Now ${esc(fmtShort(cur.subs_cutoff))}.` : "Not set now."} Blank = none.</span></label>
+      ${lateStart ? `<div class="callout warn">${I.alert}<div>The new season starts on ${esc(fmtShort(pr.season_start))}, but today is later. Outings since then will be counted in ${esc(cur.academic_year)}'s archive.</div></div>` : ""}`) : ""}
+    ${step(yearly ? "Roll over the year and term" : "Roll over the term", `<div class="grid-2">
+        ${yearly ? `<label class="field"><span>New academic year</span><input class="input" id="ho-ay" value="${esc(pr.academic_year)}" placeholder="e.g. 2027-28"><span class="hint">Now ${esc(cur.academic_year || "not set")}. Term goes to Michaelmas.</span></label>
+        <label class="field"><span>Season starts</span><input class="input" type="date" id="ho-season" value="${esc(pr.season_start)}"><span class="hint">Now ${cur.season_start ? esc(fmtShort(cur.season_start)) : "not set"}. Leaderboard and coaching year count from here.</span></label>` : ""}
+        <label class="field"><span>${esc(nx.term)} Full Term starts</span><input class="input" type="date" id="ho-term" value="${esc(pr.term_start)}"><span class="hint">Sunday of 1st week. ${termHint}</span></label>
+        <label class="field"><span>Subs cutoff</span><input class="input" type="date" id="ho-cut" value="${esc(pr.subs_cutoff)}"><span class="hint">${cur.subs_cutoff ? `Now ${esc(fmtShort(cur.subs_cutoff))}; moved to the same week of ${esc(nx.term)}.` : "Not set now."} Blank = none.</span></label>
       </div><p class="small faint" style="margin:0">The regatta end date (river rules) is cleared, so peak term runs to the end of 8th week until you set it.</p>`)}
-    ${step(3, "Reset subs", `<label class="check"><input type="checkbox" id="ho-subs" checked> Set everyone's subs back to <b>Unpaid</b></label>
-      <p class="small muted" style="margin:0">Now: ${subs.full_year} full year · ${subs.single_term} single term · ${subs.unpaid} unpaid (active members). Anyone already marked as paid for the new year keeps it. Subs reminders start afresh.</p>`)}
-    ${step(4, "Move novices to senior", nov.length ? `<p class="small muted" style="margin:0">Ticked: active novices who have rowed. Novices who never came out stay Novice, so they keep their free outings if they return.</p>
+    ${step("Reset subs", `<label class="check"><input type="checkbox" id="ho-subs" checked> ${yearly ? "Set everyone's subs back to <b>Unpaid</b>" : `Set single-term subs for ${esc(cur.current_term)} back to <b>Unpaid</b>`}</label>
+      <p class="small muted" style="margin:0">Now: ${subs.full_year} full year · ${subs.single_term} single term · ${subs.unpaid} unpaid (active members). ${yearly ? "Anyone already marked as paid for the new year keeps it." : `Full-year subs stay; anyone already marked as paid for ${esc(nx.term)} keeps it.`} Subs reminders start afresh.</p>`)}
+    ${step("Move novices to senior", nov.length ? `<p class="small muted" style="margin:0">Ticked: active novices who have rowed. Novices who never came out stay Novice, so they keep their free outings if they return.</p>
       <div class="ho-nov-tools small"><a href="#" id="ho-all">Tick all</a> · <a href="#" id="ho-none">Untick all</a> · <span id="ho-nov-n"></span></div>
       <div class="ho-novs">${nov.map(novRow).join("")}</div>` : `<p class="muted" style="margin:0">There are no novices to move.</p>`)}
-    ${step(5, "Carry the committee forward", `<p class="small muted" style="margin:0">Prefilled with the current committee. Change whoever is leaving; empty = vacant. This year's committee is kept in the archive.</p>
-      <div id="ho-roster">${ed.html}</div>
-      <div class="callout">${I.info}<div>The <a href="#/handbook">handbook</a> carries over as it is${d.handbook_chars ? "" : " (it's empty at the moment)"}. A copy is saved in the archive. Yearly to-dos already come back by themselves.</div></div>`)}
     </div>
-    <div class="ho-go"><button class="btn primary" id="ho-go" ${done ? "disabled" : ""}>${I.repeat}Hand over to ${esc(pr.academic_year || "next year")}</button></div>`}
+    <div class="ho-go"><button class="btn primary" id="ho-go" ${blocked ? "disabled" : ""}>${I.repeat}${yearly ? `Hand over to ${esc(pr.academic_year || "next year")}` : `Move on to ${esc(nx.term)}`}</button></div>`}
+
+    <div class="section-title">Committee handover</div>
+    <section class="card card-pad ho-step">
+      <p class="small muted" style="margin:0">Usually in March. Change whoever is leaving; empty = vacant. The committee as it stands at the end of the year is kept in that season's archive.</p>
+      <div id="ho-roster">${ed.html}</div>
+      <div class="callout">${I.info}<div>The <a href="#/handbook">handbook</a> carries over as it is${d.handbook_chars ? "" : " (it's empty at the moment)"}. Termly and yearly to-dos come back by themselves.</div></div>
+      <div class="r" style="display:flex;justify-content:flex-end"><button class="btn primary" id="ho-cm">Save committee</button></div>
+    </section>
+
     ${d.archives.length ? `<div class="section-title">Past seasons</div>
       <div class="card table-wrap"><table class="t ho-past"><thead><tr><th>Season</th><th>Dates</th><th class="ho-when">Handed over</th><th></th></tr></thead><tbody>
       ${d.archives.map((a) => `<tr><td><b>${esc(a.academic_year)}</b></td><td>${a.season_start ? esc(fmtShort(a.season_start)) : "?"} – ${esc(fmtShort(a.season_end))}</td><td class="ho-when">${esc(utcStamp(a.created_at))}</td>
@@ -2542,8 +2557,12 @@ async function pageHandover() {
 
   $$("[data-lb]").forEach((b) => b.onclick = () => { S.statsArchive = +b.dataset.lb; go("stats"); });
   $$("[data-arch]").forEach((b) => b.onclick = () => openArchive(+b.dataset.arch));
-  if (d.not_started) return;
   ed.mount($("#ho-roster"));
+  $("#ho-cm").onclick = async () => {
+    if (!await confirmBox("Save the new committee?", "Committee members can manage the club; anyone removed loses the golden C.", "Save committee")) return;
+    try { await api("/api/committee/club-committee", { method: "PUT", body: { holders: ed.holders() } }); toast("Committee saved"); } catch (e) { fail(e); }
+  };
+  if (d.not_started) return;
   const novCount = () => { const n = $$("[data-nov]:checked").length; const el = $("#ho-nov-n"); if (el) el.textContent = `${n} of ${nov.length} ticked`; };
   novCount();
   $$("[data-nov]").forEach((c) => c.onchange = novCount);
@@ -2552,21 +2571,24 @@ async function pageHandover() {
 
   $("#ho-go").onclick = async () => {
     const body = {
-      academic_year: $("#ho-ay").value.trim(), season_start: $("#ho-season").value, term_start: $("#ho-term").value,
-      subs_cutoff: $("#ho-cut").value, reset_subs: $("#ho-subs").checked,
-      promote: $$("[data-nov]:checked").map((c) => +c.dataset.nov), holders: ed.holders(),
+      term_start: $("#ho-term").value, subs_cutoff: $("#ho-cut").value, reset_subs: $("#ho-subs").checked,
+      promote: $$("[data-nov]:checked").map((c) => +c.dataset.nov),
+      ...(yearly ? { academic_year: $("#ho-ay").value.trim(), season_start: $("#ho-season").value } : {}),
     };
-    if (!body.academic_year) return toast("Enter the new academic year", true);
-    if (!body.season_start) return toast("Pick when the new season starts", true);
-    if (body.term_start && dow(body.term_start) !== 6) return toast("Full Term starts on a Sunday (Sunday of 1st week)", true);
-    const lines = [`Archive <b>${esc(cur.academic_year)}</b> and switch to <b>${esc(body.academic_year)}</b>, Michaelmas, season from ${esc(fmtShort(body.season_start))}`,
-      body.reset_subs ? "Reset everyone's subs to Unpaid" : "Leave subs as they are",
-      `Move ${plural(body.promote.length, "novices")} to senior`, "Save the committee as entered"];
-    if (!await confirmBox(`Hand over to ${esc(body.academic_year)}?`, `<ul class="ho-confirm">${lines.map((l) => `<li>${l}</li>`).join("")}</ul>This can't be undone in one click, but the old season stays in the archive.`, "Hand over")) return;
+    if (yearly && !body.academic_year) return toast("Enter the new academic year", true);
+    if (yearly && !body.season_start) return toast("Pick when the new season starts", true);
+    if (!body.term_start) return toast("Pick when Full Term starts", true);
+    if (dow(body.term_start) !== 6) return toast("Full Term starts on a Sunday (Sunday of 1st week)", true);
+    const lines = [
+      ...(yearly ? [`Archive <b>${esc(cur.academic_year)}</b> and switch to <b>${esc(body.academic_year)}</b>, season from ${esc(fmtShort(body.season_start))}`] : []),
+      `Switch to <b>${esc(nx.term)}</b>, 1st week from ${esc(fmtShort(body.term_start))}`,
+      body.reset_subs ? (yearly ? "Reset everyone's subs to Unpaid" : `Reset ${esc(cur.current_term)} single-term subs to Unpaid`) : "Leave subs as they are",
+      `Move ${plural(body.promote.length, "novices")} to senior`];
+    if (!await confirmBox(yearly ? `Hand over to ${esc(body.academic_year)}?` : `Move on to ${esc(nx.term)}?`, `<ul class="ho-confirm">${lines.map((l) => `<li>${l}</li>`).join("")}</ul>This can't be undone in one click${yearly ? ", but the old season stays in the archive" : ""}.`, yearly ? "Hand over" : "Move on")) return;
     try {
       const r = await api("/api/committee/handover", { method: "POST", body });
       await reboot();
-      toast(`Welcome to ${r.settings.academic_year}! ${r.archived} is archived.`);
+      toast(r.yearly ? `Welcome to ${r.settings.academic_year}! ${r.archived} is archived.` : `Welcome to ${r.settings.current_term}!`);
       pageHandover();
     } catch (e) { fail(e); }
   };
@@ -2649,7 +2671,7 @@ async function pageTasks() {
     </div>
     ${shown.length ? `<div class="issue-list">${shown.map((t) => `<button class="card issue-row task-row ${t.status === "done" ? "done" : ""}" data-task="${t.id}">
         <div class="issue-main"><div class="issue-title">${esc(t.title)}</div>
-          <div class="o-sub">${t.owner ? `<span>${I.user}${esc(t.owner)}</span>` : `<span class="faint">No one assigned</span>`}${t.repeat_yearly ? `<span>${I.repeat}Every year</span>` : ""}${t.notes > 1 ? `<span>${t.notes} updates</span>` : ""}</div>
+          <div class="o-sub">${t.owner ? `<span>${I.user}${esc(t.owner)}</span>` : `<span class="faint">No one assigned</span>`}${t.repeat ? `<span>${I.repeat}${esc(d.repeats[t.repeat])}</span>` : ""}${t.notes > 1 ? `<span>${t.notes} updates</span>` : ""}</div>
           ${t.latest ? `<div class="task-latest small"><b>${esc(t.latest.author || "Update")}:</b> ${esc(t.latest.note)}</div>` : ""}</div>
         <div class="issue-chips">${t.priority ? `<span class="chip ${TASK_PRI[t.priority]}">${esc(d.priorities[t.priority])}</span>` : ""}${dueChip(t)}<span class="chip ${TASK_ST[t.status]}">${esc(d.statuses[t.status])}</span></div>
       </button>`).join("")}</div>`
@@ -2672,7 +2694,7 @@ async function openTask(id, d) {
       ${u.note ? `<div class="tl-note">${richText(u.note)}</div>` : ""}</div></div>`).join("");
   modal({
     title: esc(t.title), wide: true,
-    body: `<div class="issue-chips">${t.priority ? `<span class="chip ${TASK_PRI[t.priority]}">${esc(d.priorities[t.priority])} priority</span>` : ""}<span class="chip ${TASK_ST[t.status]}">${esc(st[t.status])}</span>${dueChip(t)}${t.repeat_yearly ? `<span class="chip">${I.repeat}Every year</span>` : ""}${t.owner ? `<span class="chip">${I.user}${esc(t.owner)}</span>` : ""}</div>
+    body: `<div class="issue-chips">${t.priority ? `<span class="chip ${TASK_PRI[t.priority]}">${esc(d.priorities[t.priority])} priority</span>` : ""}<span class="chip ${TASK_ST[t.status]}">${esc(st[t.status])}</span>${dueChip(t)}${t.repeat ? `<span class="chip">${I.repeat}${esc(d.repeats[t.repeat])}</span>` : ""}${t.owner ? `<span class="chip">${I.user}${esc(t.owner)}</span>` : ""}</div>
       ${incidentCallout(inc, true)}
       <div><div class="section-title" style="margin:4px 0 6px">Plan of action</div>${t.plan ? `<div class="issue-desc">${richText(t.plan)}</div>` : `<div class="faint small">No plan written yet.</div>`}</div>
       <div class="section-title" style="margin:6px 0 0">Updates</div>
@@ -2681,7 +2703,7 @@ async function openTask(id, d) {
         <div class="grid-2"><label class="field"><span>Status</span><select class="input" id="tu-st">${Object.entries(st).map(([k, l]) => `<option value="${k}" ${k === t.status ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
           <label class="field"><span>Your name</span><input class="input" id="tu-who" value="${esc(meName() || "")}"></label></div>
         <label class="field"><span>Update</span><textarea class="input" id="tu-note" rows="2" maxlength="4000" placeholder="e.g. Ordered, awaiting delivery"></textarea></label>
-        ${t.repeat_yearly && t.status !== "done" ? `<div class="small muted">${I.repeat} When this is marked done, next year's task is added automatically, due ${esc(fmtShort(t.due))} ${pd(t.due).getUTCFullYear() + 1}.</div>` : ""}
+        ${t.next_due && t.status !== "done" ? `<div class="small muted">${I.repeat} When this is marked done, next ${t.repeat === "term" ? "term" : "year"}'s task is added automatically, due ${esc(fmtShort(t.next_due))} ${pd(t.next_due).getUTCFullYear()}${t.repeat === "term" ? " (the same week of term)" : ""}.</div>` : ""}
       </div>`,
     foot: `<button class="btn danger" id="tu-del">Delete</button><button class="btn" id="tu-edit">Edit</button><button class="btn" id="tu-move" title="For problems with one boat">${I.boat}Move to boat issues</button><div class="r"><button class="btn" data-close>Close</button><button class="btn primary" id="tu-save">Save update</button></div>`,
     onMount: (m, close) => {
@@ -2690,7 +2712,7 @@ async function openTask(id, d) {
         if (!note && status === t.status) return toast("Write an update or change the status", true);
         try {
           const r = await api(`/api/committee/tasks/${id}/updates`, { method: "POST", body: { note, status: status !== t.status ? status : "", author: $("#tu-who", m).value.trim() || me4() } });
-          close(); toast(r.next_id ? "Done! Next year's task has been added" : "Update saved"); await rerender();
+          close(); toast(r.next_id ? `Done! Next ${t.repeat === "term" ? "term" : "year"}'s task has been added` : "Update saved"); await rerender();
           if (!r.next_id || status !== "done") openTask(id, d);
         } catch (e) { fail(e); }
       };
@@ -2707,7 +2729,7 @@ async function openTask(id, d) {
 async function editTask(t, d) {
   let roster = { holders: [], positions: [] };
   try { roster = await api("/api/club-committee"); } catch {}
-  const v = t || { title: "", priority: "", plan: "", owner: "", due: "", repeat_yearly: false };
+  const v = t || { title: "", priority: "", plan: "", owner: "", due: "", repeat: "" };
   let pri = v.priority;
   const who = [...new Set([...d.owners, ...roster.holders.map((h) => h.name), "Captains", "Whole committee"])].sort((a, b) => a.localeCompare(b));
   modal({
@@ -2716,16 +2738,17 @@ async function editTask(t, d) {
       <div class="grid-2"><div class="field"><span>Priority</span><div class="seg" id="te-pri">${[["high", "High"], ["medium", "Medium"], ["low", "Low"], ["", "None"]].map(([k, l]) => `<button type="button" data-v="${k}" class="${pri === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
         <label class="field"><span>Who's doing it</span><input class="input" id="te-owner" list="te-owners" maxlength="200" value="${esc(v.owner)}" placeholder="e.g. Sophie, or Captains"><datalist id="te-owners">${who.map((x) => `<option value="${esc(x)}">`).join("")}</datalist></label></div>
       <div class="grid-2"><label class="field"><span>Due date (optional)</span><input class="input" type="date" id="te-due" value="${esc(v.due)}"></label>
-        <div class="field"><span>&nbsp;</span><label class="check"><input type="checkbox" id="te-rep" ${v.repeat_yearly ? "checked" : ""}> Repeats every year <span class="faint small">(e.g. insurance, BR affiliation, safety audit)</span></label></div></div>
+        <label class="field"><span>Repeats</span><select class="input" id="te-rep">${Object.entries(d.repeats).map(([k, l]) => `<option value="${k}" ${v.repeat === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+          <span class="hint">Comes back when it's marked done. Every term: due the same week of next term (e.g. termly subs). Every year: e.g. insurance, BR affiliation, safety audit.</span></label></div>
       <label class="field"><span>Plan of action</span><textarea class="input" id="te-plan" rows="6" maxlength="8000" placeholder="Steps, contacts, links, costs…">${esc(v.plan)}</textarea></label>`,
     foot: `<div class="r"><button class="btn" id="te-cancel">Cancel</button><button class="btn primary" id="te-save">Save</button></div>`,
     onMount: (m, close) => {
       $$("#te-pri button", m).forEach((b) => b.onclick = () => { pri = b.dataset.v; $$("#te-pri button", m).forEach((x) => x.classList.toggle("on", x === b)); });
       $("#te-cancel", m).onclick = () => (t ? openTask(t.id, d) : close());
       $("#te-save", m).onclick = async () => {
-        const body = { title: $("#te-title", m).value.trim(), priority: pri, owner: $("#te-owner", m).value, due: $("#te-due", m).value, repeat_yearly: $("#te-rep", m).checked, plan: $("#te-plan", m).value };
+        const body = { title: $("#te-title", m).value.trim(), priority: pri, owner: $("#te-owner", m).value, due: $("#te-due", m).value, repeat: $("#te-rep", m).value, plan: $("#te-plan", m).value };
         if (!body.title) return toast("Give the task a title", true);
-        if (body.repeat_yearly && !body.due) return toast("A yearly task needs a due date", true);
+        if (body.repeat && !body.due) return toast("A repeating task needs a due date", true);
         try {
           const r = await api(t ? `/api/committee/tasks/${t.id}` : `/api/committee/tasks?author=${encodeURIComponent(me4())}`, { method: t ? "PUT" : "POST", body });
           close(); toast("Task saved"); await rerender(); openTask(t ? t.id : r.id, d);
