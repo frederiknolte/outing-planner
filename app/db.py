@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS assignments (
     UNIQUE(outing_id, seat),
     UNIQUE(outing_id, member_id)
 );
+CREATE INDEX IF NOT EXISTS idx_assignments_member ON assignments(member_id);   -- "my outings", calendar feed
 
 CREATE TABLE IF NOT EXISTS sub_requests (
     id INTEGER PRIMARY KEY,
@@ -77,7 +78,8 @@ CREATE TABLE IF NOT EXISTS sub_requests (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     resolved_at TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_subs_status ON sub_requests(status);
+DROP INDEX IF EXISTS idx_subs_status;                     -- replaced: lookups are always per outing
+CREATE INDEX IF NOT EXISTS idx_subs_outing ON sub_requests(outing_id, status);
 
 -- Change log for published crews and sub requests (see crewlog.py). Rowers only pick a name, so this
 -- records who did what and when, and lets the committee undo a bad edit.
@@ -293,6 +295,7 @@ CREATE TABLE IF NOT EXISTS race_crew_seats (
     member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
     PRIMARY KEY (crew_id, seat)
 );
+CREATE INDEX IF NOT EXISTS idx_race_crew_seats_member ON race_crew_seats(member_id);
 
 -- Year-end handover: a snapshot of each finished season (see handover.py)
 CREATE TABLE IF NOT EXISTS season_archives (

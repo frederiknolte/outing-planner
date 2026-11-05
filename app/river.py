@@ -23,6 +23,7 @@ import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from . import timeutil
 from .timeutil import to_minutes
 
 REACH = "isis"
@@ -34,7 +35,6 @@ IFFLEY_LOCK = "01865 777 277"
 OXFORD = (51.7520, -1.2577)  # lat, lon (east positive)
 FETCH_EVERY_S = 3600
 STALE_AFTER_S = 3 * 3600     # older than this: say the flag may be out of date
-WATER_DEFAULT_MIN = 90       # same default as the calendar feed
 
 # Flag key -> display info. Keys are our own; the API's status_text is mapped onto them.
 FLAGS = {
@@ -242,11 +242,7 @@ def term_info(settings: dict, d: date) -> dict:
 
 # ---------------------------------------------------------------- checks ----
 def interval(o: dict):
-    s = to_minutes(o.get("time") or "")
-    if s is None:
-        return None
-    e = to_minutes(o.get("end_time") or "")
-    return s, (e if e is not None and e > s else s + WATER_DEFAULT_MIN)
+    return timeutil.interval(o.get("time"), o.get("end_time"), o.get("kind") or "water")
 
 
 def _overlap(a, b) -> bool:

@@ -42,7 +42,7 @@ from pydantic import BaseModel, Field
 
 from . import db
 from .auth import require_member
-from .logic import TZ, seat_label
+from .logic import TZ, real_today, seat_name
 from .timeutil import to_minutes
 
 router = APIRouter()
@@ -248,24 +248,17 @@ def describe(o, boat: Optional[str] = None) -> str:
 
 
 def _seat(o, seat: int) -> str:
-    lab = seat_label(seat, o["capacity"], o["kind"])
-    if o["kind"] == "land":
-        return ""
-    return f"Seat {lab}" if lab.isdigit() else lab
+    return seat_name(seat, o["capacity"], o["kind"])
 
 
 def _boat_names(conn) -> dict:
     return {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM boats")}
 
 
-def _today() -> date:
-    return datetime.now(TZ).date()
-
-
 # -------------------------------------------------- crew changes (diff) ----
 def snapshot(conn, ids=None, start: Optional[str] = None, end: Optional[str] = None) -> dict:
     """Upcoming outings (by id list or date range) with who sits where, to compare before/after a change."""
-    where, params = ["date >= ?"], [_today().isoformat()]
+    where, params = ["date >= ?"], [real_today().isoformat()]
     if ids is not None:
         ids = list(ids)
         if not ids:

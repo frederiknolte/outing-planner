@@ -54,3 +54,18 @@ def normalize(text: str) -> tuple[str, str]:
 def to_minutes(hhmm: str) -> Optional[int]:
     p = parse_time(hhmm)
     return p[0][0] * 60 + p[0][1] if p else None
+
+
+# How long a session lasts when it has no (sensible) end time. Used by the calendar feed, autofill,
+# river-rule checks and boat usage, so they all agree.
+DEFAULT_MINUTES = {"water": 90, "land": 60}
+
+
+def interval(time: str, end_time: str = "", kind: str = "water") -> Optional[tuple[int, int]]:
+    """(start, end) in minutes after midnight, or None without a start time. A missing end, or one that
+    isn't after the start, means the default length for the kind of session."""
+    s = to_minutes(time or "")
+    if s is None:
+        return None
+    e = to_minutes(end_time or "")
+    return s, (e if e is not None and e > s else s + DEFAULT_MINUTES.get(kind, 60))

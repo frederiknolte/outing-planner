@@ -20,7 +20,8 @@ from pydantic import BaseModel, Field
 
 from . import db, terms
 from .auth import require_committee
-from .issues import SEVERITIES
+from .logic import add_months, real_today
+from .issues import SEVERITIES, create_issue
 
 router = APIRouter()
 
@@ -83,11 +84,7 @@ def _task_or_404(conn, task_id: int):
 
 
 def _next_year(d: str) -> str:
-    x = date.fromisoformat(d)
-    try:
-        return x.replace(year=x.year + 1).isoformat()
-    except ValueError:            # 29 February
-        return x.replace(year=x.year + 1, day=28).isoformat()
+    return add_months(date.fromisoformat(d), 12).isoformat()
 
 
 def next_due(t) -> str:
@@ -175,7 +172,7 @@ def task_update(task_id: int, b: UpdateIn, _: str = Depends(require_committee)):
             nxt = {"title": t["title"], "priority": t["priority"], "plan": t["plan"], "owner": t["owner"],
                    "due": due, "repeat": t["repeat"]}
             last = "term" if t["repeat"] == "term" else "year"
-            next_id = _insert(conn, nxt, who, f"Repeats every {last}. Last {last}'s was done {date.today().strftime('%d %b %Y')}.")
+            next_id = _insert(conn, nxt, who, f"Repeats every {last}. Last {last}'s was done {real_today().strftime('%d %b %Y')}.")
         return {"ok": True, "next_id": next_id}
 
 
@@ -198,12 +195,7 @@ def task_to_boat_issue(task_id: int, b: MoveIn, _: str = Depends(require_committ
         desc = "\n\n".join(x for x in [t["plan"], f"Who: {t['owner']}" if t["owner"] else ""] if x)
         status = {"open": "open", "in_progress": "in_progress", "waiting": "waiting", "done": "fixed"}[t["status"]]
         who = " ".join(b.author.split()) or "Committee"
-        cur = conn.execute("""INSERT INTO boat_issues(boat_id, title, description, severity, status, reported_by, created_at)
-                              VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                           (b.boat_id, t["title"][:150], desc[:4000], b.severity, status, who, t["created_at"]))
-        iid = cur.lastrowid
-        conn.execute("INSERT INTO issue_updates(issue_id, status, note, author, created_at) VALUES (?, 'open', '', ?, ?)",
-                     (iid, who, t["created_at"]))
+        iid = create_issue(conn, b.boat_id, t["title"], desc, b.severity, who, status, t["created_at"])
         for u in conn.execute("SELECT * FROM task_updates WHERE task_id = ? AND note != '' ORDER BY created_at, id", (task_id,)):
             conn.execute("INSERT INTO issue_updates(issue_id, status, note, author, created_at) VALUES (?, '', ?, ?, ?)",
                          (iid, u["note"], u["author"], u["created_at"]))

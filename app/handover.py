@@ -35,25 +35,20 @@ from pydantic import BaseModel, Field
 from . import db, terms
 from .auth import require_committee, require_member
 from .committee_roster import POSITIONS, roster
-from .logic import Rules
+from .logic import Rules, add_months
 from .stats import season_stats
 from .usage import boat_usage
 
 router = APIRouter()
 
 SETTINGS_ROLLED = ("academic_year", "current_term", "season_start", "term_start", "peak_end", "subs_cutoff")
-next_academic_year = terms.next_academic_year
 
 
 def _plus_year(iso: str) -> str:
     try:
-        d = date.fromisoformat(iso)
+        return add_months(date.fromisoformat(iso), 12).isoformat()
     except ValueError:
         return ""
-    try:
-        return d.replace(year=d.year + 1).isoformat()
-    except ValueError:                       # 29 February
-        return d.replace(year=d.year + 1, day=28).isoformat()
 
 
 def _subs_summary(conn, settings: dict) -> dict:

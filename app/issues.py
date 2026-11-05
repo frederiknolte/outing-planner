@@ -167,12 +167,19 @@ def issue_create(b: IssueIn, _: str = Depends(require_member)):
     with db.get_conn() as conn:
         if not conn.execute("SELECT 1 FROM boats WHERE id = ?", (b.boat_id,)).fetchone():
             raise HTTPException(400, "Pick a boat")
-        cur = conn.execute(
-            "INSERT INTO boat_issues(boat_id, title, description, severity, reported_by) VALUES (?, ?, ?, ?, ?)",
-            (b.boat_id, title, b.description.strip(), b.severity, who))
-        conn.execute("INSERT INTO issue_updates(issue_id, status, note, author) VALUES (?, 'open', '', ?)",
-                     (cur.lastrowid, who))
-        return {"id": cur.lastrowid}
+        return {"id": create_issue(conn, b.boat_id, title, b.description.strip(), b.severity, who)}
+
+
+def create_issue(conn, boat_id: int, title: str, description: str, severity: str, who: str,
+                 status: str = "open", created_at=None) -> int:
+    """Add a boat issue with its first ("open") history entry. Used by boat issues, incidents and to-dos."""
+    created = created_at or conn.execute("SELECT datetime('now')").fetchone()[0]
+    iid = conn.execute("""INSERT INTO boat_issues(boat_id, title, description, severity, status, reported_by, created_at)
+                          VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                       (boat_id, title[:150], description[:4000], severity, status, who, created)).lastrowid
+    conn.execute("INSERT INTO issue_updates(issue_id, status, note, author, created_at) VALUES (?, 'open', '', ?, ?)",
+                 (iid, who, created))
+    return iid
 
 
 @router.put("/api/issues/{issue_id}")

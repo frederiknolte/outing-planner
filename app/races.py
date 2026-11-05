@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 
 from . import db, push
 from .auth import require_committee, require_member
-from .logic import BOAT_TYPES, TERMS, TZ, effective_today, seat_label
+from .logic import BOAT_TYPES, TERMS, TZ, boat_seats, effective_today, seat_label, seat_name
 from .signup import SIDES, SQUADS
 
 router = APIRouter()
@@ -182,45 +182,34 @@ def _save_links(conn, race_id: int, links: list[tuple[str, str]]) -> None:
 
 
 def _load_crews(conn, race_ids=None) -> dict[int, list[dict]]:
-    """race id -> crews, each with its seats (cox first, then stroke down to bow)."""
-    where = f"WHERE c.race_id IN ({','.join('?' * len(race_ids))})" if race_ids is not None else ""
+    """race id -> crews. Each crew lists every seat of its boat (cox first, then stroke down to bow);
+    empty seats have member_id None (they need a sub)."""
+    where = f"WHERE race_id IN ({','.join('?' * len(race_ids))})" if race_ids is not None else ""
     crews, by_id = {}, {}
-    for c in conn.execute(f"SELECT c.* FROM race_crews c {where} ORDER BY c.race_id, c.position, c.id", list(race_ids or [])):
-        crew = {"id": c["id"], "name": c["name"], "boat_type": c["boat_type"], "notes": c["notes"], "seats": []}
+    for c in conn.execute(f"SELECT * FROM race_crews {where} ORDER BY race_id, position, id", list(race_ids or [])):
+        crew = {"id": c["id"], "name": c["name"], "boat_type": c["boat_type"], "notes": c["notes"], "seats": {}}
         crews.setdefault(c["race_id"], []).append(crew)
         by_id[c["id"]] = crew
     if by_id:
         for s in conn.execute(
                 f"""SELECT s.crew_id, s.seat, s.member_id, m.name FROM race_crew_seats s JOIN members m ON m.id = s.member_id
-                    WHERE s.crew_id IN ({','.join('?' * len(by_id))}) ORDER BY s.crew_id, s.seat""", list(by_id)):
-            crew = by_id[s["crew_id"]]
-            crew["seats"].append({"seat": s["seat"], "label": seat_label(s["seat"], BOAT_TYPES.get(crew["boat_type"], (8, 1))[0], "water"),
-                                  "member_id": s["member_id"], "name": s["name"]})
+                    WHERE s.crew_id IN ({','.join('?' * len(by_id))})""", list(by_id)):
+            by_id[s["crew_id"]]["seats"][s["seat"]] = (s["member_id"], s["name"])
         for crew in by_id.values():
-            crew["seats"].sort(key=lambda x: (x["seat"] != 0, -x["seat"]))
+            rowers, seats = boat_seats(crew["boat_type"])
+            taken = crew["seats"]
+            crew["seats"] = [{"seat": n, "label": seat_label(n, rowers, "water"),
+                              "member_id": taken.get(n, (None, ""))[0], "name": taken.get(n, (None, ""))[1]} for n in seats]
     return crews
 
 
 def week_races(conn, start: str, end: str, committee: bool) -> list[dict]:
-    """Races between start and end (inclusive) that have crews, for the schedule. Rowers only get published crews.
-    Each crew lists every seat, empty ones with member_id None (they need a sub)."""
+    """Races between start and end (inclusive) that have crews, for the schedule. Rowers only get published crews."""
     rows = conn.execute("SELECT id, title, date, city, time_slot, crews_published FROM races WHERE date BETWEEN ? AND ?"
                         + ("" if committee else " AND crews_published = 1") + " ORDER BY date, id", (start, end)).fetchall()
     crews = _load_crews(conn, [r["id"] for r in rows]) if rows else {}
-    out = []
-    for r in rows:
-        if not crews.get(r["id"]):
-            continue
-        full = []
-        for c in crews[r["id"]]:
-            rowers, coxed = BOAT_TYPES.get(c["boat_type"], (8, 1))
-            by = {x["seat"]: x for x in c["seats"]}
-            seats = ([0] if coxed else []) + list(range(rowers, 0, -1))
-            full.append({**c, "seats": [by.get(n) or {"seat": n, "label": seat_label(n, rowers, "water"), "member_id": None, "name": ""}
-                                        for n in seats]})
-        out.append({"id": r["id"], "title": r["title"], "date": r["date"], "city": r["city"], "time_slot": r["time_slot"],
-                    "published": bool(r["crews_published"]), "crews": full})
-    return out
+    return [{"id": r["id"], "title": r["title"], "date": r["date"], "city": r["city"], "time_slot": r["time_slot"],
+             "published": bool(r["crews_published"]), "crews": crews[r["id"]]} for r in rows if crews.get(r["id"])]
 
 
 @router.get("/api/races")
@@ -299,9 +288,9 @@ def race_delete(race_id: int, _: str = Depends(require_committee)):
         return {"ok": True}
 
 
-def _assignments(crews: list[dict]) -> dict[int, tuple[str, str]]:
-    """member id -> (crew name, seat label)"""
-    return {s["member_id"]: (c["name"], s["label"]) for c in crews for s in c["seats"]}
+def _assignments(crews) -> dict[int, tuple[str, str]]:
+    """member id -> (crew name, seat name), from (name, boat_type, {seat: member id}) triples."""
+    return {mid: (name, seat_name(seat, boat_seats(bt)[0], "water")) for name, bt, seats in crews for seat, mid in seats.items()}
 
 
 @router.put("/api/committee/races/{race_id}/crews")
@@ -315,10 +304,10 @@ def race_crews_save(race_id: int, b: CrewsIn, _: str = Depends(require_committee
         name = c.name.strip() or f"Crew {i + 1}"
         if c.boat_type not in BOAT_TYPES:
             raise HTTPException(400, f"{name}: unknown boat type")
-        rowers, coxed = BOAT_TYPES[c.boat_type]
+        valid = boat_seats(c.boat_type)[1]
         seats = {}
         for seat, mid in c.seats.items():
-            if not (0 if coxed else 1) <= seat <= rowers:
+            if seat not in valid:
                 continue                  # seat no longer in the boat (boat type changed)
             if mid in seen:
                 raise HTTPException(400, f"Someone is in two seats ({seen[mid]} and {name})")
@@ -333,8 +322,8 @@ def race_crews_save(race_id: int, b: CrewsIn, _: str = Depends(require_committee
             ok = {r["id"] for r in conn.execute(f"SELECT id FROM members WHERE id IN ({','.join('?' * len(seen))})", list(seen))}
             if len(ok) != len(seen):
                 raise HTTPException(400, "Unknown member in a crew")
-        old = _load_crews(conn, [race_id]).get(race_id, [])
-        before = _assignments(old) if race["crews_published"] else {}
+        before = _assignments((c["name"], c["boat_type"], {x["seat"]: x["member_id"] for x in c["seats"] if x["member_id"]})
+                              for c in _load_crews(conn, [race_id]).get(race_id, [])) if race["crews_published"] else {}
         conn.execute("DELETE FROM race_crews WHERE race_id = ?", (race_id,))
         for pos, (name, boat_type, notes, seats) in enumerate(clean):
             cid = conn.execute("INSERT INTO race_crews(race_id, position, name, boat_type, notes) VALUES (?, ?, ?, ?, ?)",
@@ -342,13 +331,13 @@ def race_crews_save(race_id: int, b: CrewsIn, _: str = Depends(require_committee
             for seat, mid in seats.items():
                 conn.execute("INSERT INTO race_crew_seats(crew_id, seat, member_id) VALUES (?, ?, ?)", (cid, seat, mid))
         conn.execute("UPDATE races SET crews_published = ? WHERE id = ?", (int(b.publish), race_id))
-        after = _assignments(_load_crews(conn, [race_id]).get(race_id, []))
+        after = _assignments((name, bt, seats) for name, bt, _, seats in clean)
     msgs = []
     if b.publish:
         # Tell people about a new or changed seat (and, once published, about being taken out).
         for mid, (crew, seat) in after.items():
             if before.get(mid) != (crew, seat):
-                msgs.append(push._msg([mid], f"Race crew · {race['title']}", f"You're in {crew} ({'coxing' if seat == 'Cox' else seat if seat in ('Stroke', 'Bow', 'Sculler') else 'seat ' + seat}).",
+                msgs.append(push._msg([mid], f"Race crew · {race['title']}", f"You're in {crew} ({seat}).",
                                       f"race-crew-{race_id}", "/#/races"))
         for mid in before.keys() - after.keys():
             msgs.append(push._msg([mid], f"Race crew · {race['title']}", "You're no longer in a crew for this race.",

@@ -24,9 +24,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from . import db, push
+from . import db, push, terms
 from .auth import require_committee, require_member
-from .issues import SEVERITIES
+from .issues import SEVERITIES, create_issue
 from .logic import effective_today
 from .timeutil import normalize as norm_time
 
@@ -97,9 +97,7 @@ def _iso(d: str, what: str, required: bool = True) -> str:
 
 def academic_year(d: str) -> str:
     """'2026-11-04' -> '2026-27'. The rowing year runs September to August."""
-    x = date.fromisoformat(d)
-    y = x.year if x.month >= 9 else x.year - 1
-    return f"{y}-{(y + 1) % 100:02d}"
+    return terms.ay_label(terms.ay_start_of(date.fromisoformat(d)))
 
 
 def _validate(conn, b: IncidentIn, today: date) -> dict:
@@ -147,10 +145,7 @@ def _open_boat_issue(conn, incident: dict, title: str, severity: str, who: str) 
         raise HTTPException(400, "Pick the boat that was damaged")
     title = _clean(title) or f"Damage from {KINDS[incident['kind']].lower()} on {date.fromisoformat(incident['date']).strftime('%d %b')}"
     desc = f"Logged with an incident ({KINDS[incident['kind']]}, {date.fromisoformat(incident['date']).strftime('%d %b %Y')}).\n\n{incident['description']}"
-    cur = conn.execute("INSERT INTO boat_issues(boat_id, title, description, severity, reported_by) VALUES (?, ?, ?, ?, ?)",
-                       (incident["boat_id"], title[:150], desc[:4000], severity, who))
-    conn.execute("INSERT INTO issue_updates(issue_id, status, note, author) VALUES (?, 'open', '', ?)", (cur.lastrowid, who))
-    return cur.lastrowid
+    return create_issue(conn, incident["boat_id"], title, desc, severity, who)
 
 
 def _committee_member_ids(conn) -> list[int]:
@@ -186,13 +181,14 @@ def outings_on(day: str, role: str = Depends(require_member)):
                 FROM outings o LEFT JOIN boats b ON b.id = o.boat_id
                 WHERE o.date = ? AND o.cancelled = 0 {"" if role == "committee" else "AND o.published = 1"}
                 ORDER BY o.kind = 'land', o.time""", (d,)).fetchall()
-        out = []
-        for o in rows:
-            crew = conn.execute("""SELECT a.seat, m.name FROM assignments a JOIN members m ON m.id = a.member_id
-                                   WHERE a.outing_id = ? ORDER BY a.seat = 0, a.seat DESC""", (o["id"],)).fetchall()
-            names = [f"{c['name']} (cox)" if o["kind"] == "water" and c["seat"] == 0 else c["name"] for c in crew]
-            out.append({**dict(o), "crew": names})
-        return {"outings": out}
+        crews = {}
+        if rows:
+            for c in conn.execute(f"""SELECT a.outing_id, a.seat, m.name FROM assignments a JOIN members m ON m.id = a.member_id
+                                      WHERE a.outing_id IN ({','.join('?' * len(rows))}) ORDER BY a.seat = 0, a.seat DESC""",
+                                  [o["id"] for o in rows]):
+                crews.setdefault(c["outing_id"], []).append(c)
+        return {"outings": [{**dict(o), "crew": [f"{c['name']} (cox)" if o["kind"] == "water" and c["seat"] == 0 else c["name"]
+                                                 for c in crews.get(o["id"], [])]} for o in rows]}
 
 
 @router.post("/api/incidents")

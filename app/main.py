@@ -21,7 +21,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import db
 from .auth import require_committee, require_member, role_of
 from . import privacy
-from . import presence, river, weather
+from . import presence, river, terms, weather
 from . import push
 from . import crewlog
 from .timeutil import normalize as norm_time, to_minutes
@@ -36,8 +36,8 @@ from .autofill import router as autofill_router
 from .usage import router as usage_router
 from .handover import router as handover_router
 from .incidents import router as incidents_router
-from .logic import (BOAT_TYPES, CANCEL_REASONS, SUBS_PLANS, TERMS, TZ, Rules, monday_of, outing_payload, real_today,
-                    seat_label, seat_list)
+from .logic import (BOAT_TYPES, CANCEL_REASONS, SUBS_PLANS, TERMS, TZ, Rules, add_months, effective_today, monday_of,
+                    outing_payload, real_today, seat_label, seat_list)
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 
@@ -117,8 +117,12 @@ _attempts: dict[str, list[float]] = defaultdict(list)
 
 def _rate_limited(ip: str) -> bool:
     now = time.time()
-    _attempts[ip] = [t for t in _attempts[ip] if now - t < 300]
-    return len(_attempts[ip]) >= 10
+    recent = [t for t in _attempts.get(ip, ()) if now - t < 300]
+    if recent:
+        _attempts[ip] = recent
+    else:
+        _attempts.pop(ip, None)   # don't keep an entry for every address ever seen
+    return len(recent) >= 10
 
 
 class LoginIn(BaseModel):
@@ -163,13 +167,23 @@ def me(request: Request):
 
 
 # ------------------------------------------------------------- helpers ----
+def parse_date(text: str, what: str = "") -> date:
+    """A YYYY-MM-DD date from a request, or a 400 error."""
+    try:
+        return date.fromisoformat(text)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"Bad date{': ' + what if what else ''}")
+
+
+def _check_dates(*values: str) -> None:
+    """400 if any non-empty value isn't a YYYY-MM-DD date."""
+    for v in values:
+        if v:
+            parse_date(v, v)
+
+
 def _week_start(start: Optional[str], rules: Rules) -> date:
-    if start:
-        try:
-            return monday_of(date.fromisoformat(start))
-        except ValueError:
-            raise HTTPException(400, "Bad date")
-    return monday_of(rules.today)
+    return monday_of(parse_date(start) if start else rules.today)
 
 
 def _boats(conn) -> dict:
@@ -402,7 +416,7 @@ def sub_candidates(sub_id: int, role: str = Depends(require_member)):
         r = conn.execute("SELECT s.*, o.kind, o.date, o.time FROM sub_requests s JOIN outings o ON o.id=s.outing_id WHERE s.id=?", (sub_id,)).fetchone()
         if not r:
             raise HTTPException(404, "Not found")
-        return {str(mid): _candidate_status(conn, rules, mid, r["outing_id"], r["seat"]) for mid in rules.members}
+        return _candidates(conn, rules, r["outing_id"], r["seat"])
 
 
 @app.get("/api/outings/{oid}/sub-candidates")
@@ -416,24 +430,41 @@ def seat_sub_candidates(oid: int, member_id: int, role: str = Depends(require_me
         a = conn.execute("SELECT seat FROM assignments WHERE outing_id=? AND member_id=?", (oid, member_id)).fetchone()
         if not a:
             raise HTTPException(400, "That person isn't in this outing")
-        return {str(mid): _candidate_status(conn, rules, mid, oid, a["seat"]) for mid in rules.members}
+        return _candidates(conn, rules, oid, a["seat"])
+
+
+def _busy_at(conn, o, exclude_id=None) -> set[int]:
+    """Members seated in another (not cancelled) outing at the same date and time as o."""
+    if not o["time"]:
+        return set()
+    return {r[0] for r in conn.execute(
+        """SELECT a.member_id FROM assignments a JOIN outings x ON x.id = a.outing_id
+           WHERE x.date = ? AND x.time = ? AND x.id != ? AND x.cancelled = 0""", (o["date"], o["time"], exclude_id or -1))}
+
+
+def _candidates(conn, rules: Rules, outing_id: int, seat: int, member_ids=None) -> dict:
+    """member id (as text) -> {ok, problems, note}: could they take this seat? Everyone, or just member_ids."""
+    o = conn.execute("SELECT * FROM outings WHERE id = ?", (outing_id,)).fetchone()
+    inside = {r[0] for r in conn.execute("SELECT member_id FROM assignments WHERE outing_id = ?", (outing_id,))}
+    busy = _busy_at(conn, o, outing_id)
+    d, key = date.fromisoformat(o["date"]), (o["date"], o["time"], o["id"])
+    out = {}
+    for mid in (member_ids if member_ids is not None else rules.members):
+        m = rules.members[mid]
+        elig = rules.check(mid, o["kind"], d, key)
+        problems = list(elig["reasons"])
+        if mid in inside:
+            problems.append("Already in this outing")
+        elif mid in busy:
+            problems.append("Booked in another outing at this time")
+        if o["kind"] == "water" and seat == 0 and not m["cox_status"]:
+            problems.append("Not a cox")
+        out[str(mid)] = {"ok": not problems, "problems": problems, "note": elig["note"]}
+    return out
 
 
 def _candidate_status(conn, rules: Rules, member_id: int, outing_id: int, seat: int) -> dict:
-    o = conn.execute("SELECT * FROM outings WHERE id = ?", (outing_id,)).fetchone()
-    m = rules.members[member_id]
-    elig = rules.check(member_id, o["kind"], date.fromisoformat(o["date"]), (o["date"], o["time"], o["id"]))
-    problems = list(elig["reasons"])
-    if conn.execute("SELECT 1 FROM assignments WHERE outing_id=? AND member_id=?", (outing_id, member_id)).fetchone():
-        problems.append("Already in this outing")
-    elif o["time"] and conn.execute(
-            """SELECT 1 FROM assignments a JOIN outings x ON x.id=a.outing_id
-               WHERE a.member_id=? AND x.date=? AND x.time=? AND x.id != ? AND x.cancelled = 0""",
-            (member_id, o["date"], o["time"], outing_id)).fetchone():
-        problems.append("Booked in another outing at this time")
-    if o["kind"] == "water" and seat == 0 and not m["cox_status"]:
-        problems.append("Not a cox")
-    return {"ok": not problems, "problems": problems, "note": elig["note"]}
+    return _candidates(conn, rules, outing_id, seat, [member_id])[str(member_id)]
 
 
 @app.post("/api/subs")
@@ -605,7 +636,7 @@ def boats_list(role: str = Depends(require_member)):
     # readable by everyone signed in (boat park view); edits are committee only
     with db.get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT * FROM boats ORDER BY status != 'available', seats DESC, name")]
-        today = Rules(conn).today.isoformat()
+        today = effective_today(db.get_settings(conn)).isoformat()
         usage = {r["boat_id"]: r["n"] for r in conn.execute(
             "SELECT boat_id, COUNT(*) n FROM outings WHERE boat_id IS NOT NULL AND cancelled = 0 GROUP BY boat_id")}
         nxt = {r["boat_id"]: r["d"] for r in conn.execute(
@@ -1038,18 +1069,11 @@ def coaching_stats(_: str = Depends(require_committee)):
         try:
             start = date.fromisoformat(s.get("season_start") or "").replace(day=1)
         except ValueError:
-            t = Rules(conn).today
-            start = date(t.year if t.month >= 9 else t.year - 1, 10, 1)
-        months = []
-        y, mo = start.year, start.month
-        for _ in range(12):
-            months.append(f"{y:04d}-{mo:02d}")
-            mo += 1
-            if mo > 12:
-                y, mo = y + 1, 1
+            start = date(terms.ay_start_of(effective_today(s)), 10, 1)
+        months = [add_months(start, i).strftime("%Y-%m") for i in range(12)]
         coaches = [dict(r) for r in conn.execute("SELECT * FROM coaches ORDER BY name")]
         outings = conn.execute("SELECT date, coach FROM outings WHERE coach != '' AND cancelled = 0 AND date >= ? AND date < ?",
-                               (start.isoformat(), f"{y:04d}-{mo:02d}-01")).fetchall()
+                               (start.isoformat(), add_months(start, 12).isoformat())).fetchall()
         rows, uncounted = [], defaultdict(int)
         counted_any = [False] * len(outings)
         for c in coaches:
@@ -1106,10 +1130,7 @@ def _save_outing(conn, rules: Rules, oid: Optional[int], b: OutingIn, msgs: Opti
     crew_before = crewlog.state(conn, oid)
     if b.kind not in ("water", "land"):
         raise HTTPException(400, "Kind must be water or land")
-    try:
-        date.fromisoformat(b.date)
-    except ValueError:
-        raise HTTPException(400, "Bad date")
+    parse_date(b.date)
     cap, coxed = b.capacity, b.coxed
     if b.kind == "water":
         if b.boat_id:
@@ -1240,17 +1261,10 @@ def candidates(b: CandidatesIn, _: str = Depends(require_committee)):
     """Eligibility of every member for a (possibly unsaved) outing — powers the seat picker."""
     with db.get_conn() as conn:
         rules = Rules(conn)
-        try:
-            d = date.fromisoformat(b.date)
-        except ValueError:
-            raise HTTPException(400, "Bad date")
+        d = parse_date(b.date)
         b.time = norm_time(b.time)[0]
         key = (b.date, b.time, b.outing_id or 10**12)
-        busy = set()
-        if b.time:
-            busy = {r["member_id"] for r in conn.execute(
-                """SELECT a.member_id FROM assignments a JOIN outings o ON o.id=a.outing_id
-                   WHERE o.date=? AND o.time=? AND o.id != ?""", (b.date, b.time, b.outing_id or -1))}
+        busy = _busy_at(conn, {"date": b.date, "time": b.time}, b.outing_id)
         same_day = defaultdict(int)
         for r in conn.execute(
                 """SELECT a.member_id FROM assignments a JOIN outings o ON o.id=a.outing_id
@@ -1276,7 +1290,7 @@ class WeekIn(BaseModel):
 
 @app.post("/api/committee/week/publish")
 def week_publish(b: WeekIn, _: str = Depends(require_committee)):
-    ws = monday_of(date.fromisoformat(b.start))
+    ws = monday_of(parse_date(b.start))
     we = (ws + timedelta(days=6)).isoformat()
     with db.get_conn() as conn:
         before = push.snapshot(conn, start=ws.isoformat(), end=we)
@@ -1295,7 +1309,7 @@ class CopyWeekIn(BaseModel):
 
 @app.post("/api/committee/week/copy")
 def week_copy(b: CopyWeekIn, _: str = Depends(require_committee)):
-    src, dst = monday_of(date.fromisoformat(b.source)), monday_of(date.fromisoformat(b.target))
+    src, dst = monday_of(parse_date(b.source)), monday_of(parse_date(b.target))
     if src == dst:
         raise HTTPException(400, "Source and target week are the same")
     delta = dst - src
@@ -1342,7 +1356,7 @@ def outing_weather(outing_id: int, role: str = Depends(require_member)):
             raise HTTPException(404, "Session not found")
         o = dict(o)
         place = conn.execute("SELECT lat, lon FROM places WHERE name = ? COLLATE NOCASE", (o.get("location") or "",)).fetchone()
-        today = Rules(conn).today
+        today = effective_today(db.get_settings(conn))
     # The (possibly slow) fetch happens outside the database connection.
     return weather.for_outing(o, dict(place) if place else None, today)
 
@@ -1376,10 +1390,7 @@ class RiverCheckIn(BaseModel):
 @app.post("/api/committee/river-check")
 def river_check(b: RiverCheckIn, _: str = Depends(require_committee)):
     """River-rule warnings for an outing being edited (not saved yet)."""
-    try:
-        date.fromisoformat(b.date)
-    except ValueError:
-        raise HTTPException(400, "Bad date")
+    parse_date(b.date)
     with db.get_conn() as conn:
         rules = Rules(conn)
         boat = dict(r) if b.boat_id and (r := conn.execute("SELECT * FROM boats WHERE id=?", (b.boat_id,)).fetchone()) else None
@@ -1403,12 +1414,7 @@ class RiverSettingsIn(BaseModel):
 
 @app.put("/api/committee/river-settings")
 def river_settings(b: RiverSettingsIn, _: str = Depends(require_committee)):
-    for v in (b.term_start, b.peak_end):
-        if v:
-            try:
-                date.fromisoformat(v)
-            except ValueError:
-                raise HTTPException(400, f"Bad date: {v}")
+    _check_dates(b.term_start, b.peak_end)
     if b.term_start and date.fromisoformat(b.term_start).weekday() != 6:
         raise HTTPException(400, "Full Term starts on a Sunday (Sunday of 1st week)")
     with db.get_conn() as conn:
@@ -1464,12 +1470,7 @@ def settings_get(_: str = Depends(require_committee)):
 def settings_put(b: SettingsIn, _: str = Depends(require_committee)):
     if b.current_term not in TERMS:
         raise HTTPException(400, "Bad term")
-    for v in (b.subs_cutoff, b.today_override, b.season_start):
-        if v:
-            try:
-                date.fromisoformat(v)
-            except ValueError:
-                raise HTTPException(400, f"Bad date: {v}")
+    _check_dates(b.subs_cutoff, b.today_override, b.season_start)
     if b.phone_mode not in ("required", "optional", "off"):
         raise HTTPException(400, "Bad phone setting")
     with db.get_conn() as conn:

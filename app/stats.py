@@ -11,7 +11,7 @@ from itertools import combinations
 
 from fastapi import APIRouter, Depends
 
-from . import db
+from . import db, terms
 from .auth import require_member
 from .logic import CANCEL_REASONS, Rules, monday_of, outing_status
 
@@ -27,8 +27,7 @@ def _season_start(rules: Rules) -> date:
     try:
         return date.fromisoformat(rules.settings.get("season_start") or "")
     except ValueError:
-        t = rules.today
-        return date(t.year if t.month >= 9 else t.year - 1, 10, 1)
+        return date(terms.ay_start_of(rules.today), 10, 1)
 
 
 def _term_start(rules: Rules, season: date) -> date:

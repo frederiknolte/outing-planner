@@ -62,24 +62,17 @@ from . import crewlog, db, push
 from .auth import require_committee
 from .logic import Rules, monday_of, seat_label, seat_list
 from .signup import availability_for_outing
-from .timeutil import to_minutes
+from .timeutil import interval
 
 router = APIRouter()
 
-DEFAULT_LENGTH = {"water": 90, "land": 60}  # minutes, when a session has no end time (as in the calendar feed)
 ROWS = ("rower", "both")
 COXES = ("cox", "both")
 
 
 # ------------------------------------------------------------- helpers ----
 def _interval(o: dict) -> Optional[tuple[int, int]]:
-    s = to_minutes(o["time"]) if o["time"] else None
-    if s is None:
-        return None
-    e = to_minutes(o["end_time"]) if o.get("end_time") else None
-    if e is None or e <= s:
-        e = s + DEFAULT_LENGTH.get(o["kind"], 60)
-    return s, e
+    return interval(o["time"], o.get("end_time"), o["kind"])
 
 
 def _overlap(a: dict, b: dict) -> bool:

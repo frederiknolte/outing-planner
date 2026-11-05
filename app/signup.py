@@ -106,16 +106,16 @@ def week_counts(conn, ws: str, exclude_outing: Optional[int] = None) -> dict:
 def signup_forms(role: str = Depends(require_member)):
     """Open sign-up weeks (current or future) with their slots."""
     with db.get_conn() as conn:
-        today = effective_today(db.get_settings(conn))
+        s = db.get_settings(conn)
+        today = effective_today(s)
         this_week = monday_of(today).isoformat()
+        places = {r["name"].lower(): dict(r) for r in conn.execute("SELECT * FROM places")}
         weeks = []
         for w in conn.execute("SELECT * FROM signup_weeks WHERE open = 1 AND week_start >= ? ORDER BY week_start",
                               (this_week,)):
-            places = {r["name"].lower(): dict(r) for r in conn.execute("SELECT * FROM places")}
             slots = [{**s, "maps_url": maps_url(places.get((s["location"] or "").strip().lower()))}
                      for s in _slots(conn, w["week_start"]) if s["date"] >= today.isoformat()]
             weeks.append({"week_start": w["week_start"], "note": w["note"], "slots": slots})
-        s = db.get_settings(conn)
         days = int(s.get("phone_retention_days") or 0)
         return {"weeks": weeks, "colleges": COLLEGES, "roles": ROLES, "sides": SIDES, "squads": SQUADS, "slot_kinds": SLOT_KINDS,
                 "phone_mode": privacy.phone_mode(s), "phone_retention_days": days}

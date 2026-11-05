@@ -20,11 +20,12 @@ from . import db
 from .auth import require_committee, require_member
 from .logic import Rules
 from .stats import _season_start, _term_start
+from . import timeutil
 from .timeutil import to_minutes
 
 router = APIRouter()
 
-DEFAULT_MINUTES = 90
+DEFAULT_MINUTES = timeutil.DEFAULT_MINUTES["water"]
 IDLE_DAYS = 30          # an in-service boat unused for this long is flagged as idle
 PERIODS = ("season", "term", "30d", "all")
 

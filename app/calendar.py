@@ -19,12 +19,13 @@ from fastapi.responses import Response
 
 from . import db
 from .auth import require_member
-from .logic import BOAT_TYPES, CANCEL_REASONS, TZ, real_today, seat_label
-from .timeutil import parse_time
+from .logic import CANCEL_REASONS, TZ, boat_seats, real_today, seat_label, seat_name
+from .races import _load_crews
+from .timeutil import DEFAULT_MINUTES, parse_time
 
 router = APIRouter()
 
-DURATION = {"water": timedelta(minutes=90), "land": timedelta(minutes=60)}
+RACE_HOURS = 3   # a race with only a start time
 HISTORY_DAYS = 60
 
 
@@ -52,6 +53,25 @@ def _fold(line: str) -> str:
 def _utc(d: date, hm: tuple[int, int]) -> str:
     local = datetime(d.year, d.month, d.day, hm[0], hm[1], tzinfo=TZ)
     return local.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _when(d: date, time_text: str, end_text: str, default: timedelta) -> list[str]:
+    """DTSTART/DTEND: timed if time_text reads as a time (ending at end_text, the end of a "09:00-13:00" range,
+    or after `default`), otherwise all day. An empty list means all day."""
+    t = parse_time(time_text)
+    if not t:
+        return []
+    t_end = parse_time(end_text) if end_text else None
+    start, end = t[0], (t_end[0] if t_end else t[1])
+    sdt = datetime(d.year, d.month, d.day, *start)
+    edt = datetime(d.year, d.month, d.day, *end) if end else sdt + default
+    if edt <= sdt:
+        edt = sdt + default
+    return [f"DTSTART:{_utc(d, start)}", f"DTEND:{_utc(edt.date(), (edt.hour, edt.minute))}"]
+
+
+def _all_day(d: date) -> list[str]:
+    return [f"DTSTART;VALUE=DATE:{d.strftime('%Y%m%d')}", f"DTEND;VALUE=DATE:{(d + timedelta(days=1)).strftime('%Y%m%d')}"]
 
 
 def build_feed(conn, member: dict, base_url: str) -> str:
@@ -96,8 +116,7 @@ def build_feed(conn, member: dict, base_url: str) -> str:
         d = date.fromisoformat(o["date"])
         kind = "Water outing" if o["kind"] == "water" else "Land training"
         if why == "seat":
-            role = seat_label(o["my_seat"], o["capacity"], o["kind"])
-            role_txt = (role if not role.isdigit() else f"Seat {role}") if o["kind"] == "water" else "Booked"
+            role_txt = seat_name(o["my_seat"], o["capacity"], o["kind"]) or "Booked"
         else:
             role_txt = "Coach / bankrider" if o["kind"] == "water" else "Coach"
         summary = f"{o['title'] or kind} ({role_txt})" if o["title"] else f"{kind} ({role_txt})"
@@ -125,21 +144,12 @@ def build_feed(conn, member: dict, base_url: str) -> str:
             desc += ["", "You've asked for a sub. This stays in your calendar until someone takes your seat."]
         desc += ["", f"Schedule: {base_url.rstrip('/')}/#/schedule"]
 
-        t = parse_time(o["time"])
-        t_end = parse_time(o["end_time"]) if o["end_time"] else None
         ev = ["BEGIN:VEVENT", f"UID:outing-{oid}-m{member['id']}@{host}", f"DTSTAMP:{now}"]
-        if t:
-            start = t[0]
-            end = t_end[0] if t_end else t[1]
-            sdt = datetime(d.year, d.month, d.day, *start)
-            edt = datetime(d.year, d.month, d.day, *end) if end else sdt + DURATION[o["kind"]]
-            if edt <= sdt:
-                edt = sdt + DURATION[o["kind"]]
-            ev += [f"DTSTART:{_utc(d, start)}", f"DTEND:{_utc(edt.date(), (edt.hour, edt.minute))}"]
-        else:
-            ev += [f"DTSTART;VALUE=DATE:{d.strftime('%Y%m%d')}",
-                   f"DTEND;VALUE=DATE:{(d + timedelta(days=1)).strftime('%Y%m%d')}"]
+        when = _when(d, o["time"], o["end_time"], timedelta(minutes=DEFAULT_MINUTES.get(o["kind"], 60)))
+        if not when:
+            when = _all_day(d)
             desc.insert(1, "Time to be confirmed")
+        ev += when
         ev += [f"SUMMARY:{_esc(summary)}", f"DESCRIPTION:{_esc(chr(10).join(desc))}"]
         if o["location"]:
             ev += _location_lines(o["location"], places.get(o["location"].strip().lower()))
@@ -154,47 +164,31 @@ def build_feed(conn, member: dict, base_url: str) -> str:
 def _race_events(conn, member: dict, club: str, since: str, base_url: str, host: str, now: str, places: dict) -> list[str]:
     """One event per race where they're in a published crew, with the whole crew in the description.
     Timed if the race's time slot reads as a time ("09:00-13:00"), otherwise all day."""
+    races = {r["id"]: r for r in conn.execute(
+        """SELECT DISTINCT r.* FROM race_crew_seats s JOIN race_crews c ON c.id = s.crew_id JOIN races r ON r.id = c.race_id
+           WHERE s.member_id = ? AND r.crews_published = 1 AND r.date >= ? ORDER BY r.date""", (member["id"], since))}
     lines = []
-    rows = conn.execute(
-        """SELECT r.*, c.id AS crew_id, c.name AS crew_name, c.boat_type, c.notes AS crew_notes, s.seat AS my_seat
-           FROM race_crew_seats s JOIN race_crews c ON c.id = s.crew_id JOIN races r ON r.id = c.race_id
-           WHERE s.member_id = ? AND r.crews_published = 1 AND r.date >= ? ORDER BY r.date""", (member["id"], since)).fetchall()
-    for r in rows:
-        rowers = BOAT_TYPES.get(r["boat_type"], (8, 1))[0]
-        seat = seat_label(r["my_seat"], rowers, "water")
-        crew = conn.execute("""SELECT s.seat, m.name FROM race_crew_seats s JOIN members m ON m.id = s.member_id
-                               WHERE s.crew_id = ?""", (r["crew_id"],)).fetchall()
-        taken = {x["seat"]: x["name"] for x in crew}
-        seats = ([0] if BOAT_TYPES.get(r["boat_type"], (8, 1))[1] else []) + list(range(rowers, 0, -1))
-        desc = [f"{club} · Race", f"Crew: {r['crew_name']} ({r['boat_type']})", ""]
-        desc += [f"  {seat_label(n, rowers, 'water')}: {taken.get(n, 'Sub needed')}" for n in seats]
-        if r["crew_notes"]:
-            desc += ["", r["crew_notes"]]
-        if r["notes"]:
-            desc += ["", r["notes"]]
-        desc += ["", f"Races: {base_url.rstrip('/')}/#/races"]
-        d = date.fromisoformat(r["date"])
-        ev = ["BEGIN:VEVENT", f"UID:race-{r['id']}-m{member['id']}@{host}", f"DTSTAMP:{now}"]
-        t = parse_time(r["time_slot"])
-        if t:
-            start, end = t
-            sdt = datetime(d.year, d.month, d.day, *start)
-            edt = datetime(d.year, d.month, d.day, *end) if end else sdt + timedelta(hours=3)
-            if edt <= sdt:
-                edt = sdt + timedelta(hours=3)
-            ev += [f"DTSTART:{_utc(d, start)}", f"DTEND:{_utc(edt.date(), (edt.hour, edt.minute))}"]
-        else:
-            ev += [f"DTSTART;VALUE=DATE:{d.strftime('%Y%m%d')}", f"DTEND;VALUE=DATE:{(d + timedelta(days=1)).strftime('%Y%m%d')}"]
-            if r["time_slot"]:
-                desc.insert(1, f"Time: {r['time_slot']}")
-        role = seat if not seat.isdigit() else f"Seat {seat}"
-        summary = f"{r['title']} – {r['crew_name']} ({role})"
-        ev += [f"SUMMARY:{_esc(summary)}",
-               f"DESCRIPTION:{_esc(chr(10).join(desc))}"]
-        if r["city"]:
-            ev += _location_lines(r["city"], places.get(r["city"].strip().lower()))
-        ev += ["STATUS:CONFIRMED", "TRANSP:OPAQUE", "END:VEVENT"]
-        lines += ev
+    for rid, crews in _load_crews(conn, list(races)).items() if races else ():
+        r = races[rid]
+        for c in crews:
+            mine = next((x for x in c["seats"] if x["member_id"] == member["id"]), None)
+            if not mine:
+                continue
+            desc = [f"{club} · Race", f"Crew: {c['name']} ({c['boat_type']})", ""]
+            desc += [f"  {x['label']}: {x['name'] or 'Sub needed'}" for x in c["seats"]]
+            desc += [x for note in (c["notes"], r["notes"]) if note for x in ("", note)]
+            desc += ["", f"Races: {base_url.rstrip('/')}/#/races"]
+            d = date.fromisoformat(r["date"])
+            when = _when(d, r["time_slot"], "", timedelta(hours=RACE_HOURS))
+            if not when:
+                when = _all_day(d)
+                if r["time_slot"]:
+                    desc.insert(1, f"Time: {r['time_slot']}")
+            summary = f"{r['title']} – {c['name']} ({seat_name(mine['seat'], boat_seats(c['boat_type'])[0], 'water')})"
+            lines += ["BEGIN:VEVENT", f"UID:race-{rid}-m{member['id']}@{host}", f"DTSTAMP:{now}", *when,
+                      f"SUMMARY:{_esc(summary)}", f"DESCRIPTION:{_esc(chr(10).join(desc))}",
+                      *(_location_lines(r["city"], places.get(r["city"].strip().lower())) if r["city"] else []),
+                      "STATUS:CONFIRMED", "TRANSP:OPAQUE", "END:VEVENT"]
     return lines
 
 

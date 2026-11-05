@@ -38,6 +38,11 @@ def ay_label(y: int) -> str:
     return f"{y}-{(y + 1) % 100:02d}"
 
 
+def ay_start_of(d) -> int:
+    """The academic (rowing) year a date falls in, by its start year. The year runs September to August."""
+    return d.year if d.month >= 9 else d.year - 1
+
+
 def next_academic_year(ay: str) -> str:
     """'2026-27' -> '2027-28'; '' if it can't be read."""
     y = ay_start_year(ay)

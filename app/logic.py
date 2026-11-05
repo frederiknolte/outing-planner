@@ -116,6 +116,20 @@ def seat_list(kind: str, capacity: int, coxed: bool) -> list[int]:
     return ([0] if coxed else []) + seats
 
 
+def seat_name(seat: int, capacity: int, kind: str) -> str:
+    """How a seat reads in messages: "Cox", "Stroke", "Seat 3" ('' for land sessions, which have no seats)."""
+    if kind == "land":
+        return ""
+    lab = seat_label(seat, capacity, kind)
+    return f"Seat {lab}" if lab.isdigit() else lab
+
+
+def boat_seats(boat_type: str) -> tuple[int, list[int]]:
+    """(rowers, seats in display order) for a boat type, e.g. "4+" -> (4, [0, 4, 3, 2, 1])."""
+    rowers, coxed = BOAT_TYPES.get(boat_type, BOAT_TYPES["Other"])
+    return rowers, seat_list("water", rowers, bool(coxed))
+
+
 class Rules:
     """Loads everything once per request and answers eligibility questions."""
 
