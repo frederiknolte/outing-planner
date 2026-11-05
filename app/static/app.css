@@ -863,9 +863,15 @@ button.race-person:hover { border-color: var(--accent); }
 .crew-log li.undone .chip { text-decoration: none; display: inline-block; }
 .crew-log .btn { flex: none; }
 
-.race-window { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 6px 0 0; }
-.race-window dt { color: var(--text-2); }
-.race-window dd { margin: 0; font-weight: 600; white-space: nowrap; }
+.race-window { display: flex; align-items: center; gap: 6px; color: var(--text-2); }
+.race-window svg { width: 14px; height: 14px; flex: none; opacity: .7; }
+.race-window.soon b { color: var(--warn); }
+.race-dates { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; font-size: 14px; }
+.race-dates dt { color: var(--text-2); }
+.race-dates dd { margin: 0; font-weight: 600; }
+.race-dates dd.faint { font-weight: 400; }
+button.race-title { border: 0; background: none; padding: 0; font: inherit; font-weight: 700; font-size: 15.5px; color: var(--text); text-align: left; cursor: pointer; }
+button.race-title:hover { color: var(--accent); }
 .race-banner { display: flex; align-items: center; gap: 12px; max-width: 1400px; margin: 12px auto 0; padding: 10px 14px; border-radius: 12px;
   background: var(--surface); border: 1px solid var(--border); border-left: 6px solid var(--warn, #d9a400); }
 .race-banner.urgent { border-left-color: var(--bad, #d33); }
@@ -893,3 +899,40 @@ button.race-person:hover { border-color: var(--accent); }
 .oe-subs > div { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .oe-subs > div > span { flex: 1; min-width: 0; }
 .oe-subs svg { width: 14px; height: 14px; flex: none; }
+
+/* Race crews: on the card (laid out like the schedule's boats), and the committee's crew builder */
+.race.has-crews { grid-column: 1 / -1; }
+.race-crews-sec { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
+.race-crews-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.race-crews-h .btn { margin-left: auto; }
+.race-crews { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.race-boat { border: 1px solid var(--border); border-radius: 12px; padding: 10px; min-width: 0; background: var(--surface); }
+.rb-top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.rb-top b { overflow-wrap: anywhere; }
+.rb-top .chip { margin-left: auto; }
+.seat.subneed { background: var(--warn-soft) !important; }
+.seat.subneed .sn { color: var(--warn); font-style: normal; font-weight: 600; }
+.race-mine { display: flex; align-items: flex-start; gap: 6px; color: var(--accent); }
+.race-mine svg { margin-top: 2px; }
+.race-mine svg { width: 14px; height: 14px; flex: none; }
+.race-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.race-avail { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex: 1; min-width: 0; border: 0; background: none; padding: 4px 0; font: inherit; font-size: 13px; color: var(--text-2); cursor: pointer; text-align: left; }
+.race-avail:hover .rc-see { color: var(--accent); }
+.rc-n b { font-size: 15px; }
+.rc-n.ok b { color: var(--ok); }
+.rc-n.warn b { color: var(--warn); }
+.rc-n.bad b { color: var(--bad); }
+.rc-see { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; font-weight: 600; color: var(--text-3); }
+.rc-see svg { width: 14px; height: 14px; }
+.rcb-list { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.rcb-auto { display: flex; flex-direction: column; gap: 4px; padding: 10px; border-radius: 12px; background: var(--surface-2); border: 1px dashed var(--border-strong); }
+.rcb-auto-row { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
+.rcb-auto-row select { width: auto; }
+#rcb-crews { display: flex; flex-direction: column; gap: 12px; }
+.rcb { border: 1px solid var(--border); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 8px; transition: border-color .12s, box-shadow .12s; }
+.rcb.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.rcb-head { display: grid; grid-template-columns: minmax(0, 1fr) 90px auto auto; gap: 8px; align-items: center; }
+.rcb .seat-editor { grid-template-columns: 1fr; grid-auto-flow: row; grid-template-rows: none; gap: 6px; }
+.rcb .se-row { grid-template-columns: 78px 1fr; }
+.rcb .se-status { margin-left: 86px; }
+@media (max-width: 640px) { .rcb .se-row { grid-template-columns: 62px 1fr; } .rcb .se-status { margin-left: 70px; } }

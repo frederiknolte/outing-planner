@@ -276,6 +276,24 @@ CREATE TABLE IF NOT EXISTS race_responses (
     PRIMARY KEY (race_id, member_id)
 );
 
+-- Race crews: the committee forms crews from the race responses (draft until races.crews_published)
+CREATE TABLE IF NOT EXISTS race_crews (
+    id INTEGER PRIMARY KEY,
+    race_id INTEGER NOT NULL REFERENCES races(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    name TEXT NOT NULL DEFAULT '',                 -- e.g. "W1", "Novice M"
+    boat_type TEXT NOT NULL DEFAULT '8+',          -- one of logic.BOAT_TYPES
+    notes TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_race_crews_race ON race_crews(race_id);
+
+CREATE TABLE IF NOT EXISTS race_crew_seats (
+    crew_id INTEGER NOT NULL REFERENCES race_crews(id) ON DELETE CASCADE,
+    seat INTEGER NOT NULL,                         -- 0 = cox, 1 = bow ... n = stroke
+    member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    PRIMARY KEY (crew_id, seat)
+);
+
 -- Year-end handover: a snapshot of each finished season (see handover.py)
 CREATE TABLE IF NOT EXISTS season_archives (
     id INTEGER PRIMARY KEY,
@@ -323,6 +341,7 @@ MIGRATIONS = {
         "opens_at": "TEXT NOT NULL DEFAULT ''",                     # when entries open, local "YYYY-MM-DDTHH:MM" or ''
         "closes_at": "TEXT NOT NULL DEFAULT ''",                    # when entries close, same format
         "scratch_date": "TEXT NOT NULL DEFAULT ''",                 # scratch (withdraw) deadline, YYYY-MM-DD[THH:MM] or ''
+        "crews_published": "INTEGER NOT NULL DEFAULT 0",            # rowers can see the race's crews
     },
     "race_responses": {
         "squad": "TEXT NOT NULL DEFAULT ''",                        # open | women

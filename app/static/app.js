@@ -3456,50 +3456,361 @@ function raceWhoModal(r, data, filter) {
 }
 
 const fmtDT = (t) => { const [d, h] = t.split("T"), x = pd(d); return `${DAY[dow(d)]} ${x.getUTCDate()} ${MON[x.getUTCMonth()]}, ${h}`; };
-function raceWindow(r) {
-  const rows = [
-    r.opens_at && ["Entries open", fmtDT(r.opens_at)],
-    r.closes_at && ["Entries close", fmtDT(r.closes_at)],
-    r.scratch_date && ["Scratch by", r.scratch_date.includes("T") ? fmtDT(r.scratch_date) : fmtDT(r.scratch_date + "T").slice(0, -2)],
+/* Entry deadlines: [label, "YYYY-MM-DDTHH:MM" to compare, text to show]. A scratch date without a time counts until the end of that day. */
+function raceDeadlines(r) {
+  return [
+    r.opens_at && ["Entries open", r.opens_at, fmtDT(r.opens_at)],
+    r.closes_at && ["Entries close", r.closes_at, fmtDT(r.closes_at)],
+    r.scratch_date && ["Scratch by", r.scratch_date.includes("T") ? r.scratch_date : r.scratch_date + "T23:59",
+      r.scratch_date.includes("T") ? fmtDT(r.scratch_date) : fmtDT(r.scratch_date + "T").slice(0, -2)],
   ].filter(Boolean);
-  return rows.length ? `<dl class="small race-window">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : "";
+}
+const nowLocal = () => { const d = new Date(), p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+/* The card shows only the next deadline that hasn't passed; the details popup shows them all. */
+function raceWindow(r) {
+  if (r.past) return "";
+  const now = nowLocal(), next = raceDeadlines(r).filter(([, t]) => t >= now).sort((x, y) => x[1].localeCompare(y[1]))[0];
+  if (!next) return "";
+  const days = Math.round((pd(next[1].split("T")[0]) - pd(now.split("T")[0])) / 864e5);
+  const when = days === 0 ? "today" : days === 1 ? "tomorrow" : days < 14 ? `in ${days} days` : "";
+  return `<div class="small race-window ${days <= 2 ? "soon" : ""}">${I.calendar}<span><b>${esc(next[0])}</b> ${esc(next[2])}${when ? ` <span class="faint">· ${when}</span>` : ""}</span></div>`;
+}
+
+/* Seats of a race crew's boat: cox (0) first, then stroke down to bow. */
+function raceSeats(bt, type) {
+  const t = bt[type] || { rowers: 8, coxed: true }, out = [];
+  for (let i = t.rowers; i >= 1; i--) out.push(i);
+  return t.coxed ? [0, ...out] : out;
+}
+const raceSeatLabel = (bt, type, s) => { const n = (bt[type] || { rowers: 8 }).rowers; return s === 0 ? "Cox" : n === 1 ? "Sculler" : s === n ? "Stroke" : s === 1 ? "Bow" : String(s); };
+const raceSeatShort = (l) => ({ Stroke: "S", Bow: "B", Sculler: "1x" })[l] || l;
+/* Where someone sits in this race's crews: [crew, seat] or null. */
+const raceSeatOf = (r, mid) => { for (const c of r.crews) { const x = c.seats.find((y) => y.member_id === mid); if (x) return [c, x]; } return null; };
+
+/* One crew, laid out like a boat on the schedule. Empty seats need a sub (the committee fills them). */
+function raceCrewBlock(r, c, data) {
+  const by = Object.fromEntries(c.seats.map((x) => [x.seat, x]));
+  const seats = raceSeats(data.boat_types, c.boat_type);
+  const subs = seats.filter((s) => !by[s]).length;
+  const row = (s) => {
+    const x = by[s], l = raceSeatLabel(data.boat_types, c.boat_type, s);
+    if (!x) return `<div class="seat open subneed"><span class="sl">${esc(raceSeatShort(l))}</span><span class="sn">Sub needed</span></div>`;
+    return `<div class="seat ${x.member_id === S.me ? "me" : ""}"><span class="sl">${esc(raceSeatShort(l))}</span><span class="sn">${esc(x.name)}</span></div>`;
+  };
+  return `<div class="race-boat">
+    <div class="rb-top"><b>${esc(c.name)}</b><span class="faint small">${esc(c.boat_type)}</span>${subs ? `<span class="chip warn">${subs} sub${subs === 1 ? "" : "s"} needed</span>` : ""}</div>
+    <div class="seats">${seats.map(row).join("")}</div>
+    ${c.notes ? `<div class="small muted race-notes" style="margin-top:6px">${esc(c.notes)}</div>` : ""}</div>`;
 }
 
 function raceCard(r, data) {
+  const committee = isCommittee();
   const d = pd(r.date), me = S.boot.members.find((m) => m.id === S.me);
   const mine = r.responses.find((x) => x.member_id === S.me);
+  const seated = S.me ? raceSeatOf(r, S.me) : null;
   const locked = r.past || !r.open;
-  let respond;
-  if (locked && !isCommittee()) respond = `<div class="small muted">${r.past ? "This race has happened." : "Sign-up is closed."}${mine ? ` You said <b>${esc(RACE_ST[mine.status][0].toLowerCase())}</b>.` : ""}</div>`;
+  // Seats are the committee's to change; rowers can still update whether they're available.
+  const seatLine = seated && r.crews_published ? `<div class="small race-mine">${I.check}<span>You're in <b>${esc(seated[0].name)}</b> · ${esc(seated[1].label)}. If you can't make it, update your answer and tell the committee.</span></div>` : "";
+  let respond = "";
+  if (locked && !committee) respond = `<div class="small muted">${r.past ? "This race has happened." : "Sign-up is closed."}${mine ? ` You said <b>${esc(RACE_ST[mine.status][0].toLowerCase())}</b>.` : ""}</div>`;
   else respond = `<div class="race-respond">
       <span class="small muted">${me ? `${esc(me.name.split(" ")[0])}, can you race?` : "Can you race?"}</span>
       <div class="seg">${RACE_ORDER.map((k) => `<button data-race-st="${k}" class="${mine?.status === k ? "on " + k : ""}">${esc(RACE_ST[k][0])}</button>`).join("")}</div>
       ${mine ? `<button class="btn ghost sm" data-race-mine>Edit</button>` : ""}</div>
       ${mine && raceRespSummary(mine, data) ? `<div class="small muted">You: ${esc(raceRespSummary(mine, data))}${mine.comment ? ` · “${esc(mine.comment)}”` : ""}</div>` : ""}
       ${me && !mine && r.me_problems.length ? `<div class="small race-warn">${I.alert}${esc(youify(r.me_problems[0]))}.</div>` : ""}`;
-  const avail = r.responses.filter((x) => RACE_FILTER.yes.includes(x.status));
-  const crew = raceCrew(avail), flex = avail.filter((x) => x.role === "both").length;
-  const n = (k) => r.responses.filter((x) => RACE_FILTER[k].includes(x.status)).length;
-  const crewLine = avail.length ? `<div class="race-crew">${[["open", "Open rowers"], ["women", "Women's rowers"], ["unset", "Squad not set"], ["cox", "Coxes"]].filter(([k]) => k !== "unset" || crew.unset.length)
-      .map(([k, l]) => `<button type="button" class="race-crew-n" data-race-who="yes"><b>${crew[k].length}</b><span>${esc(l)}</span></button>`).join("")}</div>
-      ${flex ? `<div class="faint small">${flex === 1 ? "1 person" : flex + " people"} could row or cox, so ${flex === 1 ? "is" : "are"} counted in both.</div>` : ""}` : "";
-  const who = r.responses.length
-    ? `<div class="race-who">${Object.keys(RACE_FILTER).filter((k) => n(k)).map((k) => `<button type="button" class="chip ${RACE_FILTER_CHIP[k]}" data-race-who="${k}">${n(k)} ${esc(RACE_FILTER_LABEL[k].toLowerCase())}</button>`).join("")}
-        <button type="button" class="btn ghost sm" data-race-who="yes">See who</button></div>`
-    : `<div class="race-who"><span class="chip">No responses yet</span>${isCommittee() ? `<button class="btn ghost sm" data-race-set="">${I.plus}Add someone</button>` : ""}</div>`;
-  return `<article class="card race ${r.past ? "past" : ""}" data-race="${r.id}">
+  const n = (k) => r.responses.filter((x) => x.status === k).length;
+  const counts = RACE_ORDER.filter((k) => n(k)).map((k) => `<span class="rc-n ${RACE_ST[k][1]}"><b>${n(k)}</b> ${esc(k === "no" ? "can't" : RACE_ST[k][0].toLowerCase())}</span>`).join("");
+  const foot = `<div class="race-foot">
+      <button type="button" class="race-avail" data-race-who="yes" title="See who answered">${counts || `<span class="faint">No responses yet</span>`}${r.responses.length ? `<span class="rc-see">See who ${I.right}</span>` : ""}</button>
+      <button type="button" class="btn ghost sm" data-race-info>Details</button>
+      ${committee && !r.crews.length ? `<button type="button" class="btn sm" data-race-crews>${I.users}Form crews</button>` : ""}</div>`;
+  const crews = r.crews.length ? `<div class="race-crews-sec">
+      <div class="race-crews-h"><span class="section-title" style="margin:0">Crews</span>
+        ${committee && !r.crews_published ? `<span class="chip warn" title="Only the committee can see these crews">Draft</span>` : ""}
+        ${committee ? `<button type="button" class="btn sm" data-race-crews>${I.users}Edit crews</button>` : ""}</div>
+      <div class="race-crews">${r.crews.map((c) => raceCrewBlock(r, c, data)).join("")}</div></div>` : "";
+  return `<article class="card race ${r.past ? "past" : ""} ${r.crews.length ? "has-crews" : ""}" data-race="${r.id}">
     <div class="race-head"><div class="datebox"><span>${DAY[dow(r.date)]}</span><b>${d.getUTCDate()}</b><span>${MON[d.getUTCMonth()]}</span></div>
-      <div style="flex:1;min-width:0"><div class="race-title">${esc(r.title)}</div>
+      <div style="flex:1;min-width:0"><button type="button" class="race-title" data-race-info title="Show all details">${esc(r.title)}</button>
         <div class="o-sub">${r.city ? `<span>${I.pin}${esc(r.city)}</span>` : ""}${r.time_slot ? `<span>${esc(r.time_slot)}</span>` : ""}${r.term ? `<span>${esc(r.term)}</span>` : ""}</div></div>
-      ${isCommittee() ? `<button class="btn sm" data-race-edit>Edit</button>` : ""}</div>
+      ${committee ? `<button class="btn sm" data-race-edit>Edit</button>` : ""}</div>
     <div class="race-chips"><span class="chip ${RACE_ENTRY_CHIP[r.entry]}">${esc(data.entry[r.entry])}</span>${r.squad !== "any" ? `<span class="chip violet">${esc(data.squads[r.squad])} squad</span>` : ""}${r.race_type ? `<span class="chip">${esc(r.race_type)}</span>` : ""}${!r.open && !r.past ? `<span class="chip warn">Sign-up closed</span>` : ""}</div>
     ${raceWindow(r)}
-    ${r.notes ? `<div class="race-notes small">${esc(r.notes)}</div>` : ""}
-    ${r.links.length ? `<div class="race-links">${r.links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${I.link}${esc(l.label || l.url.replace(/^https?:\/\//, "").replace(/\/$/, ""))}</a>`).join("")}</div>` : ""}
+    ${crews}
+    ${seatLine}
     ${respond}
-    ${crewLine}
-    ${who}
+    ${foot}
   </article>`;
+}
+
+/* Everything about a race: all deadlines, notes, links and (if visible) the crews. */
+function raceInfoModal(r, data) {
+  const d = pd(r.date), now = nowLocal(), dl = raceDeadlines(r);
+  const sub = [r.city && `${I.pin}${esc(r.city)}`, r.time_slot && esc(r.time_slot), r.term && esc(r.term)].filter(Boolean);
+  modal({
+    title: esc(r.title), wide: !!r.crews.length,
+    body: `<div class="o-detail"><div>${I.calendar}${esc(fmtLong(r.date))}</div>${sub.length ? `<div class="o-sub" style="font-size:14px">${sub.map((x) => `<span>${x}</span>`).join("")}</div>` : ""}</div>
+      <div class="race-chips"><span class="chip ${RACE_ENTRY_CHIP[r.entry]}">${esc(data.entry[r.entry])}</span>${r.squad !== "any" ? `<span class="chip violet">${esc(data.squads[r.squad])} squad</span>` : ""}${r.race_type ? `<span class="chip">${esc(r.race_type)}</span>` : ""}${!r.open && !r.past ? `<span class="chip warn">Sign-up closed</span>` : ""}</div>
+      ${dl.length ? `<dl class="race-dates">${dl.map(([k, t, v]) => `<dt>${esc(k)}</dt><dd class="${t < now ? "faint" : ""}">${esc(v)}${t < now ? " · passed" : ""}</dd>`).join("")}</dl>` : `<div class="small faint">No entry deadlines set.</div>`}
+      ${r.notes ? `<div class="race-notes">${esc(r.notes)}</div>` : ""}
+      ${r.links.length ? `<div class="race-links">${r.links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${I.link}${esc(l.label || l.url.replace(/^https?:\/\//, "").replace(/\/$/, ""))}</a>`).join("")}</div>` : ""}
+      ${r.crews.length ? `<div class="race-crews-sec"><div class="race-crews-h"><span class="section-title" style="margin:0">Crews</span>${isCommittee() && !r.crews_published ? `<span class="chip warn">Draft</span>` : ""}</div>
+        <div class="race-crews">${r.crews.map((c) => raceCrewBlock(r, c, data)).join("")}</div></div>` : ""}`,
+    foot: `${isCommittee() ? `<button class="btn" id="ri-edit">Edit race</button><button class="btn" id="ri-crews">${I.users}${r.crews.length ? "Edit crews" : "Form crews"}</button>` : ""}<div class="r"><button class="btn" data-close>Close</button></div>`,
+    onMount: (m) => {
+      const e = $("#ri-edit", m); if (e) e.onclick = () => editRace(r, data);
+      const c = $("#ri-crews", m); if (c) c.onclick = () => raceCrewsModal(r, data);
+    },
+  });
+}
+
+/* Committee: form crews from the race responses. Saved as a draft (committee only) or published to rowers. */
+function raceCrewsModal(r, data) {
+  const BT = data.boat_types;
+  const crews = r.crews.map((c) => ({ name: c.name, boat_type: c.boat_type, notes: c.notes, seats: Object.fromEntries(c.seats.map((x) => [x.seat, x.member_id])) }));
+  if (!crews.length) crews.push({ name: "Crew 1", boat_type: "8+", notes: "", seats: {} });
+  const people = new Map(S.boot.members.map((mm) => [mm.id, mm]));
+  r.crews.forEach((c) => c.seats.forEach((x) => { if (!people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: "", cox_status: "" }); }));
+  r.responses.forEach((x) => { if (!people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: x.category, cox_status: "" }); });
+  const resp = new Map(r.responses.map((x) => [x.member_id, x]));
+  let active = 0, target = null, pubArmed = false;   // target: [crew index, seat] picked by clicking a seat label
+  const seatsOf = (c) => raceSeats(BT, c.boat_type);
+  const lbl = (c, st) => raceSeatLabel(BT, c.boat_type, st);
+  const sweep = (c) => !/x/i.test(c.boat_type) && (BT[c.boat_type]?.rowers || 8) >= 2;
+  const sideOf = (c, st) => (st === 0 || !sweep(c)) ? "" : st % 2 === 0 ? "S" : "B";
+  const where = (mid) => { for (let i = 0; i < crews.length; i++) for (const [k, v] of Object.entries(crews[i].seats)) if (v === mid) return [i, +k]; return null; };
+  const unseat = (mid) => { const w = where(mid); if (w) delete crews[w[0]].seats[w[1]]; };
+  const crewName = (i) => crews[i].name.trim() || `Crew ${i + 1}`;
+  const issues = (mid, st) => {
+    const x = resp.get(mid), mm = people.get(mid), out = [];
+    if (!x) out.push(["warn", "Hasn't responded"]);
+    else if (x.status === "no") out.push(["bad", "Said not available"]);
+    else if (x.status === "maybe") out.push(["warn", "Said maybe"]);
+    if (x && x.status !== "no") {
+      if (st === 0 && x.role === "rower") out.push(["warn", "Wants to row, not cox"]);
+      if (st !== 0 && x.role === "cox") out.push(["warn", "Wants to cox, not row"]);
+      const p = (x.problems || []).filter((q) => st !== 0 || !q.includes("could still cox"));
+      if (p.length) out.push(["bad", "Not eligible: " + p.join(". ")]);
+    }
+    if (st === 0 && mm && !mm.cox_status) out.push(["warn", "Not marked as a cox"]);
+    return out;
+  };
+  const statusChip = (x) => x ? `<span class="chip ${RACE_ST[x.status][1]}">${esc(RACE_ST[x.status][0])}</span>` : `<span class="chip">No response</span>`;
+
+  modal({
+    title: `Crews · ${esc(r.title)}`, wide: "xl",
+    body: `${r.crews_published ? `<div class="callout">${I.info}<div>These crews are <b>published</b>: rowers can see them, and saving tells anyone whose seat changed.</div></div>`
+        : `<div class="callout warn">${I.info}<div>Drafts are only visible to the committee. Publish when the crews are ready: everyone in a crew gets a notification.</div></div>`}
+      <div class="oe-crew-wrap">
+        <div class="rcb-list">
+          <div class="rcb-auto"><div class="rcb-auto-row"><b class="small">Make crews from sign-ups</b>
+            <select class="input" id="rcb-a-boat" aria-label="Boat type for new crews">${Object.keys(BT).filter((k) => k !== "Other").map((k) => `<option ${k === (crews.find((c) => Object.keys(c.seats).length)?.boat_type || "8+") ? "selected" : ""}>${esc(k)}</option>`).join("")}</select>
+            ${r.squad === "any" ? `<label class="check small"><input type="checkbox" id="rcb-a-split" checked> Separate Open and Women's</label>` : ""}
+            <label class="check small"><input type="checkbox" id="rcb-a-maybe"> Include maybes</label>
+            <button type="button" class="btn sm primary" id="rcb-auto">${I.wand}Make crews</button></div>
+            <span class="hint">Puts everyone available who isn't in a crew yet into as many boats as needed, on their side, with coxes. Empty seats are left as <b>Sub needed</b>. Then adjust by hand.</span></div>
+          <p class="oe-hint">Click a name on the right to put them in the highlighted crew (rowers go on their side); click it again to take them out. To choose the seat yourself, click the seat's name first. Empty seats show as <b>Sub needed</b> until you fill them.</p>
+          <div id="rcb-crews"></div>
+          <button type="button" class="btn sm" id="rcb-add" style="align-self:flex-start">${I.plus}Add crew</button></div>
+        <aside class="oe-pool" id="rcb-pool"></aside>
+      </div>
+      <div id="rcb-sum"></div>`,
+    foot: `<div class="r"><button class="btn" data-close>Close</button>
+      <button class="btn" id="rcb-draft">${r.crews_published ? "Unpublish" : "Save draft"}</button>
+      <button class="btn primary" id="rcb-pub">${r.crews_published ? "Save" : "Save & publish"}</button></div>`,
+    onMount: (m, close) => {
+      const box = $("#rcb-crews", m);
+      const setActive = (ci) => { active = ci; $$(".rcb", box).forEach((el) => el.classList.toggle("active", +el.dataset.ci === ci)); };
+      // The seat someone would get in crew ci (cox seat, or an empty seat on their side), or why there's none.
+      const pickSeat = (ci, mid, intent, strict = true) => {
+        const c = crews[ci], seats = seatsOf(c);
+        if (intent === "cox") {
+          if (!seats.includes(0)) return `${crewName(ci)} has no cox seat`;
+          if (c.seats[0] != null) return "The cox seat is taken. Click “Cox” first to replace them.";
+          return 0;
+        }
+        const empty = seats.filter((q) => q !== 0 && c.seats[q] == null);
+        if (!empty.length) return `${crewName(ci)} is full. Click another crew, or click a seat first to swap someone out.`;
+        const side = resp.get(mid)?.side || "";
+        const bow = empty.filter((q) => q % 2 === 1), stroke = empty.filter((q) => q % 2 === 0);
+        let pick = empty;
+        if (sweep(c) && side.startsWith("Bow")) pick = bow.length ? bow : side.includes("only") && strict ? [] : empty;
+        if (sweep(c) && side.startsWith("Stroke")) pick = stroke.length ? stroke : side.includes("only") && strict ? [] : empty;
+        if (!pick.length) return `No ${side.startsWith("Bow") ? "bow" : "stroke"}-side seat left in ${crewName(ci)}. Click a seat first to place them anyway.`;
+        return pick[0];
+      };
+      // Make new crews for everyone available who isn't in one yet. Rowers fill boats (the last one may need subs);
+      // "row or cox" people row first and cox if they're left over; coxes take the cox seats.
+      const autoCrews = () => {
+        const boat = $("#rcb-a-boat", m).value, n = BT[boat].rowers, coxed = BT[boat].coxed;
+        const split = $("#rcb-a-split", m)?.checked, maybes = $("#rcb-a-maybe", m).checked;
+        const okFor = (x, cox) => !(x.problems || []).some((q) => !cox || !q.includes("could still cox"));
+        const free = r.responses.filter((x) => (x.status === "yes" || (maybes && x.status === "maybe")) && !where(x.member_id))
+          .sort((a, b) => (a.status === "yes" ? 0 : 1) - (b.status === "yes" ? 0 : 1) || a.name.localeCompare(b.name));
+        const coxPool = free.filter((x) => x.role === "cox" && okFor(x, true));
+        const groups = {};
+        for (const x of free) {
+          if (x.role === "cox" || !okFor(x, false)) { if (x.role === "both" && okFor(x, true)) coxPool.push(x); continue; }
+          const g = split || r.squad !== "any" ? (x.squad === "open" || x.squad === "women" ? x.squad : "unset") : "all";
+          (groups[g] = groups[g] || { only: [], both: [] })[x.role === "both" ? "both" : "only"].push(x);
+        }
+        const strictness = (x) => (x.side || "").includes("only") ? 0 : (x.side || "").includes("preferred") ? 1 : 2;
+        crews.splice(0, crews.length, ...crews.filter((c) => Object.keys(c.seats).length));   // drop empty placeholder crews
+        const made = [];
+        for (const g of ["open", "women", "unset", "all"].filter((k) => groups[k])) {
+          const { only, both } = groups[g];
+          const k = Math.ceil((only.length || both.length) / n);
+          const rows = [...only, ...both].slice(0, k * n);
+          coxPool.push(...both.filter((x) => !rows.includes(x)));
+          const prefix = g === "open" ? "Open" : g === "women" ? "Women's" : g === "unset" ? "Squad not set" : r.squad !== "any" ? data.squads[r.squad] : "Crew";
+          let num = crews.filter((c) => c.name.startsWith(prefix + " ")).length;
+          for (let i = 0; i < k; i++) {
+            crews.push({ name: `${prefix} ${++num}`, boat_type: boat, notes: "", seats: {} });
+            const ci = crews.length - 1;
+            made.push(ci);
+            rows.slice(i * n, (i + 1) * n).sort((a, b) => strictness(a) - strictness(b)).forEach((x) => {
+              const st = pickSeat(ci, x.member_id, "row", false);
+              if (typeof st === "number") crews[ci].seats[st] = x.member_id;
+            });
+          }
+        }
+        if (coxed) for (const ci of made) {
+          const x = coxPool.find((y) => !where(y.member_id));
+          if (x) crews[ci].seats[0] = x.member_id;
+        }
+        if (!made.length) { draw(); return toast(free.length ? "Nobody left who can row in a new crew" : "Everyone available is already in a crew", true); }
+        active = made[0]; target = null; draw();
+        const subs = made.reduce((t, ci) => t + seatsOf(crews[ci]).filter((q) => crews[ci].seats[q] == null).length, 0);
+        toast(`Made ${made.length} crew${made.length === 1 ? "" : "s"}${subs ? ` · ${subs} sub${subs === 1 ? "" : "s"} needed` : ""}`);
+      };
+      const place = (mid, intent) => {
+        const w = where(mid);
+        if (w && !target) { unseat(mid); return draw(); }
+        let ci, dest;
+        if (target) [ci, dest] = target;
+        else {
+          ci = active;
+          if (!crews[ci]) return toast("Add a crew first", true);
+          dest = pickSeat(ci, mid, intent);
+          if (typeof dest === "string") return toast(dest, true);
+        }
+        unseat(mid);
+        crews[ci].seats[dest] = mid;
+        active = ci; target = null;
+        draw();
+      };
+      const items = (ci, st) => () => [...people.values()].map((mm) => {
+        const x = resp.get(mm.id), w = where(mm.id), elsewhere = !!(w && !(w[0] === ci && w[1] === st));
+        const s0 = x ? x.status : "";
+        const fit = x && x.status !== "no" && (st === 0 ? x.role !== "rower" : x.role !== "cox");
+        return { id: mm.id, label: mm.name, x, w, mm, elsewhere, dim: elsewhere || !x || s0 === "no", cls: s0 === "no" ? "bad" : "",
+          rank: (elsewhere ? 8 : 0) + ({ yes: 0, maybe: 2, "": 4, no: 6 })[s0] - (fit ? 1 : 0) };
+      });
+      const why = (st) => (i) => {
+        if (i.elsewhere) return `<span class="faint">in ${esc(crewName(i.w[0]))} · ${esc(lbl(crews[i.w[0]], i.w[1]))}</span>`;
+        const bits = [statusChip(i.x)];
+        if (i.x && i.x.status !== "no") {
+          if (i.x.role === "both") bits.push(`<span class="chip accent">Row/cox</span>`);
+          else if (i.x.role === "cox" && st !== 0) bits.push(`<span class="chip warn">Cox</span>`);
+          if (st !== 0 && i.x.squad) bits.push(`<span class="chip ${i.x.squad === "women" ? "violet" : "accent"}">${esc(SQUAD_SHORT[i.x.squad])}</span>`);
+          if (st !== 0 && i.x.side) bits.push(`<span class="chip">${esc(SIDE_SHORT[i.x.side] || i.x.side)}</span>`);
+        }
+        if (st === 0 && i.mm.cox_status) bits.push(`<span class="chip violet">Cox ${esc(i.mm.cox_status)}</span>`);
+        return bits.join(" ");
+      };
+      const draw = () => {
+        if (active >= crews.length) active = Math.max(0, crews.length - 1);
+        box.innerHTML = crews.map((c, ci) => {
+          const seats = seatsOf(c), filled = seats.filter((q) => c.seats[q] != null).length;
+          return `<section class="rcb ${ci === active ? "active" : ""}" data-ci="${ci}">
+            <div class="rcb-head"><input class="input" data-k="name" value="${esc(c.name)}" placeholder="Crew name, e.g. W1" maxlength="60" aria-label="Crew name">
+              <select class="input" data-k="boat_type" aria-label="Boat type">${Object.keys(BT).map((k) => `<option ${k === c.boat_type ? "selected" : ""}>${esc(k)}</option>`).join("")}</select>
+              <span class="faint small tnum">${filled}/${seats.length}</span>
+              <button type="button" class="btn ghost icon" data-rm-crew aria-label="Remove crew">${I.x}</button></div>
+            <div class="seat-editor">${seats.map((st) => {
+              const mid = c.seats[st], iss = mid != null ? issues(mid, st) : [];
+              const armed = target && target[0] === ci && target[1] === st;
+              return `<div class="se-wrap ${armed ? "armed" : ""}"><div class="se-row"><button type="button" class="sl sl-btn" data-target="${st}" title="Click, then pick a name on the right to put them in this seat">${esc(lbl(c, st))}${sideOf(c, st) ? `<i>${sideOf(c, st)}</i>` : ""}</button><div data-seat="${st}"></div></div>
+                ${iss.length ? `<div class="se-status small">${iss.map(([lv, t]) => `<span style="color:var(--${lv})">${esc(t)}</span>`).join(" · ")}</div>` : ""}</div>`; }).join("")}</div>
+            <input class="input" data-k="notes" value="${esc(c.notes)}" placeholder="Note for the crew (optional), e.g. boat, boating time" maxlength="500" aria-label="Crew note">
+          </section>`;
+        }).join("") || `<div class="faint small">No crews. Add one to start.</div>`;
+        $$(".rcb", box).forEach((sec) => {
+          const ci = +sec.dataset.ci, c = crews[ci];
+          sec.addEventListener("focusin", () => setActive(ci));
+          sec.addEventListener("mousedown", () => setActive(ci));
+          $$("input[data-k]", sec).forEach((inp) => inp.oninput = () => { c[inp.dataset.k] = inp.value; if (inp.dataset.k === "name") drawPool(); });
+          $("select[data-k]", sec).onchange = (e) => { c.boat_type = e.target.value; const ok = seatsOf(c); for (const k of Object.keys(c.seats)) if (!ok.includes(+k)) delete c.seats[k]; draw(); };
+          $("[data-rm-crew]", sec).onclick = () => {   // (no confirm box: it would replace this window)
+            const [gone] = crews.splice(ci, 1); target = null; draw();
+            if (Object.keys(gone.seats).length) toast(`${gone.name.trim() || "Crew"} removed · everyone in it is back in the list`);
+          };
+          $$(".sl-btn", sec).forEach((b) => b.onclick = () => { const st = +b.dataset.target; target = target && target[0] === ci && target[1] === st ? null : [ci, st]; active = ci; draw(); });
+          $$("[data-seat]", sec).forEach((el) => {
+            const st = +el.dataset.seat;
+            combo(el, { items: items(ci, st), value: c.seats[st] ?? null, placeholder: st === 0 ? "Sub needed · pick cox…" : "Sub needed · pick rower…", renderWhy: why(st),
+              onChange: (v) => { if (v == null) delete c.seats[st]; else { unseat(v); c.seats[st] = v; } active = ci; draw(); } });
+          });
+        });
+        drawPool();
+      };
+      const drawPool = () => {
+        const pool = $("#rcb-pool", m);
+        const yes = r.responses.filter((x) => x.status === "yes"), maybe = r.responses.filter((x) => x.status === "maybe");
+        const item = (x, intent) => {
+          const w = where(x.member_id);
+          const bad = x.problems?.length && (intent !== "cox" || x.problems.some((q) => !q.includes("could still cox")));
+          return `<button type="button" class="pool-item ${w ? "in" : ""} ${bad ? "bad" : ""}" data-pick="${x.member_id}" data-intent="${intent}" title="${w ? "Click to take out of the crew" : "Click to put in the highlighted crew"}">
+            <span class="pi-main"><span class="pi-name">${esc(x.name)}</span>
+              <span class="pi-meta"><span class="chip ${x.category === "Novice" ? "accent" : ""}">${esc(x.category || "?")}</span>${intent !== "cox" && x.side ? `<span class="chip">${esc(SIDE_SHORT[x.side] || x.side)}</span>` : ""}${intent === "cox" && people.get(x.member_id)?.cox_status ? `<span class="chip violet">Cox ${esc(people.get(x.member_id).cox_status)}</span>` : ""}${x.role === "both" ? `<span class="chip accent">Row/cox</span>` : ""}${bad ? `<span class="chip bad" title="${esc(x.problems.join(". "))}">Not eligible</span>` : ""}</span></span>
+            <span class="pi-state">${w ? `<span class="pi-seat">${esc(crewName(w[0]))} · ${esc(({ Stroke: "S", Bow: "B", Sculler: "1x" })[lbl(crews[w[0]], w[1])] || lbl(crews[w[0]], w[1]))}</span>` : I.plus}</span></button>`;
+        };
+        const group = (title, list, intent, hint = "") => list.length ? `<div class="pool-group"><div class="pool-h">${esc(title)} <span class="faint">${list.length}</span>${hint ? `<span class="pool-hint">${hint}</span>` : ""}</div>${list.map((x) => item(x, intent)).join("")}</div>` : "";
+        const c = raceCrew(yes), cm = raceCrew(maybe);
+        let html = `<div class="pool-head"><b>Available</b><span class="faint small">${yes.length} ${yes.length === 1 ? "person" : "people"}</span></div>`;
+        if (!yes.length) html += `<div class="faint small" style="padding:6px 2px">Nobody has said they're available yet. You can still pick anyone from the seat boxes.</div>`;
+        html += group("Coxes", c.cox, "cox", "→ cox seat") + group("Open rowers", c.open, "row", "placed on their side") + group("Women's rowers", c.women, "row", "placed on their side") + group("Rowers, squad not set", c.unset, "row");
+        if (maybe.length) html += `<details class="pool-group pool-more"><summary class="pool-h">Maybe <span class="faint">${maybe.length}</span></summary>${group("Coxes", cm.cox, "cox")}${group("Rowers", [...cm.open, ...cm.women, ...cm.unset], "row")}</details>`;
+        const open = pool.querySelector("details")?.open;
+        pool.innerHTML = html;
+        if (open) pool.querySelector("details").open = true;
+        $$("[data-pick]", pool).forEach((b) => b.onclick = () => place(+b.dataset.pick, b.dataset.intent));
+        const out = yes.filter((x) => !where(x.member_id)).length;
+        const empty = crews.reduce((n, cr) => n + seatsOf(cr).filter((q) => cr.seats[q] == null).length, 0);
+        pubArmed = false; $("#rcb-pub", m).textContent = r.crews_published ? "Save" : "Save & publish"; $("#rcb-pub", m).classList.replace("danger", "primary");
+        $("#rcb-sum", m).innerHTML = crews.length ? `<div class="small muted">${empty ? `<span style="color:var(--warn)">${empty} seat${empty === 1 ? "" : "s"} will show as Sub needed</span>` : "All seats filled"} · ${out ? `${out} available ${out === 1 ? "person isn't" : "people aren't"} in a crew yet` : "everyone available is in a crew"}</div>` : "";
+      };
+      $("#rcb-add", m).onclick = () => {
+        const last = crews[crews.length - 1];
+        crews.push({ name: `Crew ${crews.length + 1}`, boat_type: last ? last.boat_type : "8+", notes: "", seats: {} });
+        active = crews.length - 1; target = null; draw();
+        $$(".rcb input[data-k=name]", box).pop()?.select();
+      };
+      const save = async (publish) => {
+        if (publish) {
+          const bad = crews.flatMap((c, ci) => Object.entries(c.seats).filter(([st, mid]) => issues(mid, +st).some(([lv]) => lv === "bad")).map(([, mid]) => people.get(mid)?.name)).filter(Boolean);
+          if (bad.length && !pubArmed) {   // ask inline: a confirm box would replace this window
+            pubArmed = true;
+            $("#rcb-sum", m).insertAdjacentHTML("afterbegin", `<div class="callout bad">${I.alert}<div><b>${bad.map(esc).join(", ")}</b> ${bad.length === 1 ? "is" : "are"} marked not available or not eligible. Press the button again to publish anyway.</div></div>`);
+            const pb = $("#rcb-pub", m); pb.textContent = "Publish anyway"; pb.classList.replace("primary", "danger");
+            return;
+          }
+        }
+        const body = { publish, crews: crews.map((c, i) => ({ name: c.name.trim() || `Crew ${i + 1}`, boat_type: c.boat_type, notes: c.notes, seats: c.seats })) };
+        try {
+          const res = await api(`/api/committee/races/${r.id}/crews`, { method: "PUT", body });
+          close();
+          toast(publish ? `${r.crews_published ? "Crews saved" : "Crews published"}${res.notified ? ` · ${res.notified} notified` : ""}` : r.crews_published ? "Crews unpublished (back to draft)" : "Draft saved");
+          pageRaces();
+        } catch (e) { fail(e); }
+      };
+      $("#rcb-auto", m).onclick = autoCrews;
+      $("#rcb-draft", m).onclick = () => save(false);
+      $("#rcb-pub", m).onclick = () => save(true);
+      draw();
+    },
+  });
 }
 
 async function pageRaces() {
@@ -3531,6 +3842,8 @@ async function pageRaces() {
     const n = $("[data-race-mine]", card); if (n) n.onclick = () => requireMe(() => raceResponseModal(r, data, S.me));
     $$("[data-race-set]", card).forEach((b) => b.onclick = () => raceResponseModal(r, data, b.dataset.raceSet ? +b.dataset.raceSet : null));
     $$("[data-race-who]", card).forEach((b) => b.onclick = () => raceWhoModal(r, data, b.dataset.raceWho));
+    $$("[data-race-crews]", card).forEach((b) => b.onclick = () => raceCrewsModal(r, data));
+    $$("[data-race-info]", card).forEach((b) => b.onclick = () => raceInfoModal(r, data));
   });
 }
 

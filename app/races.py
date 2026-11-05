@@ -11,6 +11,10 @@ a senior race for seniors (but senior coxes can cox novice races), and an Open o
 Women's race needs a rower from that squad. Coxes have no squad and aren't held to
 the squad rule (anyone can cox either squad's crew). Rowers can't submit an ineligible
 response; the committee is warned and can override.
+
+Crews: from the responses the committee forms crews (name, boat type, who sits where).
+They stay a draft only the committee sees until the crews are published; publishing
+notifies everyone whose seat is new or changed.
 """
 from __future__ import annotations
 
@@ -22,9 +26,9 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from . import db
+from . import db, push
 from .auth import require_committee, require_member
-from .logic import TERMS, TZ, effective_today
+from .logic import BOAT_TYPES, TERMS, TZ, effective_today, seat_label
 from .signup import SIDES, SQUADS
 
 router = APIRouter()
@@ -34,6 +38,7 @@ RACE_SQUADS = {"any": "Any squad", **SQUADS}
 STATUSES = {"yes": "Available", "maybe": "Maybe", "no": "Not available"}
 ROLES = {"rower": "Rower", "cox": "Cox", "both": "Rower or cox"}
 MAX_LINKS = 10
+MAX_CREWS = 20
 
 
 class LinkIn(BaseModel):
@@ -66,6 +71,18 @@ class ResponseIn(BaseModel):
     side: str = ""
     comment: str = Field("", max_length=500)
     override: bool = False     # committee only: save even if the member isn't eligible
+
+
+class CrewIn(BaseModel):
+    name: str = Field("", max_length=60)
+    boat_type: str = "8+"
+    notes: str = Field("", max_length=500)
+    seats: dict[int, int] = {}          # seat (0 = cox) -> member id
+
+
+class CrewsIn(BaseModel):
+    crews: list[CrewIn] = []
+    publish: bool = False
 
 
 class CheckIn(BaseModel):
@@ -164,6 +181,26 @@ def _save_links(conn, race_id: int, links: list[tuple[str, str]]) -> None:
 
 
 
+def _load_crews(conn, race_ids=None) -> dict[int, list[dict]]:
+    """race id -> crews, each with its seats (cox first, then stroke down to bow)."""
+    where = f"WHERE c.race_id IN ({','.join('?' * len(race_ids))})" if race_ids is not None else ""
+    crews, by_id = {}, {}
+    for c in conn.execute(f"SELECT c.* FROM race_crews c {where} ORDER BY c.race_id, c.position, c.id", list(race_ids or [])):
+        crew = {"id": c["id"], "name": c["name"], "boat_type": c["boat_type"], "notes": c["notes"], "seats": []}
+        crews.setdefault(c["race_id"], []).append(crew)
+        by_id[c["id"]] = crew
+    if by_id:
+        for s in conn.execute(
+                f"""SELECT s.crew_id, s.seat, s.member_id, m.name FROM race_crew_seats s JOIN members m ON m.id = s.member_id
+                    WHERE s.crew_id IN ({','.join('?' * len(by_id))}) ORDER BY s.crew_id, s.seat""", list(by_id)):
+            crew = by_id[s["crew_id"]]
+            crew["seats"].append({"seat": s["seat"], "label": seat_label(s["seat"], BOAT_TYPES.get(crew["boat_type"], (8, 1))[0], "water"),
+                                  "member_id": s["member_id"], "name": s["name"]})
+        for crew in by_id.values():
+            crew["seats"].sort(key=lambda x: (x["seat"] != 0, -x["seat"]))
+    return crews
+
+
 @router.get("/api/races")
 def races_list(me: Optional[int] = None, role: str = Depends(require_member)):
     committee = role == "committee"
@@ -180,6 +217,7 @@ def races_list(me: Optional[int] = None, role: str = Depends(require_member)):
                    ORDER BY m.name COLLATE NOCASE"""):
             resp.setdefault(r["race_id"], []).append(r)
         mine = conn.execute("SELECT category, squad, side FROM members WHERE id = ?", (me,)).fetchone() if me else None
+        crews = _load_crews(conn)
         for race in races:
             rows = resp.get(race["id"], [])
             race["squad"] = race["squad"] or "any"
@@ -188,6 +226,9 @@ def races_list(me: Optional[int] = None, role: str = Depends(require_member)):
             race["open"] = bool(race["open"])
             race["past"] = race["date"] < today
             race["links"] = links.get(race["id"], [])
+            race["crews_published"] = bool(race["crews_published"])
+            # Draft crews are committee-only.
+            race["crews"] = crews.get(race["id"], []) if committee or race["crews_published"] else []
             race["counts"] = {k: sum(1 for x in rows if x["status"] == k) for k in STATUSES}
             # Comments are committee-only (except your own, so the form can be prefilled).
             race["responses"] = [
@@ -199,6 +240,7 @@ def races_list(me: Optional[int] = None, role: str = Depends(require_member)):
                 for x in rows]
         return {"races": races, "today": today, "terms": TERMS, "entry": ENTRY, "statuses": STATUSES,
                 "squads": SQUADS, "race_squads": RACE_SQUADS, "roles": ROLES, "sides": SIDES,
+                "boat_types": {k: {"rowers": n, "coxed": bool(c)} for k, (n, c) in BOAT_TYPES.items()},
                 "me": {"squad": mine["squad"], "side": mine["side"], "category": mine["category"]} if mine else None}
 
 
@@ -233,6 +275,64 @@ def race_delete(race_id: int, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         conn.execute("DELETE FROM races WHERE id = ?", (race_id,))
         return {"ok": True}
+
+
+def _assignments(crews: list[dict]) -> dict[int, tuple[str, str]]:
+    """member id -> (crew name, seat label)"""
+    return {s["member_id"]: (c["name"], s["label"]) for c in crews for s in c["seats"]}
+
+
+@router.put("/api/committee/races/{race_id}/crews")
+def race_crews_save(race_id: int, b: CrewsIn, _: str = Depends(require_committee)):
+    """Replace the race's crews. publish=False keeps (or puts) them back in draft."""
+    if len(b.crews) > MAX_CREWS:
+        raise HTTPException(400, f"At most {MAX_CREWS} crews")
+    seen: dict[int, str] = {}
+    clean = []
+    for i, c in enumerate(b.crews):
+        name = c.name.strip() or f"Crew {i + 1}"
+        if c.boat_type not in BOAT_TYPES:
+            raise HTTPException(400, f"{name}: unknown boat type")
+        rowers, coxed = BOAT_TYPES[c.boat_type]
+        seats = {}
+        for seat, mid in c.seats.items():
+            if not (0 if coxed else 1) <= seat <= rowers:
+                continue                  # seat no longer in the boat (boat type changed)
+            if mid in seen:
+                raise HTTPException(400, f"Someone is in two seats ({seen[mid]} and {name})")
+            seen[mid] = name
+            seats[seat] = mid
+        clean.append((name, c.boat_type, c.notes.strip(), seats))
+    with db.get_conn() as conn:
+        race = conn.execute("SELECT id, title, date, crews_published FROM races WHERE id = ?", (race_id,)).fetchone()
+        if not race:
+            raise HTTPException(404, "Race not found")
+        if seen:
+            ok = {r["id"] for r in conn.execute(f"SELECT id FROM members WHERE id IN ({','.join('?' * len(seen))})", list(seen))}
+            if len(ok) != len(seen):
+                raise HTTPException(400, "Unknown member in a crew")
+        old = _load_crews(conn, [race_id]).get(race_id, [])
+        before = _assignments(old) if race["crews_published"] else {}
+        conn.execute("DELETE FROM race_crews WHERE race_id = ?", (race_id,))
+        for pos, (name, boat_type, notes, seats) in enumerate(clean):
+            cid = conn.execute("INSERT INTO race_crews(race_id, position, name, boat_type, notes) VALUES (?, ?, ?, ?, ?)",
+                               (race_id, pos, name, boat_type, notes)).lastrowid
+            for seat, mid in seats.items():
+                conn.execute("INSERT INTO race_crew_seats(crew_id, seat, member_id) VALUES (?, ?, ?)", (cid, seat, mid))
+        conn.execute("UPDATE races SET crews_published = ? WHERE id = ?", (int(b.publish), race_id))
+        after = _assignments(_load_crews(conn, [race_id]).get(race_id, []))
+    msgs = []
+    if b.publish:
+        # Tell people about a new or changed seat (and, once published, about being taken out).
+        for mid, (crew, seat) in after.items():
+            if before.get(mid) != (crew, seat):
+                msgs.append(push._msg([mid], f"Race crew · {race['title']}", f"You're in {crew} ({'coxing' if seat == 'Cox' else seat if seat in ('Stroke', 'Bow', 'Sculler') else 'seat ' + seat}).",
+                                      f"race-crew-{race_id}", "/#/races"))
+        for mid in before.keys() - after.keys():
+            msgs.append(push._msg([mid], f"Race crew · {race['title']}", "You're no longer in a crew for this race.",
+                                  f"race-crew-{race_id}", "/#/races"))
+    push.dispatch(msgs)
+    return {"ok": True, "published": b.publish, "notified": len(msgs)}
 
 
 def _check_can_respond(conn, race_id: int, member_id: int, committee: bool):
