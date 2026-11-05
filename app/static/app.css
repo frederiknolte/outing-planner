@@ -851,3 +851,12 @@ button.race-person:hover { border-color: var(--accent); }
 .crew-log li.undone .cl-text { text-decoration: line-through; text-decoration-color: var(--text-3); color: var(--text-3); }
 .crew-log li.undone .chip { text-decoration: none; display: inline-block; }
 .crew-log .btn { flex: none; }
+
+.race-window { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.race-window svg { width: 14px; height: 14px; }
+.race-banner { display: flex; align-items: center; gap: 12px; max-width: 1400px; margin: 12px auto 0; padding: 10px 14px; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--border); border-left: 6px solid var(--warn, #d9a400); }
+.race-banner.urgent { border-left-color: var(--bad, #d33); }
+.race-banner > svg { width: 20px; height: 20px; flex: none; }
+.race-banner .flag-body span { display: block; }
+@media (max-width: 640px) { .race-banner { flex-wrap: wrap; margin: 12px 12px 0; } }

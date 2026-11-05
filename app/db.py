@@ -318,7 +318,12 @@ MIGRATIONS = {
         "cancel_category": "TEXT NOT NULL DEFAULT ''", # flag | weather | bankrider | numbers | other (see logic.CANCEL_REASONS)
     },
     "boats": {"last_serviced": "TEXT NOT NULL DEFAULT ''"},       # YYYY-MM-DD or '' (see usage.py)
-    "races": {"squad": "TEXT NOT NULL DEFAULT 'any'"},             # any | open | women
+    "races": {
+        "squad": "TEXT NOT NULL DEFAULT 'any'",                     # any | open | women
+        "opens_at": "TEXT NOT NULL DEFAULT ''",                     # when entries open, local "YYYY-MM-DDTHH:MM" or ''
+        "closes_at": "TEXT NOT NULL DEFAULT ''",                    # when entries close, same format
+        "scratch_date": "TEXT NOT NULL DEFAULT ''",                 # last day to withdraw (scratch), YYYY-MM-DD or ''
+    },
     "race_responses": {
         "squad": "TEXT NOT NULL DEFAULT ''",                        # open | women
         "role": "TEXT NOT NULL DEFAULT ''",                         # rower | cox | both

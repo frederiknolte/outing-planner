@@ -28,7 +28,7 @@ from .timeutil import normalize as norm_time, to_minutes
 from .calendar import router as calendar_router
 from .signup import availability_for_outing, week_counts, router as signup_router
 from .stats import router as stats_router
-from .races import router as races_router
+from .races import router as races_router, closing_soon
 from . import issues
 from .committee_roster import router as roster_router
 from .tasks import router as tasks_router
@@ -231,6 +231,7 @@ def bootstrap(role: str = Depends(require_member)):
         ]
         return {
             "role": role,
+            "races_closing": closing_soon(conn) if role == "committee" else [],
             "club_name": s.get("club_name"),
             "today": rules.today.isoformat(),
             "this_week": monday_of(rules.today).isoformat(),

@@ -276,13 +276,35 @@ function shell(active) {
     </div>
   </div></header>
   ${tabs.length > 1 ? `<div class="subnav"><nav class="subnav-inner" aria-label="${esc(routeLabel(top))}">${tabs.map((r) => `<a href="#/${r.id}" class="${r.id === active ? "on" : ""}"${r.id === active ? ` aria-current="page"` : ""}>${esc(r.tab || r.label)}${r.count ? countBadge(r.count, "count-pill") : ""}</a>`).join("")}</nav></div>` : ""}
+  <div id="race-banner"></div>
   <main class="main" id="main"><div class="spinner"></div></main>`;
+  renderRaceBanner();
   $("#nav-toggle").onclick = (e) => { e.stopPropagation(); setNavOpen(!$(".topbar").classList.contains("nav-open")); };
   $("#main-nav").onclick = () => setNavOpen(false);
   $("#me-chip").onclick = () => pickIdentity();
   const vt = $("#view-toggle"); if (vt) vt.onclick = () => setViewAsRower(!S.viewAsRower);
   $("#logout").onclick = async () => { await pushDisable(); await api("/api/logout", { method: "POST" }).catch(() => {}); S.role = S.realRole = null; renderLogin(); };
 }
+
+/* Committee only: entries for a race are about to close. Shown when you log in / open the app, and again after 2h away; dismissable. */
+function renderRaceBanner() {
+  const el = $("#race-banner"); if (!el) return;
+  const list = isCommittee() && S.raceBanner ? (S.boot.races_closing || []) : [];
+  if (!list.length) { el.innerHTML = ""; return; }
+  const left = (h) => h < 1 ? "in under an hour" : h < 24 ? `in ${Math.round(h)} hour${Math.round(h) === 1 ? "" : "s"}` : `in ${Math.round(h / 24)} day${Math.round(h / 24) === 1 ? "" : "s"}`;
+  el.innerHTML = `<div class="race-banner ${list[0].hours_left < 48 ? "urgent" : ""}" role="status">${I.flag}
+    <div class="flag-body"><b>Race entries closing soon</b>${list.map((r) => `<span class="small">${esc(r.title)} — closes ${esc(fmtDT(r.closes_at))} (${left(r.hours_left)})</span>`).join("")}</div>
+    <div class="flag-actions"><a class="btn sm" href="#/races">Races</a><button class="btn ghost sm" id="rb-x">Dismiss</button></div></div>`;
+  $("#rb-x").onclick = () => { S.raceBanner = false; renderRaceBanner(); };
+}
+
+let hiddenAt = 0;
+document.addEventListener("visibilitychange", async () => {
+  if (document.hidden) { hiddenAt = Date.now(); return; }
+  if (!S.role || !hiddenAt || Date.now() - hiddenAt < 2 * 3600 * 1000) return;
+  try { await reboot(); } catch { return; }
+  S.raceBanner = true; renderRaceBanner();
+});
 
 function pickIdentity(after) {
   const members = S.boot.members;
@@ -3297,6 +3319,13 @@ function raceWhoModal(r, data, filter) {
   });
 }
 
+const fmtDT = (t) => { const [d, h] = t.split("T"), x = pd(d); return `${DAY[dow(d)]} ${x.getUTCDate()} ${MON[x.getUTCMonth()]}, ${h}`; };
+function raceWindow(r) {
+  const parts = [r.opens_at && `open <b>${esc(fmtDT(r.opens_at))}</b>`, r.closes_at && `close <b>${esc(fmtDT(r.closes_at))}</b>`].filter(Boolean);
+  const bits = [parts.length && `Entries ${parts.join(" · ")}`, r.scratch_date && `Scratch by <b>${esc(fmtDT(r.scratch_date + "T").slice(0, -2))}</b>`].filter(Boolean);
+  return bits.length ? `<div class="small muted race-window">${bits.join(" · ")}</div>` : "";
+}
+
 function raceCard(r, data) {
   const d = pd(r.date), me = S.boot.members.find((m) => m.id === S.me);
   const mine = r.responses.find((x) => x.member_id === S.me);
@@ -3325,6 +3354,7 @@ function raceCard(r, data) {
         <div class="o-sub">${r.city ? `<span>${I.pin}${esc(r.city)}</span>` : ""}${r.time_slot ? `<span>${esc(r.time_slot)}</span>` : ""}${r.term ? `<span>${esc(r.term)}</span>` : ""}</div></div>
       ${isCommittee() ? `<button class="btn sm" data-race-edit>Edit</button>` : ""}</div>
     <div class="race-chips"><span class="chip ${RACE_ENTRY_CHIP[r.entry]}">${esc(data.entry[r.entry])}</span>${r.squad !== "any" ? `<span class="chip violet">${esc(data.squads[r.squad])} squad</span>` : ""}${r.race_type ? `<span class="chip">${esc(r.race_type)}</span>` : ""}${!r.open && !r.past ? `<span class="chip warn">Sign-up closed</span>` : ""}</div>
+    ${raceWindow(r)}
     ${r.notes ? `<div class="race-notes small">${esc(r.notes)}</div>` : ""}
     ${r.links.length ? `<div class="race-links">${r.links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${I.link}${esc(l.label || l.url.replace(/^https?:\/\//, "").replace(/\/$/, ""))}</a>`).join("")}</div>` : ""}
     ${respond}
@@ -3450,7 +3480,7 @@ function raceResponseModal(r, data, memberId, presetStatus) {
 }
 
 function editRace(r, data) {
-  const v = r || { title: "", date: S.boot.today, term: S.boot.settings.current_term || "", city: "", time_slot: "", entry: "all", squad: "any", race_type: "", notes: "", open: true, links: [] };
+  const v = r || { title: "", date: S.boot.today, term: S.boot.settings.current_term || "", city: "", time_slot: "", entry: "all", squad: "any", race_type: "", notes: "", open: true, opens_at: "", closes_at: "", scratch_date: "", links: [] };
   const links = v.links.map((l) => ({ ...l }));
   const types = [...new Set(data.races.map((x) => x.race_type).filter(Boolean))];
   const linkRows = () => links.map((l, i) => `<div class="race-link-row" data-i="${i}"><input class="input" data-k="label" placeholder="Label, e.g. Entry info" value="${esc(l.label)}"><input class="input" data-k="url" type="url" placeholder="https://…" value="${esc(l.url)}"><button type="button" class="btn ghost icon" data-rm aria-label="Remove link">${I.x}</button></div>`).join("");
@@ -3464,6 +3494,9 @@ function editRace(r, data) {
       <div class="grid-3"><label class="field"><span>City</span><input class="input" id="r-city" value="${esc(v.city)}" placeholder="e.g. Oxford"></label>
         <label class="field"><span>Expected time slot</span><input class="input" id="r-slot" value="${esc(v.time_slot)}" placeholder="e.g. 09:00–13:00, Morning"></label>
         <label class="field"><span>Race type</span><input class="input" id="r-type" list="r-types" value="${esc(v.race_type)}" placeholder="e.g. Head race, Side-by-side"><datalist id="r-types">${types.map((t) => `<option value="${esc(t)}">`).join("")}</datalist></label></div>
+      <div class="grid-3"><label class="field"><span>Entries open</span><input class="input" type="datetime-local" id="r-opens" value="${esc(v.opens_at || "")}"></label>
+        <label class="field"><span>Entries close</span><input class="input" type="datetime-local" id="r-closes" value="${esc(v.closes_at || "")}"><span class="hint">The committee gets a reminder banner as this approaches.</span></label>
+        <label class="field"><span>Scratch date</span><input class="input" type="date" id="r-scratch" value="${esc(v.scratch_date || "")}"><span class="hint">Last day to withdraw.</span></label></div>
       <label class="field"><span>Notes</span><textarea class="input" id="r-notes" rows="3">${esc(v.notes)}</textarea></label>
       <div class="field"><span>Links / sources</span><div id="r-links" class="race-link-rows"></div><button type="button" class="btn sm" id="r-addlink" style="align-self:flex-start">${I.plus}Add link</button></div>
       <label class="check"><input type="checkbox" id="r-open" ${v.open ? "checked" : ""}> Open for responses</label>`,
@@ -3478,6 +3511,7 @@ function editRace(r, data) {
         sync();
         const body = { title: $("#r-title", m).value.trim(), date: $("#r-date", m).value, term: $("#r-term", m).value, city: $("#r-city", m).value, time_slot: $("#r-slot", m).value,
           entry: $("#r-entry", m).value, squad: $("#r-squad", m).value, race_type: $("#r-type", m).value, notes: $("#r-notes", m).value, open: $("#r-open", m).checked,
+          opens_at: $("#r-opens", m).value, closes_at: $("#r-closes", m).value, scratch_date: $("#r-scratch", m).value,
           links: links.filter((l) => l.url.trim()) };
         if (!body.title) return toast("Title is required", true);
         if (!body.date) return toast("Pick a date", true);
@@ -3521,6 +3555,7 @@ function route() {
 async function start() {
   try { await reboot(); } catch { return renderLogin(); }
   if (S.me && !meName()) setMe(null);
+  S.raceBanner = true;
   pushSync();
   refreshSubsCount();
   route();

@@ -15,7 +15,7 @@ response; the committee is warned and can override.
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 from . import db
 from .auth import require_committee, require_member
-from .logic import TERMS, effective_today
+from .logic import TERMS, TZ, effective_today
 from .signup import SIDES, SQUADS
 
 router = APIRouter()
@@ -52,6 +52,9 @@ class RaceIn(BaseModel):
     race_type: str = Field("", max_length=200)
     notes: str = Field("", max_length=4000)
     open: bool = True
+    opens_at: str = ""          # entries open, "YYYY-MM-DDTHH:MM" (local time) or ""
+    closes_at: str = ""         # entries close, same format
+    scratch_date: str = ""      # last day to scratch (withdraw), YYYY-MM-DD or ""
     links: list[LinkIn] = []
 
 
@@ -106,6 +109,16 @@ def _clean_url(u: str) -> str:
     return u
 
 
+def _dt(text: str, what: str) -> str:
+    text = (text or "").strip()
+    if not text:
+        return ""
+    try:
+        return datetime.fromisoformat(text).strftime("%Y-%m-%dT%H:%M")
+    except ValueError:
+        raise HTTPException(400, f"Not a valid date and time for {what}")
+
+
 def _validate(b: RaceIn) -> dict:
     title = b.title.strip()
     if not title:
@@ -120,12 +133,22 @@ def _validate(b: RaceIn) -> dict:
         raise HTTPException(400, "Choose who should enter")
     if b.squad not in RACE_SQUADS:
         raise HTTPException(400, "Choose which squad the race is for")
+    opens_at, closes_at = _dt(b.opens_at, "entries opening"), _dt(b.closes_at, "entries closing")
+    if opens_at and closes_at and closes_at <= opens_at:
+        raise HTTPException(400, "Entries must close after they open")
+    scratch = b.scratch_date.strip()
+    if scratch:
+        try:
+            scratch = date.fromisoformat(scratch).isoformat()
+        except ValueError:
+            raise HTTPException(400, "Not a valid scratch date")
     links = [l for l in b.links if l.url.strip()]
     if len(links) > MAX_LINKS:
         raise HTTPException(400, f"At most {MAX_LINKS} links")
     return {
         "title": title, "date": d, "term": b.term, "city": b.city.strip(), "time_slot": b.time_slot.strip(),
         "entry": b.entry, "squad": b.squad, "race_type": b.race_type.strip(), "notes": b.notes.strip(), "open": int(b.open),
+        "opens_at": opens_at, "closes_at": closes_at, "scratch_date": scratch,
         "links": [(l.label.strip(), _clean_url(l.url)) for l in links],
     }
 
@@ -181,9 +204,9 @@ def race_create(b: RaceIn, _: str = Depends(require_committee)):
     v = _validate(b)
     with db.get_conn() as conn:
         cur = conn.execute(
-            """INSERT INTO races(title, date, term, city, time_slot, entry, squad, race_type, notes, open)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (v["title"], v["date"], v["term"], v["city"], v["time_slot"], v["entry"], v["squad"], v["race_type"], v["notes"], v["open"]))
+            """INSERT INTO races(title, date, term, city, time_slot, entry, squad, race_type, notes, open, opens_at, closes_at, scratch_date)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (v["title"], v["date"], v["term"], v["city"], v["time_slot"], v["entry"], v["squad"], v["race_type"], v["notes"], v["open"], v["opens_at"], v["closes_at"], v["scratch_date"]))
         _save_links(conn, cur.lastrowid, v["links"])
         return {"id": cur.lastrowid}
 
@@ -193,9 +216,9 @@ def race_update(race_id: int, b: RaceIn, _: str = Depends(require_committee)):
     v = _validate(b)
     with db.get_conn() as conn:
         cur = conn.execute(
-            """UPDATE races SET title=?, date=?, term=?, city=?, time_slot=?, entry=?, squad=?, race_type=?, notes=?, open=?
+            """UPDATE races SET title=?, date=?, term=?, city=?, time_slot=?, entry=?, squad=?, race_type=?, notes=?, open=?, opens_at=?, closes_at=?, scratch_date=?
                WHERE id=?""",
-            (v["title"], v["date"], v["term"], v["city"], v["time_slot"], v["entry"], v["squad"], v["race_type"], v["notes"], v["open"], race_id))
+            (v["title"], v["date"], v["term"], v["city"], v["time_slot"], v["entry"], v["squad"], v["race_type"], v["notes"], v["open"], v["opens_at"], v["closes_at"], v["scratch_date"], race_id))
         if not cur.rowcount:
             raise HTTPException(404, "Race not found")
         _save_links(conn, race_id, v["links"])
@@ -284,3 +307,19 @@ def response_clear(race_id: int, member_id: int, role: str = Depends(require_mem
         _check_can_respond(conn, race_id, member_id, role == "committee")
         conn.execute("DELETE FROM race_responses WHERE race_id = ? AND member_id = ?", (race_id, member_id))
         return {"ok": True}
+
+
+def closing_soon(conn, days: int = 7) -> list[dict]:
+    """Races whose entries close within `days` (and haven't closed yet), soonest first. For the committee banner."""
+    now = datetime.now(TZ).replace(tzinfo=None)
+    out = []
+    for r in conn.execute("SELECT id, title, date, closes_at FROM races WHERE closes_at != '' AND date >= ? ORDER BY closes_at",
+                          (now.date().isoformat(),)):
+        try:
+            c = datetime.fromisoformat(r["closes_at"])
+        except ValueError:
+            continue
+        left = (c - now).total_seconds() / 3600
+        if 0 <= left <= days * 24:
+            out.append({"id": r["id"], "title": r["title"], "closes_at": r["closes_at"], "hours_left": round(left, 1)})
+    return out
