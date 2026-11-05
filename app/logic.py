@@ -6,6 +6,9 @@ Rules follow the club's original spreadsheet:
   * Anyone may row (subs-wise) up to and including the subs cutoff date.
   * Swim test: nobody needs one for their first `swim_test_after` water outings
     (default 4); from the next water outing on it's required. Land never needs one.
+    A swim test (and a cox status) with a recorded date expires after
+    `swim_test_valid_months` (`cox_status_valid_months`) months; 0 = never. An expired
+    swim test counts as no swim test. With no date recorded it never expires.
   * A NOVICE who hasn't paid subs gets N free water outings (default 4) that don't need
     subs. Once their subs are paid the allowance no longer applies. While they still have
     free water outings left, land training is also free (configurable).
@@ -44,6 +47,33 @@ BOAT_TYPES = {  # type -> (rowers, coxed)
     "8+": (8, 1), "4+": (4, 1), "4-": (4, 0), "4x": (4, 0), "4x+": (4, 1),
     "2x": (2, 0), "2-": (2, 0), "1x": (1, 0), "Other": (8, 1),
 }
+
+
+EXPIRY_WARN_DAYS = 30
+
+
+def add_months(d: date, months: int) -> date:
+    y, m = divmod(d.month - 1 + months, 12)
+    y += d.year
+    m += 1
+    for day in (d.day, 30, 29, 28):
+        try:
+            return date(y, m, day)
+        except ValueError:
+            continue
+
+
+def expiry(since: str, months: int, today: date) -> dict:
+    """{'date', 'expires', 'state'} for a dated qualification. state: '' (no date / never expires), ok, soon, expired."""
+    try:
+        d = date.fromisoformat(since) if since else None
+    except ValueError:
+        d = None
+    if not d or months <= 0:
+        return {"date": since or "", "expires": "", "state": ""}
+    exp = add_months(d, months)
+    state = "expired" if exp <= today else "soon" if (exp - today).days <= EXPIRY_WARN_DAYS else "ok"
+    return {"date": since, "expires": exp.isoformat(), "state": state}
 
 
 def real_today() -> date:
@@ -101,6 +131,14 @@ class Rules:
             self.swim_after = max(0, int(self.settings.get("swim_test_after") or 0))
         except ValueError:
             self.swim_after = 4
+
+        def months(k):
+            try:
+                return max(0, int(self.settings.get(k) or 0))
+            except ValueError:
+                return 0
+        self.swim_months = months("swim_test_valid_months")
+        self.cox_months = months("cox_status_valid_months")
         self.land_free = self.settings.get("novice_land_free") == "1"
         self.cutoff = None
         if self.settings.get("subs_cutoff"):
@@ -180,14 +218,14 @@ class Rules:
         if kind == "water":
             nth = before + 1
             free_subs = novice and nth <= self.free_n
-            if not m["swim_test"] and nth > self.swim_after:
-                reasons.append("No swim test")
+            if nth > self.swim_after and not self.swim_ok_on(m, d):
+                reasons.append("Swim test expired" if m["swim_test"] else "No swim test")
             if not free_subs and not self.subs_ok_on(m, d):
                 reasons.append("Subs not paid")
             if not reasons:
                 if free_subs:
                     note = f"Novice free outing {nth} of {self.free_n}"
-                elif not m["swim_test"]:
+                elif not self.swim_ok_on(m, d):
                     note = f"Outing {nth} of {self.swim_after} before a swim test is needed"
                 elif not self.subs_valid(m):
                     note = "Before subs cutoff"
@@ -200,6 +238,33 @@ class Rules:
         if not reasons and not self.subs_valid(m):
             note = "Before subs cutoff"
         return {"ok": not reasons, "reasons": reasons, "note": note}
+
+    def swim_expiry(self, m) -> dict:
+        if not m["swim_test"]:
+            return {"date": "", "expires": "", "state": ""}
+        return expiry(m.get("swim_test_date") or "", self.swim_months, self.today)
+
+    def cox_expiry(self, m) -> dict:
+        if not m["cox_status"]:
+            return {"date": "", "expires": "", "state": ""}
+        return expiry(m.get("cox_status_date") or "", self.cox_months, self.today)
+
+    def swim_ok_on(self, m, d) -> bool:
+        if not m["swim_test"]:
+            return False
+        exp = self.swim_expiry(m)["expires"]
+        return not exp or exp > (d.isoformat() if hasattr(d, "isoformat") else str(d))
+
+    def expiring(self) -> list[dict]:
+        """Active members whose swim test or cox status has expired or expires soon (for the committee)."""
+        out = []
+        for m in sorted(self.members.values(), key=lambda m: m["name"].lower()):
+            if not m["active"]:
+                continue
+            for what, e in (("swim", self.swim_expiry(m)), ("cox", self.cox_expiry(m))):
+                if e["state"] in ("soon", "expired"):
+                    out.append({"id": m["id"], "name": m["name"], "what": what, **e})
+        return sorted(out, key=lambda x: x["expires"])
 
     def status_now(self, member_id: int) -> dict:
         """'May row' at the member's NEXT new outing: counts every outing already done or

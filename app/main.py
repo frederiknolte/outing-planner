@@ -36,7 +36,7 @@ from .autofill import router as autofill_router
 from .usage import router as usage_router
 from .handover import router as handover_router
 from .incidents import router as incidents_router
-from .logic import (BOAT_TYPES, CANCEL_REASONS, SUBS_PLANS, TERMS, TZ, Rules, monday_of, outing_payload,
+from .logic import (BOAT_TYPES, CANCEL_REASONS, SUBS_PLANS, TERMS, TZ, Rules, monday_of, outing_payload, real_today,
                     seat_label, seat_list)
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
@@ -232,6 +232,7 @@ def bootstrap(role: str = Depends(require_member)):
         return {
             "role": role,
             "races_closing": closing_soon(conn) if role == "committee" else [],
+            "expiring": rules.expiring() if role == "committee" else [],
             "club_name": s.get("club_name"),
             "today": rules.today.isoformat(),
             "this_week": monday_of(rules.today).isoformat(),
@@ -239,6 +240,7 @@ def bootstrap(role: str = Depends(require_member)):
             "settings": {
                 "academic_year": s.get("academic_year"), "current_term": s.get("current_term"),
                 "novice_free_outings": rules.free_n,
+                "swim_test_valid_months": rules.swim_months, "cox_status_valid_months": rules.cox_months,
             },
         }
 
@@ -289,7 +291,8 @@ def member_summary(member_id: int, role: str = Depends(require_member)):
             "totals": rules.totals(member_id),
             "status": {"water_ok": status["water"]["ok"], "land_ok": status["land"]["ok"],
                        "water_reasons": status["water"]["reasons"], "land_reasons": status["land"]["reasons"],
-                       "subs_valid": status["subs_valid"], "swim_test": bool(m["swim_test"])},
+                       "subs_valid": status["subs_valid"], "swim_test": bool(m["swim_test"]),
+                       "swim": rules.swim_expiry(m), "cox": rules.cox_expiry(m)},
             "upcoming": upcoming,
         }
 
@@ -666,6 +669,8 @@ class MemberIn(BaseModel):
     subs_term: str = ""
     subs_year: str = ""
     cox_status: str = ""
+    swim_test_date: str = ""                             # YYYY-MM-DD passed, or ''
+    cox_status_date: str = ""                            # YYYY-MM-DD awarded, or ''
     past_water: int = Field(0, ge=0)
     past_land: int = Field(0, ge=0)
     active: bool = True
@@ -699,6 +704,22 @@ def _member_validate(m: MemberIn):
         raise HTTPException(400, "Bad cox status")
     if m.squad not in ("", "open", "women"):
         raise HTTPException(400, "Bad squad")
+    for k, label in (("swim_test_date", "swim test"), ("cox_status_date", "cox status")):
+        v = getattr(m, k).strip()
+        if v:
+            try:
+                date.fromisoformat(v)
+            except ValueError:
+                raise HTTPException(400, f"Bad {label} date")
+            if v > real_today().isoformat():
+                raise HTTPException(400, f"The {label} date is in the future")
+        setattr(m, k, v)
+    if m.swim_test_date:
+        m.swim_test = True
+    if not m.swim_test:
+        m.swim_test_date = ""
+    if not m.cox_status:
+        m.cox_status_date = ""
 
 
 @app.get("/api/committee/members")
@@ -711,6 +732,7 @@ def members_list(_: str = Depends(require_committee)):
             safe = {k: v for k, v in m.items() if k not in ("phone", "cal_token")}
             out.append({**safe, "has_phone": bool(m["phone"]), "phone_masked": privacy.mask(m["phone"]),
                         "swim_test": bool(m["swim_test"]), "active": bool(m["active"]),
+                        "swim": rules.swim_expiry(m), "cox": rules.cox_expiry(m),
                         "totals": rules.totals(m["id"]), "subs_valid": st["subs_valid"],
                         "water_ok": st["water"]["ok"], "land_ok": st["land"]["ok"],
                         "water_reasons": st["water"]["reasons"], "land_reasons": st["land"]["reasons"],
@@ -725,11 +747,11 @@ def member_create(m: MemberIn, _: str = Depends(require_committee)):
         try:
             cur = conn.execute(
                 """INSERT INTO members(name, category, swim_test, subs_plan, subs_term, subs_year, cox_status,
-                   past_water, past_land, active, notes, phone, phone_updated_at, college, side, squad)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ? != '' THEN datetime('now') ELSE '' END,?,?,?)""",
+                   past_water, past_land, active, notes, phone, phone_updated_at, college, side, squad, swim_test_date, cox_status_date)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ? != '' THEN datetime('now') ELSE '' END,?,?,?,?,?)""",
                 (m.name.strip(), m.category, int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
                  m.cox_status, m.past_water, m.past_land, int(m.active), m.notes, _phone_value(m.phone) or "",
-                 m.phone or "", m.college.strip(), m.side, m.squad))
+                 m.phone or "", m.college.strip(), m.side, m.squad, m.swim_test_date, m.cox_status_date))
         except db.sqlite3.IntegrityError:
             raise HTTPException(400, "A member with that name already exists")
         return {"id": cur.lastrowid}
@@ -743,10 +765,10 @@ def member_update(member_id: int, m: MemberIn, _: str = Depends(require_committe
             conn.execute(
                 """UPDATE members SET name=?, category=?, swim_test=?, subs_plan=?, subs_term=?, subs_year=?,
                    cox_status=?, past_water=?, past_land=?, active=?, notes=?, college=?, side=?, squad=?,
-                   needs_review=0 WHERE id=?""",
+                   swim_test_date=?, cox_status_date=?, needs_review=0 WHERE id=?""",
                 (m.name.strip(), m.category, int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
                  m.cox_status, m.past_water, m.past_land, int(m.active), m.notes,
-                 m.college.strip(), m.side, m.squad, member_id))
+                 m.college.strip(), m.side, m.squad, m.swim_test_date, m.cox_status_date, member_id))
             new_phone = _phone_value(m.phone)
             if new_phone is not None:
                 conn.execute("UPDATE members SET phone = ?, phone_updated_at = CASE WHEN ? != '' THEN datetime('now') ELSE '' END WHERE id = ?",
@@ -954,12 +976,12 @@ def members_csv(include_phone: bool = False, _: str = Depends(require_committee)
         rules = Rules(conn)
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(["Name"] + (["Phone"] if include_phone else []) + ["College", "Side", "Category", "Swim test", "Subs plan", "Term", "Year",
-                    "Subs valid", "Cox status", "Water outings", "Land sessions", "Total", "Novice free left", "Active"])
+        w.writerow(["Name"] + (["Phone"] if include_phone else []) + ["College", "Side", "Category", "Swim test", "Swim test date", "Swim test expires", "Subs plan", "Term", "Year",
+                    "Subs valid", "Cox status", "Cox status date", "Cox status expires", "Water outings", "Land sessions", "Total", "Novice free left", "Active"])
         for m in sorted(rules.members.values(), key=lambda m: m["name"].lower()):
             t = rules.totals(m["id"])
-            w.writerow([m["name"]] + ([privacy.decrypt(m["phone"]) or ""] if include_phone else []) + [m["college"], m["side"], m["category"], "Yes" if m["swim_test"] else "No", m["subs_plan"], m["subs_term"],
-                        m["subs_year"], "Yes" if rules.subs_valid(m) else "No", m["cox_status"], t["water"],
+            w.writerow([m["name"]] + ([privacy.decrypt(m["phone"]) or ""] if include_phone else []) + [m["college"], m["side"], m["category"], "Yes" if m["swim_test"] else "No", m["swim_test_date"], rules.swim_expiry(m)["expires"], m["subs_plan"], m["subs_term"],
+                        m["subs_year"], "Yes" if rules.subs_valid(m) else "No", m["cox_status"], m["cox_status_date"], rules.cox_expiry(m)["expires"], t["water"],
                         t["land"], t["total"], "" if t["novice_free_left"] is None else t["novice_free_left"],
                         "Yes" if m["active"] else "No"])
         return Response(buf.getvalue(), media_type="text/csv",
@@ -1379,6 +1401,8 @@ class SettingsIn(BaseModel):
     phone_mode: str = "required"
     phone_retention_days: int = Field(180, ge=0, le=3650)
     swim_test_after: Optional[int] = Field(None, ge=0, le=50)   # None = keep current
+    swim_test_valid_months: Optional[int] = Field(None, ge=0, le=240)
+    cox_status_valid_months: Optional[int] = Field(None, ge=0, le=240)
 
 
 @app.get("/api/committee/settings")
@@ -1390,6 +1414,8 @@ def settings_get(_: str = Depends(require_committee)):
         s["novice_free_outings"] = int(s.get("novice_free_outings") or 0)
         s["terms"] = TERMS
         s["swim_test_after"] = int(s.get("swim_test_after") or 0)
+        s["swim_test_valid_months"] = int(s.get("swim_test_valid_months") or 0)
+        s["cox_status_valid_months"] = int(s.get("cox_status_valid_months") or 0)
         s["phone_encryption"] = privacy.enabled()
         s["phone_retention_days"] = int(s.get("phone_retention_days") or 0)
         s["phone_count"] = conn.execute("SELECT COUNT(*) FROM members WHERE phone != ''").fetchone()[0]
@@ -1412,6 +1438,9 @@ def settings_put(b: SettingsIn, _: str = Depends(require_committee)):
         db.set_setting(conn, "phone_mode", b.phone_mode)
         if b.swim_test_after is not None:
             db.set_setting(conn, "swim_test_after", str(b.swim_test_after))
+        for k in ("swim_test_valid_months", "cox_status_valid_months"):
+            if getattr(b, k) is not None:
+                db.set_setting(conn, k, str(getattr(b, k)))
         db.set_setting(conn, "phone_retention_days", str(b.phone_retention_days))
         privacy.purge_expired(conn, b.phone_retention_days)
         for k in ("club_name", "academic_year", "current_term", "subs_cutoff", "today_override", "season_start"):

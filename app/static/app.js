@@ -21,6 +21,7 @@ const iso = (dt) => dt.toISOString().slice(0, 10);
 const addDays = (s, n) => { const d = pd(s); d.setUTCDate(d.getUTCDate() + n); return iso(d); };
 const dow = (s) => (pd(s).getUTCDay() + 6) % 7;
 const fmtShort = (s) => { const d = pd(s); return `${d.getUTCDate()} ${MON[d.getUTCMonth()]}`; };
+const fmtYear = (s) => `${fmtShort(s)} ${s.slice(0, 4)}`;
 const fmtLong = (s) => `${DAYL[dow(s)]} ${fmtShort(s)}`;
 const initials = (n) => (n || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 
@@ -286,16 +287,34 @@ function shell(active) {
   $("#logout").onclick = async () => { await pushDisable(); await api("/api/logout", { method: "POST" }).catch(() => {}); S.role = S.realRole = null; renderLogin(); };
 }
 
+/* Expiry chip for a dated swim test / cox status ({date, expires, state} from the server). */
+function expiryChip(e, label) {
+  if (!e || !e.state) return "";
+  if (e.state === "expired") return `<span class="chip bad" title="${esc(label)} expired ${esc(fmtYear(e.expires))}">${I.alert}Expired</span>`;
+  if (e.state === "soon") return `<span class="chip warn" title="${esc(label)} expires ${esc(fmtYear(e.expires))}">Expires ${esc(fmtYear(e.expires))}</span>`;
+  return "";
+}
+
 /* Committee only: entries for a race are about to close. Shown when you log in / open the app, and again after 2h away; dismissable. */
 function renderRaceBanner() {
   const el = $("#race-banner"); if (!el) return;
-  const list = isCommittee() && S.raceBanner ? (S.boot.races_closing || []) : [];
-  if (!list.length) { el.innerHTML = ""; return; }
+  const show = isCommittee() && S.raceBanner;
+  const list = show ? (S.boot.races_closing || []) : [];
+  const exp = show ? (S.boot.expiring || []) : [];
+  if (!list.length && !exp.length) { el.innerHTML = ""; return; }
   const left = (h) => h < 1 ? "in under an hour" : h < 24 ? `in ${Math.round(h)} hour${Math.round(h) === 1 ? "" : "s"}` : `in ${Math.round(h / 24)} day${Math.round(h / 24) === 1 ? "" : "s"}`;
-  el.innerHTML = `<div class="race-banner ${list[0].hours_left < 48 ? "urgent" : ""}" role="status">${I.flag}
-    <div class="flag-body"><b>Race entries closing soon</b>${list.map((r) => `<span class="small">${esc(r.title)} — closes ${esc(fmtDT(r.closes_at))} (${left(r.hours_left)})</span>`).join("")}</div>
-    <div class="flag-actions"><a class="btn sm" href="#/races">Races</a><button class="btn ghost sm" id="rb-x">Dismiss</button></div></div>`;
+  const what = { swim: "Swim test", cox: "Cox status" };
+  const expLine = (x) => `<span class="small">${esc(x.name)} — ${what[x.what]} ${x.state === "expired" ? "expired" : "expires"} ${esc(fmtYear(x.expires))}</span>`;
+  const urgent = (list[0] && list[0].hours_left < 48) || exp.some((x) => x.state === "expired");
+  const MAX = 5;
+  el.innerHTML = `<div class="race-banner ${urgent ? "urgent" : ""}" role="status">${I.alert}
+    <div class="flag-body">
+      ${list.length ? `<b>Race entries closing soon</b>${list.map((r) => `<span class="small">${esc(r.title)} — closes ${esc(fmtDT(r.closes_at))} (${left(r.hours_left)})</span>`).join("")}` : ""}
+      ${exp.length ? `<b${list.length ? ' style="margin-top:6px"' : ""}>Swim tests and cox statuses to renew</b>${exp.slice(0, MAX).map(expLine).join("")}${exp.length > MAX ? `<span class="small muted">and ${exp.length - MAX} more</span>` : ""}` : ""}
+    </div>
+    <div class="flag-actions">${list.length ? `<a class="btn sm" href="#/races">Races</a>` : ""}${exp.length ? `<a class="btn sm" href="#/rowers" id="rb-exp">Members</a>` : ""}<button class="btn ghost sm" id="rb-x">Dismiss</button></div></div>`;
   $("#rb-x").onclick = () => { S.raceBanner = false; renderRaceBanner(); };
+  const rbe = $("#rb-exp"); if (rbe) rbe.onclick = () => { rowerCat = "expiring"; };
 }
 
 let hiddenAt = 0;
@@ -1452,7 +1471,8 @@ async function pageMe() {
       <span class="chip ${st.water_ok ? "ok" : "bad"}">${st.water_ok ? I.check : I.x}Water${st.water_reasons.length ? ": " + esc(st.water_reasons.join(", ")) : ""}</span>
       <span class="chip ${st.land_ok ? "ok" : "bad"}">${st.land_ok ? I.check : I.x}Land${st.land_reasons.length ? ": " + esc(st.land_reasons.join(", ")) : ""}</span>
       <span class="chip ${st.subs_valid ? "ok" : "warn"}">Subs ${st.subs_valid ? "paid" : "not paid for this term"}</span>
-      <span class="chip ${st.swim_test ? "ok" : "warn"}">Swim test ${st.swim_test ? "passed" : "not recorded"}</span>
+      <span class="chip ${!st.swim_test || st.swim.state === "soon" ? "warn" : st.swim.state === "expired" ? "bad" : "ok"}">Swim test ${!st.swim_test ? "not recorded" : st.swim.state === "expired" ? `expired ${esc(fmtYear(st.swim.expires))}` : st.swim.expires ? `valid until ${esc(fmtYear(st.swim.expires))}` : "passed"}</span>
+      ${st.cox.expires ? `<span class="chip ${st.cox.state === "expired" ? "bad" : st.cox.state === "soon" ? "warn" : "ok"}">Cox status ${st.cox.state === "expired" ? "expired" : "valid until"} ${esc(fmtYear(st.cox.expires))}</span>` : ""}
     </div><p class="small faint" style="margin:10px 0 0">Something wrong? Speak to a committee member.</p></div>
     <div class="section-title">Upcoming sessions</div>
     ${d.upcoming.length ? `<div class="days" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">${d.upcoming.map((o) => `<div><div class="day-head"><b>${DAY[dow(o.date)]}</b><span>${fmtShort(o.date)}</span></div>${outingCard(o)}</div>`).join("")}</div>`
@@ -1583,7 +1603,7 @@ async function pageRowers() {
     else rows = await api("/api/rowers");
   } catch (e) { return fail(e); }
   const draw = () => {
-    let list = rows.filter((r) => (!rowerQ || fold(r.name).includes(rowerQ)) && (rowerCat === "all" || (rowerCat === "inactive" ? !r.active : rowerCat === "issues" ? (r.active !== false && (!r.water_ok || !r.land_ok)) : r.category === rowerCat && r.active !== false)));
+    let list = rows.filter((r) => (!rowerQ || fold(r.name).includes(rowerQ)) && (rowerCat === "all" || (rowerCat === "inactive" ? !r.active : rowerCat === "issues" ? (r.active !== false && (!r.water_ok || !r.land_ok)) : rowerCat === "expiring" ? (r.active && [r.swim?.state, r.cox?.state].some((x) => x === "soon" || x === "expired")) : r.category === rowerCat && r.active !== false)));
     if (rowerCat !== "inactive" && committee) list = list.filter((r) => rowerCat === "all" || r.active);
     const k = rowerSort.k;
     list.sort((a, b) => (typeof a[k] === "string" ? a[k].localeCompare(b[k]) : (a[k] ?? -1) - (b[k] ?? -1)) * rowerSort.dir || a.name.localeCompare(b.name));
@@ -1595,9 +1615,9 @@ async function pageRowers() {
       <tbody>${list.map((r) => `<tr class="${committee ? "clickable" : ""}" data-id="${r.id}">
         <td><b>${esc(r.name)}</b>${cttee[r.id] ? ` ${committeeBadge(cttee[r.id])}` : ""}${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${committee && !r.active ? ` <span class="chip">inactive</span>` : ""}${committee && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
         <td><span class="chip ${r.category === "Novice" ? "accent" : ""}">${esc(r.category)}</span></td>
-        ${committee ? `<td>${r.swim_test ? `<span class="chip ok">${I.check}Yes</span>` : `<span class="chip warn">No</span>`}</td>
+        ${committee ? `<td>${!r.swim_test ? `<span class="chip warn">No</span>` : r.swim.state === "expired" || r.swim.state === "soon" ? expiryChip(r.swim, "Swim test") : `<span class="chip ok" title="${r.swim.expires ? `Valid until ${esc(fmtYear(r.swim.expires))}` : "Date not recorded"}">${I.check}Yes</span>`}</td>
           <td>${r.subs_valid ? `<span class="chip ok">${esc(r.subs_plan === "Full year" ? "Full year" : r.subs_term)}</span>` : `<span class="chip ${r.subs_plan === "Unpaid" ? "warn" : "bad"}" title="${esc(r.subs_plan)} ${esc(r.subs_term)} ${esc(r.subs_year)}">${r.subs_plan === "Unpaid" ? "Unpaid" : "Expired"}</span>`}</td>
-          <td>${r.cox_status ? `<span class="chip violet">${esc(r.cox_status)}</span>` : ""}</td>
+          <td>${r.cox_status ? `<span class="chip violet" title="${r.cox.expires ? `Valid until ${esc(fmtYear(r.cox.expires))}` : "Date not recorded"}">${esc(r.cox_status)}</span>${expiryChip(r.cox, "Cox status")}` : ""}</td>
           <td>${r.water_ok && r.land_ok ? `<span class="chip ok">${I.check}Yes</span>` : `<span class="chip bad" title="${esc([...r.water_reasons.map((x) => "Water: " + x), ...r.land_reasons.map((x) => "Land: " + x)].join("\n"))}">${!r.water_ok && !r.land_ok ? "No" : r.water_ok ? "Water only" : "Land only"}</span>`}</td>`
           : `<td>${r.cox_status ? `<span class="chip violet">${esc(r.cox_status)}</span>` : ""}</td>`}
         <td class="num">${r.water}</td><td class="num">${r.land}</td><td class="num"><b>${r.total}</b></td>
@@ -1621,7 +1641,7 @@ async function pageRowers() {
     </div>
     <div class="filters">
       <input class="input" id="rw-q" placeholder="Search names…" style="max-width:260px" value="${esc(rowerQ)}">
-      <div class="seg" id="rw-cat">${[["all", "All"], ["Novice", "Novice"], ["Senior", "Senior"], ...(committee ? [["issues", "Can't row"], ["inactive", "Inactive"]] : [])].map(([k, l]) => `<button data-c="${k}" class="${rowerCat === k ? "on" : ""}">${l}</button>`).join("")}</div>
+      <div class="seg" id="rw-cat">${[["all", "All"], ["Novice", "Novice"], ["Senior", "Senior"], ...(committee ? [["issues", "Can't row"], ["expiring", "Expiring"], ["inactive", "Inactive"]] : [])].map(([k, l]) => `<button data-c="${k}" class="${rowerCat === k ? "on" : ""}">${l}</button>`).join("")}</div>
       <span class="faint small" id="rw-count" style="margin-left:auto"></span>
     </div>
     <div class="card table-wrap" id="rw-table"></div>`;
@@ -1683,6 +1703,10 @@ function editMember(m, meta) {
         <label class="field"><span>Coxing status</span><select class="input" id="me-cox">${[["", "Not a cox"], ["N", "N — Novice (needs bankrider)"], ["X", "X — Experienced"], ["S", "S — Senior"]].map(([k, l]) => `<option value="${k}" ${v.cox_status === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
         <div class="field"><span>&nbsp;</span><label class="check"><input type="checkbox" id="me-swim" ${v.swim_test ? "checked" : ""}> Swim test passed</label></div>
       </div>
+      <div class="grid-2">
+        <label class="field"><span>Cox status awarded</span><input class="input" type="date" id="me-coxd" max="${esc(S.boot.today)}" value="${esc(v.cox_status_date || "")}"><span class="hint" id="me-coxd-h"></span></label>
+        <label class="field"><span>Swim test date</span><input class="input" type="date" id="me-swimd" max="${esc(S.boot.today)}" value="${esc(v.swim_test_date || "")}"><span class="hint" id="me-swimd-h"></span></label>
+      </div>
       <div class="grid-3">
         <label class="field"><span>Earlier water outings</span><input class="input" type="number" min="0" id="me-pw" value="${v.past_water}"><span class="hint">Before using this app</span></label>
         <label class="field"><span>Earlier land sessions</span><input class="input" type="number" min="0" id="me-pl" value="${v.past_land}"></label>
@@ -1695,6 +1719,18 @@ function editMember(m, meta) {
     onMount: (el, close) => {
       const sync = () => { const p = $("#me-plan", el).value; $("#me-term-f", el).classList.toggle("hidden", p !== "Single term"); $("#me-year-f", el).classList.toggle("hidden", p === "Unpaid"); };
       $("#me-plan", el).onchange = sync; sync();
+      // Expiry hints under the two dates (validity periods come from Settings).
+      const vm = { swim: S.boot.settings.swim_test_valid_months, cox: S.boot.settings.cox_status_valid_months };
+      const hint = (inp, h, months) => {
+        const d = $(inp, el).value;
+        if (!d) { $(h, el).textContent = "Optional. Leave blank if unknown (then it never expires)."; return; }
+        if (!months) { $(h, el).textContent = "Doesn't expire (see Settings)."; return; }
+        const x = pd(d); x.setUTCMonth(x.getUTCMonth() + months); const e = x.toISOString().slice(0, 10);
+        $(h, el).textContent = `${e <= S.boot.today ? "Expired" : "Valid until"} ${fmtYear(e)}`;
+      };
+      const hints = () => { hint("#me-swimd", "#me-swimd-h", vm.swim); hint("#me-coxd", "#me-coxd-h", vm.cox); };
+      $("#me-swimd", el).oninput = () => { if ($("#me-swimd", el).value) $("#me-swim", el).checked = true; hints(); };
+      $("#me-coxd", el).oninput = hints; hints();
       // Phone: only sent when changed (null = keep the stored, encrypted number).
       let phoneTouched = false;
       const ph = $("#me-phone", el);
@@ -1705,7 +1741,8 @@ function editMember(m, meta) {
       $("#me-save", el).onclick = async () => {
         const body = { name: $("#me-name", el).value.trim(), category: $("#me-cat", el).value, subs_plan: $("#me-plan", el).value,
           subs_term: $("#me-plan", el).value === "Single term" ? $("#me-term", el).value : "", subs_year: $("#me-plan", el).value === "Unpaid" ? "" : $("#me-year", el).value.trim(),
-          cox_status: $("#me-cox", el).value, swim_test: $("#me-swim", el).checked, past_water: +$("#me-pw", el).value || 0, past_land: +$("#me-pl", el).value || 0,
+          cox_status: $("#me-cox", el).value, swim_test: $("#me-swim", el).checked,
+          swim_test_date: $("#me-swimd", el).value, cox_status_date: $("#me-coxd", el).value, past_water: +$("#me-pw", el).value || 0, past_land: +$("#me-pl", el).value || 0,
           active: $("#me-active", el).checked, notes: $("#me-notes", el).value,
           phone: phoneTouched ? $("#me-phone", el).value.trim() : (m ? null : ($("#me-phone", el).value.trim() || null)), college: $("#me-college", el).value.trim(), side: $("#me-side", el).value, squad: $("#me-squad", el).value };
         if (!body.name) return toast("Name is required", true);
@@ -2744,6 +2781,8 @@ async function pageSettings() {
         <div class="grid-2">
           <label class="field"><span>Swim test required after</span><input class="input" type="number" min="0" max="50" id="s-swim" value="${s.swim_test_after}"><span class="hint">Water outings anyone may do before a swim test is needed (applies to everyone).</span></label>
           <span></span>
+          <label class="field"><span>Swim test valid for (months)</span><input class="input" type="number" min="0" max="240" id="s-swimv" value="${s.swim_test_valid_months}"><span class="hint">Counted from the swim test date. 0 = never expires. An expired swim test counts as no swim test.</span></label>
+          <label class="field"><span>Cox status valid for (months)</span><input class="input" type="number" min="0" max="240" id="s-coxv" value="${s.cox_status_valid_months}"><span class="hint">Counted from the date it was awarded. 0 = never expires. Expiry is a warning only.</span></label>
           <label class="field"><span>Coaching year starts</span><input class="input" type="date" id="s-season" value="${esc(s.season_start)}"><span class="hint">First month on the Coaches page.</span></label>
           <label class="field"><span>Override “today” (testing)</span><input class="input" type="date" id="s-today" value="${esc(s.today_override)}"><span class="hint">Leave blank normally.</span></label>
         </div>
@@ -2833,7 +2872,8 @@ async function pageSettings() {
   };
   $("#s-save").onclick = async () => {
     const body = { club_name: $("#s-club").value.trim() || "Reuben Boat Club", academic_year: $("#s-ay").value.trim(), current_term: $("#s-term").value, subs_cutoff: $("#s-cut").value,
-      novice_free_outings: +$("#s-free").value || 0, novice_land_free: $("#s-land").checked, season_start: $("#s-season").value, today_override: $("#s-today").value, swim_test_after: Math.max(0, +$("#s-swim").value || 0), ...phoneFields() };
+      novice_free_outings: +$("#s-free").value || 0, novice_land_free: $("#s-land").checked, season_start: $("#s-season").value, today_override: $("#s-today").value, swim_test_after: Math.max(0, +$("#s-swim").value || 0),
+      swim_test_valid_months: Math.max(0, +$("#s-swimv").value || 0), cox_status_valid_months: Math.max(0, +$("#s-coxv").value || 0), ...phoneFields() };
     try { await api("/api/committee/settings", { method: "PUT", body }); toast("Settings saved"); await reboot(); shell("settings"); pageSettings(); } catch (e) { fail(e); }
   };
   $("#s-mpw-save").onclick = async () => {
