@@ -21,7 +21,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import db
 from .auth import require_committee, require_member, role_of
 from . import privacy
-from . import river
+from . import river, weather
 from . import push
 from . import crewlog
 from .timeutil import normalize as norm_time, to_minutes
@@ -1307,6 +1307,21 @@ def week_copy(b: CopyWeekIn, _: str = Depends(require_committee)):
                                 SELECT ?, seat, member_id FROM assignments WHERE outing_id=?""", (cur.lastrowid, o["id"]))
             n += 1
         return {"copied": n}
+
+
+# ------------------------------------------------------------- weather ----
+@app.get("/api/outings/{outing_id}/weather")
+def outing_weather(outing_id: int, role: str = Depends(require_member)):
+    """Forecast for a session (Open-Meteo), loaded when its popup opens."""
+    with db.get_conn() as conn:
+        o = conn.execute("SELECT * FROM outings WHERE id = ?", (outing_id,)).fetchone()
+        if not o or (not o["published"] and role != "committee"):
+            raise HTTPException(404, "Session not found")
+        o = dict(o)
+        place = conn.execute("SELECT lat, lon FROM places WHERE name = ? COLLATE NOCASE", (o.get("location") or "",)).fetchone()
+        today = Rules(conn).today
+    # The (possibly slow) fetch happens outside the database connection.
+    return weather.for_outing(o, dict(place) if place else None, today)
 
 
 # --------------------------------------------------------------- river ----

@@ -625,6 +625,24 @@ function outingAct(t, o) {
 }
 
 /* Rowers' read-only view of an outing: full names, who's subbing for whom, and the same seat actions as the card. */
+/* Forecast for a session (Open-Meteo via the server), filled into the popup once it loads. */
+const WX_ICON = { sun: "☀️", partly: "⛅", cloud: "☁️", fog: "🌫️", rain: "🌧️", snow: "🌨️", storm: "⛈️" };
+const WX_GUSTY = 30; // mph: gusts from here on are highlighted
+async function loadWeather(o, el) {
+  let w;
+  try { w = await api(`/api/outings/${o.id}/weather`); } catch { w = { available: false, reason: "The forecast couldn't be loaded right now." }; }
+  if (!el.isConnected) return;
+  if (!w.available) { el.innerHTML = `<span class="small faint">${esc(w.reason)}</span>`; return; }
+  const temp = w.temp_min !== w.temp_max ? `${w.temp_min}–${w.temp_max}°C` : `${w.temp}°C`;
+  const gusty = w.gust != null && w.gust >= WX_GUSTY;
+  el.innerHTML = `<span class="wx-ico" aria-hidden="true">${WX_ICON[w.icon] || "🌡️"}</span>
+    <div class="wx-body">
+      <div><b>${esc(w.condition)}</b> · <b class="tnum">${temp}</b>${w.feels != null && w.feels !== w.temp ? ` <span class="faint">(feels ${w.feels}°)</span>` : ""}</div>
+      <div class="small"><span class="${gusty ? "wx-gusty" : ""}">Wind <b class="tnum">${w.wind} mph</b>${w.wind_dir ? ` ${esc(w.wind_dir)}` : ""}${w.gust != null ? `, gusts <b class="tnum">${w.gust}</b>` : ""}</span>${w.rain_chance != null ? ` · Rain <b class="tnum">${w.rain_chance}%</b>${w.rain_mm ? ` (${w.rain_mm} mm)` : ""}` : ""}</div>
+      <div class="small faint">Forecast for ${w.timed ? `${esc(w.hours[0])}–${esc(w.hours[1])}` : "the daytime (no time set)"} · <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a></div>
+    </div>`;
+}
+
 function viewOuting(o) {
   const name = o.title || (o.kind === "water" ? "Water outing" : "Land training");
   const seats = o.kind === "land" ? o.seats.filter((s) => s.member).map((s, i) => ({ ...s, label: String(i + 1) })) : o.seats;
@@ -646,6 +664,7 @@ function viewOuting(o) {
         ${o.location ? `<div>${I.pin}${o.maps_url ? `<a href="${esc(o.maps_url)}" target="_blank" rel="noopener">${esc(o.location)}</a>` : esc(o.location)}</div>` : ""}
         ${o.coach ? `<div>${I.whistle}Coach: ${esc(o.coach)}</div>` : ""}
       </div>
+      ${o.cancelled || o.past ? "" : `<div class="wx" id="wx"><span class="small faint">Loading forecast…</span></div>`}
       <div class="seats seats-detail">${seats.map(row).join("") || `<div class="seat open"><span class="sl"></span><span class="sn">No one yet. Be the first!</span></div>`}</div>
       ${o.cancelled ? "" : o.kind === "land" ? (o.spots ? `<div class="o-foot"><span class="chip accent">${esc(o.spots_text)} of ${o.capacity}</span></div>` : "") : waterFoot(o)}
       ${o.notes ? `<div class="callout">${I.info}<div>${esc(o.notes)}</div></div>` : ""}
@@ -654,6 +673,7 @@ function viewOuting(o) {
     foot: `<div class="r">${join ? `<button class="btn primary" data-act="join">${I.plus}Join</button>` : ""}<button class="btn" data-close>Close</button></div>`,
     onMount: (el, close) => {
       $$("[data-act]", el).forEach((b) => b.onclick = (e) => { e.stopPropagation(); close(); outingAct(b, o); });
+      const wx = $("#wx", el); if (wx) loadWeather(o, wx);
     },
   });
 }
