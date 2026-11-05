@@ -2,7 +2,8 @@
 
 Each member gets a secret, unguessable feed URL (calendar apps can't log in, so
 the token *is* the credential). The feed lists the published outings they're
-seated in, plus sessions where they're named as coach/bankrider. Calendar apps
+seated in, sessions where they're named as coach/bankrider, and races where
+they're in a published crew. Calendar apps
 poll it, so changes to crews, subs and times show up automatically.
 """
 from __future__ import annotations
@@ -18,7 +19,7 @@ from fastapi.responses import Response
 
 from . import db
 from .auth import require_member
-from .logic import CANCEL_REASONS, TZ, real_today, seat_label
+from .logic import BOAT_TYPES, CANCEL_REASONS, TZ, real_today, seat_label
 from .timeutil import parse_time
 
 router = APIRouter()
@@ -145,8 +146,56 @@ def build_feed(conn, member: dict, base_url: str) -> str:
         ev += ["STATUS:CANCELLED", "TRANSP:TRANSPARENT"] if o["cancelled"] else ["STATUS:CONFIRMED", "TRANSP:OPAQUE"]
         ev += ["END:VEVENT"]
         lines += ev
+    lines += _race_events(conn, member, club, since, base_url, host, now, places)
     lines.append("END:VCALENDAR")
     return "\r\n".join(_fold(x) for x in lines) + "\r\n"
+
+
+def _race_events(conn, member: dict, club: str, since: str, base_url: str, host: str, now: str, places: dict) -> list[str]:
+    """One event per race where they're in a published crew, with the whole crew in the description.
+    Timed if the race's time slot reads as a time ("09:00-13:00"), otherwise all day."""
+    lines = []
+    rows = conn.execute(
+        """SELECT r.*, c.id AS crew_id, c.name AS crew_name, c.boat_type, c.notes AS crew_notes, s.seat AS my_seat
+           FROM race_crew_seats s JOIN race_crews c ON c.id = s.crew_id JOIN races r ON r.id = c.race_id
+           WHERE s.member_id = ? AND r.crews_published = 1 AND r.date >= ? ORDER BY r.date""", (member["id"], since)).fetchall()
+    for r in rows:
+        rowers = BOAT_TYPES.get(r["boat_type"], (8, 1))[0]
+        seat = seat_label(r["my_seat"], rowers, "water")
+        crew = conn.execute("""SELECT s.seat, m.name FROM race_crew_seats s JOIN members m ON m.id = s.member_id
+                               WHERE s.crew_id = ?""", (r["crew_id"],)).fetchall()
+        taken = {x["seat"]: x["name"] for x in crew}
+        seats = ([0] if BOAT_TYPES.get(r["boat_type"], (8, 1))[1] else []) + list(range(rowers, 0, -1))
+        desc = [f"{club} · Race", f"Crew: {r['crew_name']} ({r['boat_type']})", ""]
+        desc += [f"  {seat_label(n, rowers, 'water')}: {taken.get(n, 'Sub needed')}" for n in seats]
+        if r["crew_notes"]:
+            desc += ["", r["crew_notes"]]
+        if r["notes"]:
+            desc += ["", r["notes"]]
+        desc += ["", f"Races: {base_url.rstrip('/')}/#/races"]
+        d = date.fromisoformat(r["date"])
+        ev = ["BEGIN:VEVENT", f"UID:race-{r['id']}-m{member['id']}@{host}", f"DTSTAMP:{now}"]
+        t = parse_time(r["time_slot"])
+        if t:
+            start, end = t
+            sdt = datetime(d.year, d.month, d.day, *start)
+            edt = datetime(d.year, d.month, d.day, *end) if end else sdt + timedelta(hours=3)
+            if edt <= sdt:
+                edt = sdt + timedelta(hours=3)
+            ev += [f"DTSTART:{_utc(d, start)}", f"DTEND:{_utc(edt.date(), (edt.hour, edt.minute))}"]
+        else:
+            ev += [f"DTSTART;VALUE=DATE:{d.strftime('%Y%m%d')}", f"DTEND;VALUE=DATE:{(d + timedelta(days=1)).strftime('%Y%m%d')}"]
+            if r["time_slot"]:
+                desc.insert(1, f"Time: {r['time_slot']}")
+        role = seat if not seat.isdigit() else f"Seat {seat}"
+        summary = f"{r['title']} – {r['crew_name']} ({role})"
+        ev += [f"SUMMARY:{_esc(summary)}",
+               f"DESCRIPTION:{_esc(chr(10).join(desc))}"]
+        if r["city"]:
+            ev += _location_lines(r["city"], places.get(r["city"].strip().lower()))
+        ev += ["STATUS:CONFIRMED", "TRANSP:OPAQUE", "END:VEVENT"]
+        lines += ev
+    return lines
 
 
 def _location_lines(name: str, place: Optional[dict]) -> list[str]:

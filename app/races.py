@@ -201,6 +201,28 @@ def _load_crews(conn, race_ids=None) -> dict[int, list[dict]]:
     return crews
 
 
+def week_races(conn, start: str, end: str, committee: bool) -> list[dict]:
+    """Races between start and end (inclusive) that have crews, for the schedule. Rowers only get published crews.
+    Each crew lists every seat, empty ones with member_id None (they need a sub)."""
+    rows = conn.execute("SELECT id, title, date, city, time_slot, crews_published FROM races WHERE date BETWEEN ? AND ?"
+                        + ("" if committee else " AND crews_published = 1") + " ORDER BY date, id", (start, end)).fetchall()
+    crews = _load_crews(conn, [r["id"] for r in rows]) if rows else {}
+    out = []
+    for r in rows:
+        if not crews.get(r["id"]):
+            continue
+        full = []
+        for c in crews[r["id"]]:
+            rowers, coxed = BOAT_TYPES.get(c["boat_type"], (8, 1))
+            by = {x["seat"]: x for x in c["seats"]}
+            seats = ([0] if coxed else []) + list(range(rowers, 0, -1))
+            full.append({**c, "seats": [by.get(n) or {"seat": n, "label": seat_label(n, rowers, "water"), "member_id": None, "name": ""}
+                                        for n in seats]})
+        out.append({"id": r["id"], "title": r["title"], "date": r["date"], "city": r["city"], "time_slot": r["time_slot"],
+                    "published": bool(r["crews_published"]), "crews": full})
+    return out
+
+
 @router.get("/api/races")
 def races_list(me: Optional[int] = None, role: str = Depends(require_member)):
     committee = role == "committee"

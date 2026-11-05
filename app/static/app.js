@@ -554,6 +554,19 @@ function outingCard(o) {
   </article>`;
 }
 
+/* A race with crews, shown on its day in the schedule (tap to go to Races). Empty seats need a sub; the committee fills them. */
+function raceScheduleCard(rc) {
+  const committee = isCommittee();
+  const crew = (c) => `<div class="rs-crew"><div class="rs-crew-h"><b>${esc(c.name)}</b><span class="faint">${esc(c.boat_type)}</span></div>
+    <div class="seats">${c.seats.map((x) => `<div class="seat ${x.member_id == null ? "open subneed" : ""} ${x.member_id != null && x.member_id === S.me ? "me" : ""}"><span class="sl">${esc(raceSeatShort(x.label))}</span><span class="sn">${x.member_id == null ? "Sub needed" : esc(x.name)}</span></div>`).join("")}</div></div>`;
+  return `<article class="card outing race-out ${rc.published ? "" : "draft"} clickable" data-race-go="${rc.id}" title="Open in Races">
+    <div class="o-top"><div><div class="o-time">${esc(rc.time_slot || "Race day")}</div><div class="o-title">${esc(rc.title)}</div></div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px"><span class="chip race-chip">${I.trophy}Race</span>${committee && !rc.published ? `<span class="chip">Draft</span>` : ""}</div></div>
+    ${rc.city ? `<div class="o-sub"><span>${I.pin}${esc(rc.city)}</span></div>` : ""}
+    ${rc.crews.map(crew).join("")}
+  </article>`;
+}
+
 async function pageSchedule() {
   if (!S.week) S.week = isCommittee() ? addDays(S.boot.this_week, 0) : S.boot.this_week;
   const main = $("#main");
@@ -568,7 +581,10 @@ async function pageSchedule() {
     : data.published === 0 ? `<span class="status-pill" style="background:var(--surface-3);color:var(--text-2)"><span class="dot"></span>Draft — not visible to rowers</span>`
     : `<span class="status-pill" style="background:var(--warn-soft);color:var(--warn)"><span class="dot"></span>${data.published}/${data.total} published</span>`;
   const outs = data.outings.filter((o) => S.filter === "all" || (S.filter === "mine" ? o.seats.some((s) => s.member && s.member.id === S.me) : S.filter === "subs" ? o.open_subs > 0 : S.filter === "open" ? (o.kind === "land" && o.spots > 0 && !o.past && !o.cancelled) : o.kind === S.filter));
-  const myCount = data.outings.filter((o) => o.seats.some((s) => s.member && s.member.id === S.me)).length;
+  const inRace = (rc) => rc.crews.some((c) => c.seats.some((x) => x.member_id != null && x.member_id === S.me));
+  const raceSubs = (rc) => rc.crews.some((c) => c.seats.some((x) => x.member_id == null));
+  const races = (data.races || []).filter((rc) => S.filter === "all" || (S.filter === "mine" && inRace(rc)) || (S.filter === "subs" && raceSubs(rc)) || S.filter === "water");
+  const myCount = data.outings.filter((o) => o.seats.some((s) => s.member && s.member.id === S.me)).length + (data.races || []).filter(inRace).length;
   main.innerHTML = `
     <div class="page-head">
       <div><h1>${isThis ? "This week" : data.start > S.boot.this_week ? (addDays(S.boot.this_week, 7) === data.start ? "Next week" : "Upcoming week") : "Past week"}</h1>
@@ -594,15 +610,15 @@ async function pageSchedule() {
         ${flagPill(data.river && data.river.flag)}
       </div>
     </div>
-    ${!committee && data.outings.length === 0 ? `<div class="card empty">${I.calendar}<h3>Nothing published yet</h3><p>The schedule for this week hasn't been released. Check back soon.</p></div>` : `
+    ${!committee && data.outings.length === 0 && !(data.races || []).length ? `<div class="card empty">${I.calendar}<h3>Nothing published yet</h3><p>The schedule for this week hasn't been released. Check back soon.</p></div>` : `
     <div class="days week" id="wk-days">${data.days.map((d) => {
-      const list = outs.filter((o) => o.date === d);
+      const list = outs.filter((o) => o.date === d), rlist = races.filter((rc) => rc.date === d);
       return `<section class="day ${d === data.today ? "today" : ""}"><div class="day-head"><b>${DAY[dow(d)]}</b><span>${d === data.today ? "Today · " : ""}${fmtShort(d)}</span></div>
         ${data.river && data.river.days[d] ? (() => { const x = data.river.days[d]; return `<div class="day-sun" title="Sunrise ${x.sunrise} · sunset ${x.sunset}. Rowing allowed from 1 hour before sunrise to 1 hour after sunset.">On the water ${x.first}–${x.last}</div>`; })() : ""}
-        <div class="day-body">${list.map(outingCard).join("") || (committee ? `<div class="day-empty">No sessions<br><button class="btn sm" data-new="water" data-date="${d}">${I.plus}Add</button></div>` : `<div class="day-empty">Rest day</div>`)}</div></section>`;
+        <div class="day-body">${rlist.map(raceScheduleCard).join("") + list.map(outingCard).join("") || (committee ? `<div class="day-empty">No sessions<br><button class="btn sm" data-new="water" data-date="${d}">${I.plus}Add</button></div>` : `<div class="day-empty">Rest day</div>`)}</div></section>`;
     }).join("")}</div>`}
     <div class="legend">
-      <span><i class="sw" style="background:var(--water)"></i>Water</span><span><i class="sw" style="background:var(--land)"></i>Land</span>
+      <span><i class="sw" style="background:var(--water)"></i>Water</span><span><i class="sw" style="background:var(--land)"></i>Land</span>${(data.races || []).length ? `<span><i class="sw" style="background:var(--violet)"></i>Race</span>` : ""}
       <span><i class="sw" style="background:var(--accent-soft);border:1px solid var(--accent)"></i>You</span>
       <span><i class="sw" style="background:var(--warn)"></i>Sub needed — tap to take the seat</span>
       ${committee ? `<span><i class="sw" style="background:var(--bad)"></i>Ineligible (no subs after cutoff / no swim test)</span><span><i class="sw" style="background:repeating-linear-gradient(135deg,var(--surface),var(--surface) 3px,var(--surface-3) 3px,var(--surface-3) 6px);border:1px solid var(--border)"></i>Draft</span>` : ""}
@@ -627,7 +643,8 @@ async function pageSchedule() {
     if (unpub) unpub.onclick = async () => { await api("/api/committee/week/publish", { method: "POST", body: { start: data.start, published: false } }).catch(fail); toast("Week set back to draft"); pageSchedule(); };
   }
   if (committee && S.pendingNew) { const d = S.pendingNew; S.pendingNew = null; editOuting(null, d); }
-  $$(".outing").forEach((card) => card.addEventListener("click", (e) => {
+  $$("[data-race-go]").forEach((card) => card.onclick = () => { location.hash = "#/races"; });
+  $$(".outing:not(.race-out)").forEach((card) => card.addEventListener("click", (e) => {
     const t = e.target.closest("[data-act]");
     const o = data.outings.find((x) => x.id === +card.dataset.oid);
     if (t) { e.stopPropagation(); return outingAct(t, o); }
@@ -3533,8 +3550,8 @@ function raceCard(r, data) {
     : committee ? `<div class="race-side race-side-empty"><span class="faint small">No crews yet.</span><button type="button" class="btn sm" data-race-crews>${I.users}Form crews</button></div>`
     : r.past ? "" : `<div class="race-side race-side-empty"><span class="faint small">Crews will show here once the committee publishes them.</span></div>`;
   return `<article class="card race ${r.past ? "past" : ""}" data-race="${r.id}">
-    <div class="race-head"><div class="datebox"><span>${DAY[dow(r.date)]}</span><b>${d.getUTCDate()}</b><span>${MON[d.getUTCMonth()]}</span></div>
-      <div class="race-head-main"><button type="button" class="race-title" data-race-info title="Show all details">${esc(r.title)}</button>
+    <div class="race-head clickable" data-race-head title="Show all details"><div class="datebox"><span>${DAY[dow(r.date)]}</span><b>${d.getUTCDate()}</b><span>${MON[d.getUTCMonth()]}</span></div>
+      <div class="race-head-main"><div class="race-title">${esc(r.title)}</div>
         <div class="o-sub">${r.city ? `<span>${I.pin}${esc(r.city)}</span>` : ""}${r.time_slot ? `<span>${esc(r.time_slot)}</span>` : ""}${r.term ? `<span>${esc(r.term)}</span>` : ""}</div>
         <div class="race-chips"><span class="chip ${RACE_ENTRY_CHIP[r.entry]}">${esc(data.entry[r.entry])}</span>${r.squad !== "any" ? `<span class="chip violet">${esc(data.squads[r.squad])} squad</span>` : ""}${r.race_type ? `<span class="chip">${esc(r.race_type)}</span>` : ""}${!r.open && !r.past ? `<span class="chip warn">Sign-up closed</span>` : ""}</div>
         ${raceWindow(r)}</div>
@@ -3846,6 +3863,9 @@ async function pageRaces() {
     $$("[data-race-who]", card).forEach((b) => b.onclick = () => raceWhoModal(r, data, b.dataset.raceWho));
     $$("[data-race-crews]", card).forEach((b) => b.onclick = () => raceCrewsModal(r, data));
     $$("[data-race-info]", card).forEach((b) => b.onclick = () => raceInfoModal(r, data));
+    // The whole top part opens the details too (its own buttons and links keep doing their thing).
+    const head = $("[data-race-head]", card);
+    head.onclick = (e) => { if (!e.target.closest("button, a")) raceInfoModal(r, data); };
   });
 }
 

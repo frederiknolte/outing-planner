@@ -28,7 +28,7 @@ from .timeutil import normalize as norm_time, to_minutes
 from .calendar import router as calendar_router
 from .signup import availability_for_outing, week_counts, router as signup_router
 from .stats import router as stats_router
-from .races import router as races_router, closing_soon
+from .races import router as races_router, closing_soon, week_races
 from . import issues
 from .committee_roster import router as roster_router
 from .tasks import router as tasks_router
@@ -262,6 +262,7 @@ def week(start: Optional[str] = None, role: str = Depends(require_member)):
             "start": ws.isoformat(),
             "days": [(ws + timedelta(days=i)).isoformat() for i in range(7)],
             "outings": outings,
+            "races": week_races(conn, ws.isoformat(), we.isoformat(), committee),
             "total": counts["n"] or 0,
             "published": counts["p"] or 0,
             "today": rules.today.isoformat(),
