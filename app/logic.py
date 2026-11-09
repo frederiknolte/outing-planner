@@ -10,7 +10,8 @@ Rules follow the club's original spreadsheet:
     `swim_test_valid_months` (`cox_status_valid_months`, `capsize_drill_valid_months`) months,
     the same for everyone; 0 = never. An expired swim test counts as no swim test. With no date
     recorded it never expires.
-  * A capsize drill is informational: an expired or missing drill never blocks anyone from rowing.
+  * Small boats (two people or fewer, cox included) need a valid capsize drill: no drill, or an
+    expired one, blocks the seat. Bigger boats and land sessions never need one.
   * A NOVICE who hasn't paid subs gets N free water outings (default 4) that don't need
     subs. Once their subs are paid the allowance no longer applies. While they still have
     free water outings left, land training is also free (configurable).
@@ -97,6 +98,11 @@ def effective_today(settings: dict) -> date:
 
 def monday_of(d: date) -> date:
     return d - timedelta(days=d.weekday())
+
+
+def is_small_boat(kind: str, capacity: int, coxed: bool) -> bool:
+    """A water outing with two people or fewer on board (cox included): these need a capsize drill."""
+    return kind == "water" and capacity + (1 if coxed else 0) <= 2
 
 
 def seat_label(seat: int, capacity: int, kind: str) -> str:
@@ -222,11 +228,12 @@ class Rules:
         }
 
     # ---- eligibility ------------------------------------------------------
-    def check(self, member_id: int, kind: str, d: date, key, before: int | None = None) -> dict:
+    def check(self, member_id: int, kind: str, d: date, key, before: int | None = None, small_boat: bool = False) -> dict:
         """Eligibility of a member for an outing of `kind` on date `d` (sort key `key`).
 
         `before` overrides the number of water outings counted before this one (used by
-        auto-fill to account for seats it has planned but not saved yet)."""
+        auto-fill to account for seats it has planned but not saved yet). `small_boat` is for a water
+        outing in a boat of two or fewer, which needs a valid capsize drill."""
         m = self.members.get(member_id)
         if not m:
             return {"ok": False, "reasons": ["Not in members list"], "note": ""}
@@ -242,6 +249,8 @@ class Rules:
                 reasons.append("Swim test expired" if m["swim_test"] else "No swim test")
             if not free_subs and not self.subs_ok_on(m, d):
                 reasons.append("Subs not paid")
+            if small_boat and not self.capsize_ok_on(m, d):
+                reasons.append("Capsize drill expired" if m["capsize_drilled"] else "No capsize drill (small boats)")
             if not reasons:
                 if free_subs:
                     note = f"Novice free outing {nth} of {self.free_n}"
@@ -270,10 +279,16 @@ class Rules:
         return expiry(m.get("cox_status_date") or "", self.cox_months, self.today)
 
     def capsize_expiry(self, m) -> dict:
-        """Capsize drill: expires `capsize_drill_valid_months` after its date, like the swim test. Informational only."""
+        """Capsize drill: expires `capsize_drill_valid_months` after its date, like the swim test."""
         if not m["capsize_drilled"]:
             return {"date": "", "expires": "", "state": ""}
         return expiry(m.get("capsize_drill_date") or "", self.capsize_months, self.today)
+
+    def capsize_ok_on(self, m, d) -> bool:
+        if not m["capsize_drilled"]:
+            return False
+        exp = self.capsize_expiry(m)["expires"]
+        return not exp or exp > (d.isoformat() if hasattr(d, "isoformat") else str(d))
 
     def swim_ok_on(self, m, d) -> bool:
         if not m["swim_test"]:
@@ -330,7 +345,7 @@ def outing_payload(rules: Rules, o: dict, assignments: list[dict], subs: list[di
         entry = {"seat": s, "label": seat_label(s, cap, kind), "member": None}
         if a:
             m = rules.members.get(a["member_id"], {})
-            elig = rules.check(a["member_id"], kind, d, key)
+            elig = rules.check(a["member_id"], kind, d, key, small_boat=is_small_boat(kind, cap, coxed))
             if not elig["ok"]:
                 ineligible += 1
             entry["member"] = {

@@ -978,7 +978,7 @@ async function editOuting(o, defaults = {}) {
       };
       const loadCand = async () => {
         try {
-          const r = await api("/api/committee/candidates", { method: "POST", body: { kind: st.kind, date: st.date, time: st.time, outing_id: o?.id || null } });
+          const r = await api("/api/committee/candidates", { method: "POST", body: { kind: st.kind, date: st.date, time: st.time, outing_id: o?.id || null, capacity: st.capacity, coxed: !!st.coxed } });
           cand = r.members; hasSlots = r.has_slots; loaded = true;
         } catch (e) { fail(e); }
         drawSeats();
@@ -1200,9 +1200,9 @@ async function editOuting(o, defaults = {}) {
         else { st.capacity = 8; st.coxed = true; }
         syncKind(); loadCand();
       });
-      boatSel.onchange = () => { st.boat_id = boatSel.value ? +boatSel.value : null; syncKind(); drawSeats(); };
-      capSel.onchange = () => { const [c, x] = capSel.value.split("|"); st.capacity = +c; st.coxed = x === "1"; drawSeats(); };
-      $("#oe-cap-l", m).onchange = (e) => { st.capacity = Math.max(1, Math.min(40, +e.target.value || 8)); drawSeats(); };
+      boatSel.onchange = () => { st.boat_id = boatSel.value ? +boatSel.value : null; syncKind(); drawSeats(); loadCand(); };
+      capSel.onchange = () => { const [c, x] = capSel.value.split("|"); st.capacity = +c; st.coxed = x === "1"; drawSeats(); loadCand(); };
+      $("#oe-cap-l", m).onchange = (e) => { st.capacity = Math.max(1, Math.min(40, +e.target.value || 8)); drawSeats(); loadCand(); };
       $("#oe-date", m).onchange = (e) => { st.date = e.target.value; loadCand(); };
       $("#oe-time", m).onchange = (e) => { st.time = e.target.value.trim(); loadCand(); };
       $("#oe-coach", m).oninput = status;
@@ -1720,7 +1720,7 @@ async function pageRowers() {
     const max = Math.max(1, ...rows.map((r) => r.total));
     const th = (key, l, cls = "") => `<th class="sort ${cls}" data-k="${key}">${l}${rowerSort.k === key ? (rowerSort.dir > 0 ? " ↑" : " ↓") : ""}</th>`;
     $("#rw-table").innerHTML = `<table class="t"><thead><tr>${th("name", "Name")}${th("category", "Category")}
-      ${committee ? `<th>Swim</th><th title="Capsize drill (informational)">Capsize</th><th>Subs</th>${th("cox_status", "Cox")}<th title="At their next new outing, counting everything already scheduled">May row next</th>` : `${th("cox_status", "Cox")}`}
+      ${committee ? `<th>Swim</th><th title="Capsize drill (needed for boats of two or fewer)">Capsize</th><th>Subs</th>${th("cox_status", "Cox")}<th title="At their next new outing, counting everything already scheduled">May row next</th>` : `${th("cox_status", "Cox")}`}
       ${th("water", "Water", "num")}${th("land", "Land", "num")}${th("total", "Total", "num")}<th style="width:120px"></th>${committee ? th("novice_free_left", "Free left", "num") : ""}</tr></thead>
       <tbody>${list.map((r) => `<tr class="${committee ? "clickable" : ""}" data-id="${r.id}">
         <td><b>${esc(r.name)}</b>${cttee[r.id] ? ` ${committeeBadge(cttee[r.id])}` : ""}${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${committee && !r.active ? ` <span class="chip">inactive</span>` : ""}${committee && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
@@ -2923,7 +2923,7 @@ async function pageSettings() {
           <span></span>
           <label class="field"><span>Swim test valid for (months)</span><input class="input" type="number" min="0" max="240" id="s-swimv" value="${s.swim_test_valid_months}"><span class="hint">Counted from the swim test date. 0 = never expires. An expired swim test counts as no swim test.</span></label>
           <label class="field"><span>Cox status valid for (months)</span><input class="input" type="number" min="0" max="240" id="s-coxv" value="${s.cox_status_valid_months}"><span class="hint">Counted from the date it was awarded. 0 = never expires. Expiry is a warning only.</span></label>
-          <label class="field"><span>Capsize drill valid for (months)</span><input class="input" type="number" min="0" max="240" id="s-capv" value="${s.capsize_drill_valid_months}"><span class="hint">Counted from the capsize drill date. 0 = never expires. Expiry is a warning only.</span></label>
+          <label class="field"><span>Capsize drill valid for (months)</span><input class="input" type="number" min="0" max="240" id="s-capv" value="${s.capsize_drill_valid_months}"><span class="hint">Counted from the capsize drill date. 0 = never expires. An expired drill counts as no drill, which blocks small boats (two people or fewer).</span></label>
           <label class="field"><span>Coaching year starts</span><input class="input" type="date" id="s-season" value="${esc(s.season_start)}"><span class="hint">First month on the Coaches page.</span></label>
           <label class="field"><span>Override “today” (testing)</span><input class="input" type="date" id="s-today" value="${esc(s.today_override)}"><span class="hint">Leave blank normally.</span></label>
         </div>

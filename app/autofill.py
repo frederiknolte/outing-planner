@@ -60,7 +60,7 @@ from pydantic import BaseModel, Field
 
 from . import crewlog, db, push
 from .auth import require_committee
-from .logic import Rules, monday_of, seat_label, seat_list
+from .logic import Rules, is_small_boat, monday_of, seat_label, seat_list
 from .signup import availability_for_outing
 from .timeutil import interval
 
@@ -270,7 +270,8 @@ class Planner:
         keys = sorted(r.water_keys.get(mid, []) + self.planned_keys[mid])
         i = bisect.bisect_left(keys, key)
         base = r.members[mid]["past_water"]
-        if not r.check(mid, "water", date.fromisoformat(o["date"]), key, before=base + i)["ok"]:
+        if not r.check(mid, "water", date.fromisoformat(o["date"]), key, before=base + i,
+                       small_boat=is_small_boat(o["kind"], o["capacity"], bool(o["coxed"])))["ok"]:
             return False
         for j, k in enumerate(keys[i:], start=i):
             d = date.fromisoformat(k[0])

@@ -36,7 +36,7 @@ from .autofill import router as autofill_router
 from .usage import router as usage_router
 from .handover import router as handover_router
 from .incidents import router as incidents_router
-from .logic import (BOAT_TYPES, CANCEL_REASONS, SUBS_PLANS, TERMS, TZ, Rules, add_months, effective_today, monday_of,
+from .logic import (BOAT_TYPES, CANCEL_REASONS, SUBS_PLANS, TERMS, TZ, Rules, add_months, effective_today, is_small_boat, monday_of,
                     outing_payload, real_today, seat_label, seat_list)
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
@@ -456,7 +456,7 @@ def _candidates(conn, rules: Rules, outing_id: int, seat: int, member_ids=None) 
     out = {}
     for mid in (member_ids if member_ids is not None else rules.members):
         m = rules.members[mid]
-        elig = rules.check(mid, o["kind"], d, key)
+        elig = rules.check(mid, o["kind"], d, key, small_boat=is_small_boat(o["kind"], o["capacity"], bool(o["coxed"])))
         problems = list(elig["reasons"])
         if mid in inside:
             problems.append("Already in this outing")
@@ -1280,6 +1280,8 @@ class CandidatesIn(BaseModel):
     date: str
     time: str = ""
     outing_id: Optional[int] = None
+    capacity: int = 8
+    coxed: bool = False
 
 
 @app.post("/api/committee/candidates")
@@ -1291,6 +1293,7 @@ def candidates(b: CandidatesIn, _: str = Depends(require_committee)):
         b.time = norm_time(b.time)[0]
         key = (b.date, b.time, b.outing_id or 10**12)
         busy = _busy_at(conn, {"date": b.date, "time": b.time}, b.outing_id)
+        small = is_small_boat(b.kind, b.capacity, b.coxed)
         same_day = defaultdict(int)
         for r in conn.execute(
                 """SELECT a.member_id FROM assignments a JOIN outings o ON o.id=a.outing_id
@@ -1301,7 +1304,7 @@ def candidates(b: CandidatesIn, _: str = Depends(require_committee)):
         week = week_counts(conn, monday_of(d).isoformat(), b.outing_id)
         out = {}
         for mid, m in rules.members.items():
-            e = rules.check(mid, b.kind, d, key)
+            e = rules.check(mid, b.kind, d, key, small_boat=small)
             out[str(mid)] = {"ok": e["ok"], "reasons": e["reasons"], "note": e["note"],
                              "busy": mid in busy, "same_day": same_day.get(mid, 0),
                              "week": week.get(mid, {"row": 0, "cox": 0, "land": 0}),
