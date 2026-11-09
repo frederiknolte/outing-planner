@@ -368,7 +368,7 @@ MIGRATIONS = {
         "cox_status_date": "TEXT NOT NULL DEFAULT ''",              # YYYY-MM-DD the cox status was awarded, or ''
         "capsize_drilled": "INTEGER NOT NULL DEFAULT 0",            # has done a capsize drill (informational, never blocks rowing)
         "capsize_drill_date": "TEXT NOT NULL DEFAULT ''",           # YYYY-MM-DD of the drill, or '' (unknown)
-        "capsize_drill_expiry": "TEXT NOT NULL DEFAULT ''",         # YYYY-MM-DD it needs renewing by, or '' (doesn't expire)
+        "capsize_drill_expiry": "TEXT NOT NULL DEFAULT ''",         # unused: expiry is now the global capsize_drill_valid_months setting
         "phone": "TEXT NOT NULL DEFAULT ''",          # committee-only
         "college": "TEXT NOT NULL DEFAULT ''",
         "side": "TEXT NOT NULL DEFAULT ''",
@@ -399,6 +399,7 @@ DEFAULT_SETTINGS = {
     "swim_test_after": "4",
     "swim_test_valid_months": "12",     # 0 = never expires
     "cox_status_valid_months": "12",    # 0 = never expires
+    "capsize_drill_valid_months": "12", # 0 = never expires
     # Subs reminder text. Placeholders: {first_name} {reason} {term} {year} {cutoff}
     "subs_reminder_template": 'Hi {first_name}, I’m Frederik, the treasurer of Reuben Boat Club! {reason} and for continuing to row with RBC, you’ll need to become a member and pay subs. With the subs we fund new equipment, socials, and insurance, so it’s really important that all members pay them🙏 You can pay either for a termly or a yearly membership here: https://www.oxforduniversitystores.co.uk/product-catalogue/reuben-college/boat-club',            # water outings allowed before a swim test is required
     "phone_mode": "required",          # sign-up form: required | optional | off

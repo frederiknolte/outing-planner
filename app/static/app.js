@@ -1721,7 +1721,7 @@ async function pageRowers() {
     const th = (key, l, cls = "") => `<th class="sort ${cls}" data-k="${key}">${l}${rowerSort.k === key ? (rowerSort.dir > 0 ? " ↑" : " ↓") : ""}</th>`;
     $("#rw-table").innerHTML = `<table class="t"><thead><tr>${th("name", "Name")}${th("category", "Category")}
       ${committee ? `<th>Swim</th><th title="Capsize drill (informational)">Capsize</th><th>Subs</th>${th("cox_status", "Cox")}<th title="At their next new outing, counting everything already scheduled">May row next</th>` : `${th("cox_status", "Cox")}`}
-      ${th("water", "Water", "num")}${th("land", "Land", "num")}${th("total", "Total", "num")}<th style="width:120px"></th>${th("novice_free_left", "Free left", "num")}</tr></thead>
+      ${th("water", "Water", "num")}${th("land", "Land", "num")}${th("total", "Total", "num")}<th style="width:120px"></th>${committee ? th("novice_free_left", "Free left", "num") : ""}</tr></thead>
       <tbody>${list.map((r) => `<tr class="${committee ? "clickable" : ""}" data-id="${r.id}">
         <td><b>${esc(r.name)}</b>${cttee[r.id] ? ` ${committeeBadge(cttee[r.id])}` : ""}${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${committee && !r.active ? ` <span class="chip">inactive</span>` : ""}${committee && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
         <td>${catChip(r.category)}</td>
@@ -1733,7 +1733,7 @@ async function pageRowers() {
           : `<td>${r.cox_status ? `<span class="chip violet">${esc(r.cox_status)}</span>` : ""}</td>`}
         <td class="num">${r.water}</td><td class="num">${r.land}</td><td class="num"><b>${r.total}</b></td>
         <td><div class="bar"><i style="width:${(r.total / max) * 100}%"></i></div></td>
-        <td class="num">${r.novice_free_left ?? ""}</td></tr>`).join("") || `<tr><td colspan="12" class="faint" style="text-align:center;padding:30px">No one matches.</td></tr>`}</tbody></table>`;
+        ${committee ? `<td class="num">${r.novice_free_left ?? ""}</td>` : ""}</tr>`).join("") || `<tr><td colspan="12" class="faint" style="text-align:center;padding:30px">No one matches.</td></tr>`}</tbody></table>`;
     $$("#rw-table th.sort").forEach((t) => t.onclick = () => { rowerSort = { k: t.dataset.k, dir: rowerSort.k === t.dataset.k ? -rowerSort.dir : (t.dataset.k === "name" || t.dataset.k === "category" ? 1 : -1) }; draw(); });
     if (committee) $$("#rw-table tr[data-id]").forEach((tr) => tr.onclick = () => editMember(rows.find((r) => r.id === +tr.dataset.id), meta));
     $("#rw-count").textContent = `${list.length} shown`;
@@ -1820,8 +1820,7 @@ function editMember(m, meta) {
       </div>
       <div class="grid-3">
         <div class="field"><span>&nbsp;</span><label class="check"><input type="checkbox" id="me-cap" ${v.capsize_drilled ? "checked" : ""}> Capsize drilled</label></div>
-        <label class="field"><span>Capsize drill date</span><input class="input" type="date" id="me-capd" max="${esc(S.boot.today)}" value="${esc(v.capsize_drill_date || "")}"></label>
-        <label class="field"><span>Capsize drill expires</span><input class="input" type="date" id="me-cape" value="${esc(v.capsize_drill_expiry || "")}"><span class="hint" id="me-cape-h"></span></label>
+        <label class="field"><span>Capsize drill date</span><input class="input" type="date" id="me-capd" max="${esc(S.boot.today)}" value="${esc(v.capsize_drill_date || "")}"><span class="hint" id="me-capd-h"></span></label>
       </div>
       <div class="grid-3">
         <label class="field"><span>Earlier water outings</span><input class="input" type="number" min="0" id="me-pw" value="${v.past_water}"><span class="hint">Before using this app</span></label>
@@ -1836,7 +1835,7 @@ function editMember(m, meta) {
       const sync = () => { const p = $("#me-plan", el).value; $("#me-term-f", el).classList.toggle("hidden", p !== "Single term"); $("#me-year-f", el).classList.toggle("hidden", p === "Unpaid"); };
       $("#me-plan", el).onchange = sync; sync();
       // Expiry hints under the two dates (validity periods come from Settings).
-      const vm = { swim: S.boot.settings.swim_test_valid_months, cox: S.boot.settings.cox_status_valid_months };
+      const vm = { swim: S.boot.settings.swim_test_valid_months, cox: S.boot.settings.cox_status_valid_months, cap: S.boot.settings.capsize_drill_valid_months };
       const hint = (inp, h, months) => {
         const d = $(inp, el).value;
         if (!d) { $(h, el).textContent = "Optional. Leave blank if unknown (then it never expires)."; return; }
@@ -1844,17 +1843,10 @@ function editMember(m, meta) {
         const x = pd(d); x.setUTCMonth(x.getUTCMonth() + months); const e = x.toISOString().slice(0, 10);
         $(h, el).textContent = `${e <= S.boot.today ? "Expired" : "Valid until"} ${fmtYear(e)}`;
       };
-      const hints = () => { hint("#me-swimd", "#me-swimd-h", vm.swim); hint("#me-coxd", "#me-coxd-h", vm.cox); };
+      const hints = () => { hint("#me-swimd", "#me-swimd-h", vm.swim); hint("#me-coxd", "#me-coxd-h", vm.cox); hint("#me-capd", "#me-capd-h", vm.cap); };
       $("#me-swimd", el).oninput = () => { if ($("#me-swimd", el).value) $("#me-swim", el).checked = true; hints(); };
       $("#me-coxd", el).oninput = hints; hints();
-      // Capsize drill: optional expiry date, set per person (informational, never blocks rowing).
-      const capHint = () => {
-        const e = $("#me-cape", el).value;
-        $("#me-cape-h", el).textContent = !e ? "Optional. Leave blank if it doesn't expire." : `${e <= S.boot.today ? "Expired" : "Valid until"} ${fmtYear(e)}`;
-        $("#me-cape", el).min = $("#me-capd", el).value;
-      };
-      $("#me-capd", el).oninput = () => { if ($("#me-capd", el).value) $("#me-cap", el).checked = true; capHint(); };
-      $("#me-cape", el).oninput = capHint; capHint();
+      $("#me-capd", el).oninput = () => { if ($("#me-capd", el).value) $("#me-cap", el).checked = true; hints(); };
       // Phone: only sent when changed (null = keep the stored, encrypted number).
       let phoneTouched = false;
       const ph = $("#me-phone", el);
@@ -1867,7 +1859,7 @@ function editMember(m, meta) {
           subs_term: $("#me-plan", el).value === "Single term" ? $("#me-term", el).value : "", subs_year: $("#me-plan", el).value === "Unpaid" ? "" : $("#me-year", el).value.trim(),
           cox_status: $("#me-cox", el).value, swim_test: $("#me-swim", el).checked,
           swim_test_date: $("#me-swimd", el).value, cox_status_date: $("#me-coxd", el).value,
-          capsize_drilled: $("#me-cap", el).checked, capsize_drill_date: $("#me-capd", el).value, capsize_drill_expiry: $("#me-cape", el).value, past_water: +$("#me-pw", el).value || 0, past_land: +$("#me-pl", el).value || 0,
+          capsize_drilled: $("#me-cap", el).checked, capsize_drill_date: $("#me-capd", el).value, past_water: +$("#me-pw", el).value || 0, past_land: +$("#me-pl", el).value || 0,
           active: $("#me-active", el).checked, notes: $("#me-notes", el).value,
           phone: phoneTouched ? $("#me-phone", el).value.trim() : (m ? null : ($("#me-phone", el).value.trim() || null)), college: $("#me-college", el).value.trim(), side: $("#me-side", el).value, squad: $("#me-squad", el).value };
         if (!body.name) return toast("Name is required", true);
@@ -2931,6 +2923,7 @@ async function pageSettings() {
           <span></span>
           <label class="field"><span>Swim test valid for (months)</span><input class="input" type="number" min="0" max="240" id="s-swimv" value="${s.swim_test_valid_months}"><span class="hint">Counted from the swim test date. 0 = never expires. An expired swim test counts as no swim test.</span></label>
           <label class="field"><span>Cox status valid for (months)</span><input class="input" type="number" min="0" max="240" id="s-coxv" value="${s.cox_status_valid_months}"><span class="hint">Counted from the date it was awarded. 0 = never expires. Expiry is a warning only.</span></label>
+          <label class="field"><span>Capsize drill valid for (months)</span><input class="input" type="number" min="0" max="240" id="s-capv" value="${s.capsize_drill_valid_months}"><span class="hint">Counted from the capsize drill date. 0 = never expires. Expiry is a warning only.</span></label>
           <label class="field"><span>Coaching year starts</span><input class="input" type="date" id="s-season" value="${esc(s.season_start)}"><span class="hint">First month on the Coaches page.</span></label>
           <label class="field"><span>Override “today” (testing)</span><input class="input" type="date" id="s-today" value="${esc(s.today_override)}"><span class="hint">Leave blank normally.</span></label>
         </div>
@@ -3043,7 +3036,7 @@ async function pageSettings() {
   $("#s-save").onclick = async () => {
     const body = { club_name: $("#s-club").value.trim() || "Reuben Boat Club", academic_year: $("#s-ay").value.trim(), current_term: $("#s-term").value, subs_cutoff: $("#s-cut").value,
       novice_free_outings: +$("#s-free").value || 0, novice_land_free: $("#s-land").checked, season_start: $("#s-season").value, today_override: $("#s-today").value, swim_test_after: Math.max(0, +$("#s-swim").value || 0),
-      swim_test_valid_months: Math.max(0, +$("#s-swimv").value || 0), cox_status_valid_months: Math.max(0, +$("#s-coxv").value || 0), ...phoneFields() };
+      swim_test_valid_months: Math.max(0, +$("#s-swimv").value || 0), cox_status_valid_months: Math.max(0, +$("#s-coxv").value || 0), capsize_drill_valid_months: Math.max(0, +$("#s-capv").value || 0), ...phoneFields() };
     try { await api("/api/committee/settings", { method: "PUT", body }); toast("Settings saved"); await reboot(); shell("settings"); pageSettings(); } catch (e) { fail(e); }
   };
   $("#s-mpw-save").onclick = async () => {
