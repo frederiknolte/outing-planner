@@ -9,6 +9,8 @@ Rules follow the club's original spreadsheet:
     A swim test (and a cox status) with a recorded date expires after
     `swim_test_valid_months` (`cox_status_valid_months`) months; 0 = never. An expired
     swim test counts as no swim test. With no date recorded it never expires.
+  * A capsize drill is recorded with its date and an optional expiry date set per member.
+    It is informational: an expired or missing drill never blocks anyone from rowing.
   * A NOVICE who hasn't paid subs gets N free water outings (default 4) that don't need
     subs. Once their subs are paid the allowance no longer applies. While they still have
     free water outings left, land training is also free (configurable).
@@ -72,8 +74,11 @@ def expiry(since: str, months: int, today: date) -> dict:
     if not d or months <= 0:
         return {"date": since or "", "expires": "", "state": ""}
     exp = add_months(d, months)
-    state = "expired" if exp <= today else "soon" if (exp - today).days <= EXPIRY_WARN_DAYS else "ok"
-    return {"date": since, "expires": exp.isoformat(), "state": state}
+    return {"date": since, "expires": exp.isoformat(), "state": expiry_state(exp, today)}
+
+
+def expiry_state(exp: date, today: date) -> str:
+    return "expired" if exp <= today else "soon" if (exp - today).days <= EXPIRY_WARN_DAYS else "ok"
 
 
 def real_today() -> date:
@@ -263,6 +268,17 @@ class Rules:
             return {"date": "", "expires": "", "state": ""}
         return expiry(m.get("cox_status_date") or "", self.cox_months, self.today)
 
+    def capsize_expiry(self, m) -> dict:
+        """Capsize drill: the committee sets the expiry date per person (blank = doesn't expire). Informational only."""
+        if not m["capsize_drilled"]:
+            return {"date": "", "expires": "", "state": ""}
+        since = m.get("capsize_drill_date") or ""
+        try:
+            exp = date.fromisoformat(m.get("capsize_drill_expiry") or "")
+        except ValueError:
+            return {"date": since, "expires": "", "state": ""}
+        return {"date": since, "expires": exp.isoformat(), "state": expiry_state(exp, self.today)}
+
     def swim_ok_on(self, m, d) -> bool:
         if not m["swim_test"]:
             return False
@@ -270,12 +286,12 @@ class Rules:
         return not exp or exp > (d.isoformat() if hasattr(d, "isoformat") else str(d))
 
     def expiring(self) -> list[dict]:
-        """Active members whose swim test or cox status has expired or expires soon (for the committee)."""
+        """Active members whose swim test, cox status or capsize drill has expired or expires soon (for the committee)."""
         out = []
         for m in sorted(self.members.values(), key=lambda m: m["name"].lower()):
             if not m["active"]:
                 continue
-            for what, e in (("swim", self.swim_expiry(m)), ("cox", self.cox_expiry(m))):
+            for what, e in (("swim", self.swim_expiry(m)), ("cox", self.cox_expiry(m)), ("capsize", self.capsize_expiry(m))):
                 if e["state"] in ("soon", "expired"):
                     out.append({"id": m["id"], "name": m["name"], "what": what, **e})
         return sorted(out, key=lambda x: x["expires"])

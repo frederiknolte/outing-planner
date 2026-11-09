@@ -366,6 +366,9 @@ MIGRATIONS = {
     "members": {
         "swim_test_date": "TEXT NOT NULL DEFAULT ''",               # YYYY-MM-DD the swim test was passed, or '' (unknown)
         "cox_status_date": "TEXT NOT NULL DEFAULT ''",              # YYYY-MM-DD the cox status was awarded, or ''
+        "capsize_drilled": "INTEGER NOT NULL DEFAULT 0",            # has done a capsize drill (informational, never blocks rowing)
+        "capsize_drill_date": "TEXT NOT NULL DEFAULT ''",           # YYYY-MM-DD of the drill, or '' (unknown)
+        "capsize_drill_expiry": "TEXT NOT NULL DEFAULT ''",         # YYYY-MM-DD it needs renewing by, or '' (doesn't expire)
         "phone": "TEXT NOT NULL DEFAULT ''",          # committee-only
         "college": "TEXT NOT NULL DEFAULT ''",
         "side": "TEXT NOT NULL DEFAULT ''",

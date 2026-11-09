@@ -292,7 +292,7 @@ const ROUTES = [
   { id: "races", label: "Races", icon: I.flag },
   { id: "me", label: "My outings", icon: I.user },
   { id: "stats", label: "Leaderboard", parent: "me", icon: I.trophy },
-  { id: "rowers", label: "Rowers", tab: "Members", icon: I.user },
+  { id: "rowers", label: "Members", icon: I.user },
   { id: "reminders", label: "Subs reminders", parent: "rowers", icon: I.user, committee: true, count: "reminders" },
   { id: "boats", label: "Boat park", tab: "Boats", icon: I.boat },
   { id: "issues", label: "Issues", parent: "boats", icon: I.alert, count: "issues" },
@@ -394,14 +394,14 @@ function renderRaceBanner() {
   const exp = show ? (S.boot.expiring || []) : [];
   if (!list.length && !exp.length) { el.innerHTML = ""; return; }
   const left = (h) => h < 1 ? "in under an hour" : h < 24 ? `in ${Math.round(h)} hour${Math.round(h) === 1 ? "" : "s"}` : `in ${Math.round(h / 24)} day${Math.round(h / 24) === 1 ? "" : "s"}`;
-  const what = { swim: "Swim test", cox: "Cox status" };
+  const what = { swim: "Swim test", cox: "Cox status", capsize: "Capsize drill" };
   const expLine = (x) => `<span class="small">${esc(x.name)} — ${what[x.what]} ${x.state === "expired" ? "expired" : "expires"} ${esc(fmtYear(x.expires))}</span>`;
   const urgent = (list[0] && list[0].hours_left < 48) || exp.some((x) => x.state === "expired");
   const MAX = 5;
   el.innerHTML = `<div class="race-banner ${urgent ? "urgent" : ""}" role="status">${I.alert}
     <div class="flag-body">
       ${list.length ? `<b>Race entries closing soon</b>${list.map((r) => `<span class="small">${esc(r.title)} — closes ${esc(fmtDT(r.closes_at))} (${left(r.hours_left)})</span>`).join("")}` : ""}
-      ${exp.length ? `<b${list.length ? ' style="margin-top:6px"' : ""}>Swim tests and cox statuses to renew</b>${exp.slice(0, MAX).map(expLine).join("")}${exp.length > MAX ? `<span class="small muted">and ${exp.length - MAX} more</span>` : ""}` : ""}
+      ${exp.length ? `<b${list.length ? ' style="margin-top:6px"' : ""}>Swim tests, cox statuses and capsize drills to renew</b>${exp.slice(0, MAX).map(expLine).join("")}${exp.length > MAX ? `<span class="small muted">and ${exp.length - MAX} more</span>` : ""}` : ""}
     </div>
     <div class="flag-actions">${list.length ? `<a class="btn sm" href="#/races">Races</a>` : ""}${exp.length ? `<a class="btn sm" href="#/rowers" id="rb-exp">Members</a>` : ""}<button class="btn ghost sm" id="rb-x">Dismiss</button></div></div>`;
   $("#rb-x").onclick = () => { S.raceBanner = false; renderRaceBanner(); };
@@ -1585,6 +1585,7 @@ async function pageMe() {
       <span class="chip ${st.subs_valid ? "ok" : "warn"}">Subs ${st.subs_valid ? "paid" : "not paid for this term"}</span>
       <span class="chip ${!st.swim_test || st.swim.state === "soon" ? "warn" : st.swim.state === "expired" ? "bad" : "ok"}">Swim test ${!st.swim_test ? "not recorded" : st.swim.state === "expired" ? `expired ${esc(fmtYear(st.swim.expires))}` : st.swim.expires ? `valid until ${esc(fmtYear(st.swim.expires))}` : "passed"}</span>
       ${st.cox.expires ? `<span class="chip ${st.cox.state === "expired" ? "bad" : st.cox.state === "soon" ? "warn" : "ok"}">Cox status ${st.cox.state === "expired" ? "expired" : "valid until"} ${esc(fmtYear(st.cox.expires))}</span>` : ""}
+      <span class="chip ${!st.capsize_drilled || st.capsize.state === "soon" ? "warn" : st.capsize.state === "expired" ? "bad" : "ok"}">Capsize drill ${!st.capsize_drilled ? "not recorded" : st.capsize.state === "expired" ? `expired ${esc(fmtYear(st.capsize.expires))}` : st.capsize.expires ? `valid until ${esc(fmtYear(st.capsize.expires))}` : "done"}</span>
     </div><p class="small faint" style="margin:10px 0 0">Something wrong? Speak to a committee member.</p></div>
     <div class="section-title">Upcoming sessions</div>
     ${d.upcoming.length ? `<div class="days" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">${d.upcoming.map((o) => `<div><div class="day-head"><b>${DAY[dow(o.date)]}</b><span>${fmtShort(o.date)}</span></div>${outingCard(o)}</div>`).join("")}</div>`
@@ -1712,19 +1713,20 @@ async function pageRowers() {
     else rows = await api("/api/rowers");
   } catch (e) { return fail(e); }
   const draw = () => {
-    let list = rows.filter((r) => (!rowerQ || fold(r.name).includes(rowerQ)) && (rowerCat === "all" || (rowerCat === "inactive" ? !r.active : rowerCat === "issues" ? (r.active !== false && (!r.water_ok || !r.land_ok)) : rowerCat === "expiring" ? (r.active && [r.swim?.state, r.cox?.state].some((x) => x === "soon" || x === "expired")) : r.category === rowerCat && r.active !== false)));
+    let list = rows.filter((r) => (!rowerQ || fold(r.name).includes(rowerQ)) && (rowerCat === "all" || (rowerCat === "inactive" ? !r.active : rowerCat === "issues" ? (r.active !== false && (!r.water_ok || !r.land_ok)) : rowerCat === "expiring" ? (r.active && [r.swim?.state, r.cox?.state, r.capsize?.state].some((x) => x === "soon" || x === "expired")) : r.category === rowerCat && r.active !== false)));
     if (rowerCat !== "inactive" && committee) list = list.filter((r) => rowerCat === "all" || r.active);
     const k = rowerSort.k;
     list.sort((a, b) => (typeof a[k] === "string" ? a[k].localeCompare(b[k]) : (a[k] ?? -1) - (b[k] ?? -1)) * rowerSort.dir || a.name.localeCompare(b.name));
     const max = Math.max(1, ...rows.map((r) => r.total));
     const th = (key, l, cls = "") => `<th class="sort ${cls}" data-k="${key}">${l}${rowerSort.k === key ? (rowerSort.dir > 0 ? " ↑" : " ↓") : ""}</th>`;
     $("#rw-table").innerHTML = `<table class="t"><thead><tr>${th("name", "Name")}${th("category", "Category")}
-      ${committee ? `<th>Swim</th><th>Subs</th>${th("cox_status", "Cox")}<th title="At their next new outing, counting everything already scheduled">May row next</th>` : `${th("cox_status", "Cox")}`}
+      ${committee ? `<th>Swim</th><th title="Capsize drill (informational)">Capsize</th><th>Subs</th>${th("cox_status", "Cox")}<th title="At their next new outing, counting everything already scheduled">May row next</th>` : `${th("cox_status", "Cox")}`}
       ${th("water", "Water", "num")}${th("land", "Land", "num")}${th("total", "Total", "num")}<th style="width:120px"></th>${th("novice_free_left", "Free left", "num")}</tr></thead>
       <tbody>${list.map((r) => `<tr class="${committee ? "clickable" : ""}" data-id="${r.id}">
         <td><b>${esc(r.name)}</b>${cttee[r.id] ? ` ${committeeBadge(cttee[r.id])}` : ""}${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${committee && !r.active ? ` <span class="chip">inactive</span>` : ""}${committee && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
         <td>${catChip(r.category)}</td>
         ${committee ? `<td>${!r.swim_test ? `<span class="chip warn">No</span>` : r.swim.state === "expired" || r.swim.state === "soon" ? expiryChip(r.swim, "Swim test") : `<span class="chip ok" title="${r.swim.expires ? `Valid until ${esc(fmtYear(r.swim.expires))}` : "Date not recorded"}">${I.check}Yes</span>`}</td>
+          <td>${!r.capsize_drilled ? `<span class="chip">No</span>` : r.capsize.state === "expired" || r.capsize.state === "soon" ? expiryChip(r.capsize, "Capsize drill") : `<span class="chip ok" title="${esc([r.capsize.date ? `Done ${fmtYear(r.capsize.date)}` : "Date not recorded", r.capsize.expires ? `valid until ${fmtYear(r.capsize.expires)}` : "no expiry"].join(", "))}">${I.check}Yes</span>`}</td>
           <td>${r.subs_valid ? `<span class="chip ok">${esc(r.subs_plan === "Full year" ? "Full year" : r.subs_term)}</span>` : `<span class="chip ${r.subs_plan === "Unpaid" ? "warn" : "bad"}" title="${esc(r.subs_plan)} ${esc(r.subs_term)} ${esc(r.subs_year)}">${r.subs_plan === "Unpaid" ? "Unpaid" : "Expired"}</span>`}</td>
           <td>${r.cox_status ? `<span class="chip violet" title="${r.cox.expires ? `Valid until ${esc(fmtYear(r.cox.expires))}` : "Date not recorded"}">${esc(r.cox_status)}</span>${expiryChip(r.cox, "Cox status")}` : ""}</td>
           <td>${r.water_ok && r.land_ok ? `<span class="chip ok">${I.check}Yes</span>` : `<span class="chip bad" title="${esc([...r.water_reasons.map((x) => "Water: " + x), ...r.land_reasons.map((x) => "Land: " + x)].join("\n"))}">${!r.water_ok && !r.land_ok ? "No" : r.water_ok ? "Water only" : "Land only"}</span>`}</td>`
@@ -1740,8 +1742,8 @@ async function pageRowers() {
   const issues = committee ? rows.filter((r) => r.active && (!r.water_ok || !r.land_ok)).length : 0;
   const allOut = rows.reduce((a, r) => a + r.total, 0);
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>${committee ? "Members" : "Rowers"}</h1><p>${committee ? "Manage the squad, subs and swim tests. Outing counts update automatically from the schedule." : "Outing counts across the squad."}</p></div>
-      ${committee ? `<div class="toolbar"><button class="btn" id="rw-export">${I.download}Export CSV</button><button class="btn primary" id="rw-add">${I.plus}Add member</button></div>` : `<div class="toolbar"><button class="btn primary" id="rw-add">${I.plus}Add rower</button></div>`}</div>
+    <div class="page-head"><div><h1>Members</h1><p>${committee ? "Manage the squad, subs and swim tests. Outing counts update automatically from the schedule." : "Outing counts across the squad."}</p></div>
+      ${committee ? `<div class="toolbar"><button class="btn" id="rw-export">${I.download}Export CSV</button><button class="btn primary" id="rw-add">${I.plus}Add member</button></div>` : `<div class="toolbar"><button class="btn primary" id="rw-add">${I.plus}Add member</button></div>`}</div>
     <div class="stats" style="margin-bottom:16px">
       <div class="card stat"><div class="k">Members</div><div class="v">${rows.filter((r) => r.active !== false).length}</div><div class="s">${novices} novice · ${rows.filter((r) => r.active !== false).length - novices} senior</div></div>
       <div class="card stat"><div class="k">Coxes</div><div class="v">${rows.filter((r) => r.cox_status && r.active !== false).length}</div><div class="s">with a cox status</div></div>
@@ -1764,7 +1766,7 @@ async function pageRowers() {
 // Any rower can add a name; subs, swim test, category etc. are left for the committee to set.
 function addRower() {
   modal({
-    title: "Add rower",
+    title: "Add member",
     body: `
       <label class="field"><span>Full name</span><input class="input" id="ar-name" placeholder="First and last name" required></label>
       <div class="grid-2">
@@ -1817,6 +1819,11 @@ function editMember(m, meta) {
         <label class="field"><span>Swim test date</span><input class="input" type="date" id="me-swimd" max="${esc(S.boot.today)}" value="${esc(v.swim_test_date || "")}"><span class="hint" id="me-swimd-h"></span></label>
       </div>
       <div class="grid-3">
+        <div class="field"><span>&nbsp;</span><label class="check"><input type="checkbox" id="me-cap" ${v.capsize_drilled ? "checked" : ""}> Capsize drilled</label></div>
+        <label class="field"><span>Capsize drill date</span><input class="input" type="date" id="me-capd" max="${esc(S.boot.today)}" value="${esc(v.capsize_drill_date || "")}"></label>
+        <label class="field"><span>Capsize drill expires</span><input class="input" type="date" id="me-cape" value="${esc(v.capsize_drill_expiry || "")}"><span class="hint" id="me-cape-h"></span></label>
+      </div>
+      <div class="grid-3">
         <label class="field"><span>Earlier water outings</span><input class="input" type="number" min="0" id="me-pw" value="${v.past_water}"><span class="hint">Before using this app</span></label>
         <label class="field"><span>Earlier land sessions</span><input class="input" type="number" min="0" id="me-pl" value="${v.past_land}"></label>
         <div class="field"><span>&nbsp;</span><label class="check"><input type="checkbox" id="me-active" ${v.active ? "checked" : ""}> Active member</label></div>
@@ -1840,6 +1847,14 @@ function editMember(m, meta) {
       const hints = () => { hint("#me-swimd", "#me-swimd-h", vm.swim); hint("#me-coxd", "#me-coxd-h", vm.cox); };
       $("#me-swimd", el).oninput = () => { if ($("#me-swimd", el).value) $("#me-swim", el).checked = true; hints(); };
       $("#me-coxd", el).oninput = hints; hints();
+      // Capsize drill: optional expiry date, set per person (informational, never blocks rowing).
+      const capHint = () => {
+        const e = $("#me-cape", el).value;
+        $("#me-cape-h", el).textContent = !e ? "Optional. Leave blank if it doesn't expire." : `${e <= S.boot.today ? "Expired" : "Valid until"} ${fmtYear(e)}`;
+        $("#me-cape", el).min = $("#me-capd", el).value;
+      };
+      $("#me-capd", el).oninput = () => { if ($("#me-capd", el).value) $("#me-cap", el).checked = true; capHint(); };
+      $("#me-cape", el).oninput = capHint; capHint();
       // Phone: only sent when changed (null = keep the stored, encrypted number).
       let phoneTouched = false;
       const ph = $("#me-phone", el);
@@ -1851,7 +1866,8 @@ function editMember(m, meta) {
         const body = { name: $("#me-name", el).value.trim(), category: $("#me-cat", el).value, subs_plan: $("#me-plan", el).value,
           subs_term: $("#me-plan", el).value === "Single term" ? $("#me-term", el).value : "", subs_year: $("#me-plan", el).value === "Unpaid" ? "" : $("#me-year", el).value.trim(),
           cox_status: $("#me-cox", el).value, swim_test: $("#me-swim", el).checked,
-          swim_test_date: $("#me-swimd", el).value, cox_status_date: $("#me-coxd", el).value, past_water: +$("#me-pw", el).value || 0, past_land: +$("#me-pl", el).value || 0,
+          swim_test_date: $("#me-swimd", el).value, cox_status_date: $("#me-coxd", el).value,
+          capsize_drilled: $("#me-cap", el).checked, capsize_drill_date: $("#me-capd", el).value, capsize_drill_expiry: $("#me-cape", el).value, past_water: +$("#me-pw", el).value || 0, past_land: +$("#me-pl", el).value || 0,
           active: $("#me-active", el).checked, notes: $("#me-notes", el).value,
           phone: phoneTouched ? $("#me-phone", el).value.trim() : (m ? null : ($("#me-phone", el).value.trim() || null)), college: $("#me-college", el).value.trim(), side: $("#me-side", el).value, squad: $("#me-squad", el).value };
         if (!body.name) return toast("Name is required", true);
@@ -3310,7 +3326,7 @@ async function pageSignupCommittee() {
   } else {
     body.innerHTML = R.length ? `<div class="card table-wrap"><table class="t"><thead><tr><th>Name</th><th>Phone</th><th>College</th><th>As</th><th class="num" title="Water outings scheduled / max">Water</th><th class="num" title="Coxing outings scheduled / wanted">Cox</th><th class="num" title="Land sessions scheduled / max">Land</th><th>Squad</th><th>Side</th><th>Bankride</th><th class="num">Free for</th></tr></thead>
       <tbody>${R.map((r) => `<tr class="clickable" data-id="${r.id}">
-        <td><b>${esc(r.name)}</b>${r.needs_review ? ` <span class="chip warn" title="Added through the form — check their details in Rowers">New</span>` : ""}${r.comments ? ` <span title="${esc(r.comments)}">💬</span>` : ""}</td>
+        <td><b>${esc(r.name)}</b>${r.needs_review ? ` <span class="chip warn" title="Added through the form — check their details in Members">New</span>` : ""}${r.comments ? ` <span title="${esc(r.comments)}">💬</span>` : ""}</td>
         <td>${phoneCell(r.member_id, r.phone_masked, r.has_phone)}</td>
         <td>${esc(r.college)}</td><td><span class="chip ${r.role === "bankrider" ? "violet" : r.role === "rower" ? "" : "accent"}">${roleShort[r.role]}</span></td>
         <td class="num">${schedCell(r.scheduled.row, r.want_row, ["rower", "both"].includes(r.role))}</td><td class="num">${schedCell(r.scheduled.cox, r.want_cox, ["cox", "both"].includes(r.role))}</td><td class="num">${schedCell(r.scheduled.land, r.max_land, r.role !== "bankrider")}</td><td>${r.squad ? squadChip(r.squad) : ""}</td><td>${r.side ? sideChip(r.side) : ""}</td>
@@ -3361,7 +3377,7 @@ function responseDetail(r, d, roleShort) {
       ${r.comments ? `<div class="callout">${I.info}<div>${esc(r.comments)}</div></div>` : ""}
       <div class="section-title" style="margin:6px 0 0">Free for (${slots.length})</div>
       <div class="su-done-list" style="text-align:left">${slots.map((x) => `<div><b>${DAY[dow(x.date)]} ${fmtShort(x.date)}</b> <span class="tnum">${esc(tRange(x))}</span> ${slotChip(x.kind)} <span class="faint small">${esc(x.location)}</span></div>`).join("") || `<span class="faint">No sessions ticked.</span>`}</div>
-      ${r.needs_review ? `<div class="callout warn">${I.alert}<div>${esc(r.name)} was added through the form. Check their category, swim test and subs on the <a href="#/rowers">Rowers</a> page.</div></div>` : ""}`,
+      ${r.needs_review ? `<div class="callout warn">${I.alert}<div>${esc(r.name)} was added through the form. Check their category, swim test and subs on the <a href="#/rowers">Members</a> page.</div></div>` : ""}`,
     foot: `<button class="btn danger" id="rd-del">Delete response</button><div class="r"><button class="btn" data-close>Close</button></div>`,
     onMount: (m, close) => {
       wireReveal(m);

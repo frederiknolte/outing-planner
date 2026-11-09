@@ -307,7 +307,8 @@ def member_summary(member_id: int, role: str = Depends(require_member)):
             "status": {"water_ok": status["water"]["ok"], "land_ok": status["land"]["ok"],
                        "water_reasons": status["water"]["reasons"], "land_reasons": status["land"]["reasons"],
                        "subs_valid": status["subs_valid"], "swim_test": bool(m["swim_test"]),
-                       "swim": rules.swim_expiry(m), "cox": rules.cox_expiry(m)},
+                       "swim": rules.swim_expiry(m), "cox": rules.cox_expiry(m),
+                       "capsize_drilled": bool(m["capsize_drilled"]), "capsize": rules.capsize_expiry(m)},
             "upcoming": upcoming,
         }
 
@@ -704,6 +705,9 @@ class MemberIn(BaseModel):
     cox_status: str = ""
     swim_test_date: str = ""                             # YYYY-MM-DD passed, or ''
     cox_status_date: str = ""                            # YYYY-MM-DD awarded, or ''
+    capsize_drilled: bool = False
+    capsize_drill_date: str = ""                         # YYYY-MM-DD of the drill, or ''
+    capsize_drill_expiry: str = ""                       # YYYY-MM-DD it needs renewing by, or '' (doesn't expire)
     past_water: int = Field(0, ge=0)
     past_land: int = Field(0, ge=0)
     active: bool = True
@@ -753,6 +757,22 @@ def _member_validate(m: MemberIn):
         m.swim_test_date = ""
     if not m.cox_status:
         m.cox_status_date = ""
+    drill, expiry = m.capsize_drill_date.strip(), m.capsize_drill_expiry.strip()
+    for v, label in ((drill, "capsize drill"), (expiry, "capsize drill expiry")):
+        if v:
+            try:
+                date.fromisoformat(v)
+            except ValueError:
+                raise HTTPException(400, f"Bad {label} date")
+    if drill and drill > real_today().isoformat():
+        raise HTTPException(400, "The capsize drill date is in the future")
+    if drill and expiry and expiry < drill:
+        raise HTTPException(400, "The capsize drill can't expire before it was done")
+    if drill:
+        m.capsize_drilled = True
+    if not m.capsize_drilled:
+        drill = expiry = ""
+    m.capsize_drill_date, m.capsize_drill_expiry = drill, expiry
 
 
 @app.get("/api/committee/members")
@@ -766,6 +786,7 @@ def members_list(_: str = Depends(require_committee)):
             out.append({**safe, "has_phone": bool(m["phone"]), "phone_masked": privacy.mask(m["phone"]),
                         "swim_test": bool(m["swim_test"]), "active": bool(m["active"]),
                         "swim": rules.swim_expiry(m), "cox": rules.cox_expiry(m),
+                        "capsize_drilled": bool(m["capsize_drilled"]), "capsize": rules.capsize_expiry(m),
                         "totals": rules.totals(m["id"]), "subs_valid": st["subs_valid"],
                         "water_ok": st["water"]["ok"], "land_ok": st["land"]["ok"],
                         "water_reasons": st["water"]["reasons"], "land_reasons": st["land"]["reasons"],
@@ -780,11 +801,13 @@ def member_create(m: MemberIn, _: str = Depends(require_committee)):
         try:
             cur = conn.execute(
                 """INSERT INTO members(name, category, swim_test, subs_plan, subs_term, subs_year, cox_status,
-                   past_water, past_land, active, notes, phone, phone_updated_at, college, side, squad, swim_test_date, cox_status_date)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ? != '' THEN datetime('now') ELSE '' END,?,?,?,?,?)""",
+                   past_water, past_land, active, notes, phone, phone_updated_at, college, side, squad, swim_test_date, cox_status_date,
+                   capsize_drilled, capsize_drill_date, capsize_drill_expiry)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ? != '' THEN datetime('now') ELSE '' END,?,?,?,?,?,?,?,?)""",
                 (m.name.strip(), m.category, int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
                  m.cox_status, m.past_water, m.past_land, int(m.active), m.notes, _phone_value(m.phone) or "",
-                 m.phone or "", m.college.strip(), m.side, m.squad, m.swim_test_date, m.cox_status_date))
+                 m.phone or "", m.college.strip(), m.side, m.squad, m.swim_test_date, m.cox_status_date,
+                 int(m.capsize_drilled), m.capsize_drill_date, m.capsize_drill_expiry))
         except db.sqlite3.IntegrityError:
             raise HTTPException(400, "A member with that name already exists")
         return {"id": cur.lastrowid}
@@ -798,10 +821,12 @@ def member_update(member_id: int, m: MemberIn, _: str = Depends(require_committe
             conn.execute(
                 """UPDATE members SET name=?, category=?, swim_test=?, subs_plan=?, subs_term=?, subs_year=?,
                    cox_status=?, past_water=?, past_land=?, active=?, notes=?, college=?, side=?, squad=?,
-                   swim_test_date=?, cox_status_date=?, needs_review=0 WHERE id=?""",
+                   swim_test_date=?, cox_status_date=?, capsize_drilled=?, capsize_drill_date=?, capsize_drill_expiry=?,
+                   needs_review=0 WHERE id=?""",
                 (m.name.strip(), m.category, int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
                  m.cox_status, m.past_water, m.past_land, int(m.active), m.notes,
-                 m.college.strip(), m.side, m.squad, m.swim_test_date, m.cox_status_date, member_id))
+                 m.college.strip(), m.side, m.squad, m.swim_test_date, m.cox_status_date,
+                 int(m.capsize_drilled), m.capsize_drill_date, m.capsize_drill_expiry, member_id))
             new_phone = _phone_value(m.phone)
             if new_phone is not None:
                 conn.execute("UPDATE members SET phone = ?, phone_updated_at = CASE WHEN ? != '' THEN datetime('now') ELSE '' END WHERE id = ?",
@@ -1015,11 +1040,13 @@ def members_csv(include_phone: bool = False, _: str = Depends(require_committee)
         buf = io.StringIO()
         w = csv.writer(buf)
         w.writerow(["Name"] + (["Phone"] if include_phone else []) + ["College", "Side", "Category", "Swim test", "Swim test date", "Swim test expires", "Subs plan", "Term", "Year",
-                    "Subs valid", "Cox status", "Cox status date", "Cox status expires", "Water outings", "Land sessions", "Total", "Novice free left", "Active"])
+                    "Subs valid", "Cox status", "Cox status date", "Cox status expires", "Capsize drilled", "Capsize drill date", "Capsize drill expires",
+                    "Water outings", "Land sessions", "Total", "Novice free left", "Active"])
         for m in sorted(rules.members.values(), key=lambda m: m["name"].lower()):
             t = rules.totals(m["id"])
             w.writerow([m["name"]] + ([privacy.decrypt(m["phone"]) or ""] if include_phone else []) + [m["college"], m["side"], m["category"], "Yes" if m["swim_test"] else "No", m["swim_test_date"], rules.swim_expiry(m)["expires"], m["subs_plan"], m["subs_term"],
-                        m["subs_year"], "Yes" if rules.subs_valid(m) else "No", m["cox_status"], m["cox_status_date"], rules.cox_expiry(m)["expires"], t["water"],
+                        m["subs_year"], "Yes" if rules.subs_valid(m) else "No", m["cox_status"], m["cox_status_date"], rules.cox_expiry(m)["expires"],
+                        "Yes" if m["capsize_drilled"] else "No", m["capsize_drill_date"], m["capsize_drill_expiry"], t["water"],
                         t["land"], t["total"], "" if t["novice_free_left"] is None else t["novice_free_left"],
                         "Yes" if m["active"] else "No"])
         return Response(buf.getvalue(), media_type="text/csv",
