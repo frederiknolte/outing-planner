@@ -28,7 +28,7 @@ from .timeutil import normalize as norm_time, to_minutes
 from .calendar import router as calendar_router
 from .signup import availability_for_outing, week_counts, router as signup_router
 from .stats import router as stats_router
-from .races import router as races_router, closing_soon, week_races, is_associate as races_is_associate
+from .races import router as races_router, closing_soon, week_races, member_races, is_associate as races_is_associate
 from . import issues
 from .committee_roster import router as roster_router
 from .tasks import router as tasks_router
@@ -312,6 +312,7 @@ def member_summary(member_id: int, role: str = Depends(require_member)):
                        "swim": rules.swim_expiry(m), "cox": rules.cox_expiry(m),
                        "capsize_drilled": bool(m["capsize_drilled"]), "capsize": rules.capsize_expiry(m)},
             "upcoming": upcoming,
+            "races": member_races(conn, member_id, rules.today.isoformat()),
         }
 
 

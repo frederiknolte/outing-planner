@@ -80,12 +80,24 @@ class ResponseIn(BaseModel):
 
 
 class CrewIn(BaseModel):
+    id: Optional[int] = None            # an existing crew of this race: keeps its result when crews are re-saved
     name: str = Field("", max_length=60)
     boat_type: str = "8+"
     notes: str = Field("", max_length=500)
     seats: dict[int, int] = {}          # seat (0 = cox) -> member id
     bankrider: str = Field("", max_length=120)
     reserves: list[int] = []            # member ids, in order
+
+
+class ResultIn(BaseModel):
+    crew_id: int
+    result: str = Field("", max_length=120)
+    result_time: str = Field("", max_length=40)
+    result_notes: str = Field("", max_length=500)
+
+
+class ResultsIn(BaseModel):
+    results: list[ResultIn] = []
 
 
 class CrewsIn(BaseModel):
@@ -212,7 +224,8 @@ def _load_crews(conn, race_ids=None) -> dict[int, list[dict]]:
     crews, by_id = {}, {}
     for c in conn.execute(f"SELECT * FROM race_crews {where} ORDER BY race_id, position, id", list(race_ids or [])):
         crew = {"id": c["id"], "name": c["name"], "boat_type": c["boat_type"], "notes": c["notes"], "seats": {},
-                "bankrider": c["bankrider"], "reserves": []}
+                "bankrider": c["bankrider"], "reserves": [],
+                "result": c["result"], "result_time": c["result_time"], "result_notes": c["result_notes"]}
         crews.setdefault(c["race_id"], []).append(crew)
         by_id[c["id"]] = crew
     if by_id:
@@ -243,6 +256,35 @@ def week_races(conn, start: str, end: str, committee: bool) -> list[dict]:
     crews = _load_crews(conn, [r["id"] for r in rows]) if rows else {}
     return [{"id": r["id"], "title": r["title"], "date": r["date"], "city": r["city"], "time_slot": r["time_slot"],
              "published": bool(r["crews_published"]), "crews": crews[r["id"]]} for r in rows if crews.get(r["id"])]
+
+
+def member_races(conn, member_id: int, today: str) -> list[dict]:
+    """The races someone is in a published crew for (a seat, bankriding or a reserve), newest first,
+    each with just their crews (and results, once the committee has entered them)."""
+    rows = conn.execute(
+        """SELECT DISTINCT r.id, r.title, r.date, r.city, r.time_slot, r.race_type FROM races r
+           JOIN race_crews c ON c.race_id = r.id
+           WHERE r.crews_published = 1 AND (
+                 EXISTS (SELECT 1 FROM race_crew_seats s WHERE s.crew_id = c.id AND s.member_id = ?)
+              OR EXISTS (SELECT 1 FROM race_crew_reserves v WHERE v.crew_id = c.id AND v.member_id = ?)
+              OR c.bankrider != '')
+           ORDER BY r.date DESC, r.id DESC""", (member_id, member_id)).fetchall()
+    crews = _load_crews(conn, [r["id"] for r in rows]) if rows else {}
+    out = []
+    for r in rows:
+        mine = []
+        for c in crews.get(r["id"], []):
+            places = [x["label"] for x in c["seats"] if x["member_id"] == member_id]
+            if member_id in c["bankrider_ids"]:
+                places.append("Bankrider")
+            if any(x["member_id"] == member_id for x in c["reserves"]):
+                places.append("Reserve")
+            if places:
+                mine.append({**c, "places": places})
+        if mine:
+            out.append({"id": r["id"], "title": r["title"], "date": r["date"], "city": r["city"], "time_slot": r["time_slot"],
+                        "race_type": r["race_type"], "past": r["date"] < today, "crews": mine})
+    return out
 
 
 @router.get("/api/races")
@@ -360,12 +402,14 @@ def race_crews_save(race_id: int, b: CrewsIn, _: str = Depends(require_committee
             raise HTTPException(400, f"{name}: at most {MAX_RESERVES} reserves")
         if set(reserves) & set(seats.values()):
             raise HTTPException(400, f"{name}: someone is both in a seat and a reserve")
-        clean.append((name, c.boat_type, c.notes.strip(), seats, c.bankrider.strip(), reserves))
+        clean.append((name, c.boat_type, c.notes.strip(), seats, c.bankrider.strip(), reserves, c.id))
     with db.get_conn() as conn:
         race = conn.execute("SELECT id, title, date, crews_published FROM races WHERE id = ?", (race_id,)).fetchone()
         if not race:
             raise HTTPException(404, "Race not found")
         everyone = set(seen).union(*(c[5] for c in clean))
+        old_results = {r["id"]: (r["result"], r["result_time"], r["result_notes"])
+                       for r in conn.execute("SELECT id, result, result_time, result_notes FROM race_crews WHERE race_id = ?", (race_id,))}
         if everyone:
             ok = {r["id"] for r in conn.execute(f"SELECT id FROM members WHERE id IN ({','.join('?' * len(everyone))})", list(everyone))}
             if len(ok) != len(everyone):
@@ -374,9 +418,11 @@ def race_crews_save(race_id: int, b: CrewsIn, _: str = Depends(require_committee
                                c["bankrider_ids"], [x["member_id"] for x in c["reserves"]])
                               for c in _load_crews(conn, [race_id]).get(race_id, [])) if race["crews_published"] else {}
         conn.execute("DELETE FROM race_crews WHERE race_id = ?", (race_id,))
-        for pos, (name, boat_type, notes, seats, bankrider, reserves) in enumerate(clean):
-            cid = conn.execute("INSERT INTO race_crews(race_id, position, name, boat_type, notes, bankrider) VALUES (?, ?, ?, ?, ?, ?)",
-                               (race_id, pos, name, boat_type, notes, bankrider)).lastrowid
+        for pos, (name, boat_type, notes, seats, bankrider, reserves, old_id) in enumerate(clean):
+            res = old_results.get(old_id, ("", "", ""))
+            cid = conn.execute("""INSERT INTO race_crews(race_id, position, name, boat_type, notes, bankrider, result, result_time, result_notes)
+                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                               (race_id, pos, name, boat_type, notes, bankrider, *res)).lastrowid
             for i, mid in enumerate(reserves):
                 conn.execute("INSERT INTO race_crew_reserves(crew_id, member_id, position) VALUES (?, ?, ?)", (cid, mid, i))
             for seat, mid in seats.items():
@@ -384,7 +430,7 @@ def race_crews_save(race_id: int, b: CrewsIn, _: str = Depends(require_committee
         conn.execute("UPDATE races SET crews_published = ? WHERE id = ?", (int(b.publish), race_id))
         ids = _member_ids(conn)
         after = _assignments((name, bt, seats, _bankrider_ids(bankrider, ids), reserves)
-                             for name, bt, _, seats, bankrider, reserves in clean)
+                             for name, bt, _, seats, bankrider, reserves, _id in clean)
     msgs = []
     if b.publish:
         # Tell people about a new or changed place (and, once published, about being taken out).
@@ -397,6 +443,21 @@ def race_crews_save(race_id: int, b: CrewsIn, _: str = Depends(require_committee
                                   f"race-crew-{race_id}", "/#/races"))
     push.dispatch(msgs)
     return {"ok": True, "published": b.publish, "notified": len(msgs)}
+
+
+@router.put("/api/committee/races/{race_id}/results")
+def race_results_save(race_id: int, b: ResultsIn, _: str = Depends(require_committee)):
+    """Record how each crew did. Rowers see results with the (published) crews."""
+    with db.get_conn() as conn:
+        mine = {r["id"] for r in conn.execute("SELECT id FROM race_crews WHERE race_id = ?", (race_id,))}
+        if not conn.execute("SELECT 1 FROM races WHERE id = ?", (race_id,)).fetchone():
+            raise HTTPException(404, "Race not found")
+        for x in b.results:
+            if x.crew_id not in mine:
+                raise HTTPException(400, "Unknown crew")
+            conn.execute("UPDATE race_crews SET result = ?, result_time = ?, result_notes = ? WHERE id = ?",
+                         (x.result.strip(), x.result_time.strip(), x.result_notes.strip(), x.crew_id))
+        return {"ok": True}
 
 
 def _check_can_respond(conn, race_id: int, member_id: int, committee: bool):

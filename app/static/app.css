@@ -985,3 +985,20 @@ button.race-person:hover { border-color: var(--accent); }
 .race-extras .me { font-weight: 700; color: var(--accent); }
 .rcb-extra { padding-top: 8px; border-top: 1px dashed var(--border); }
 .rcb-extra span.sl { padding-left: 5px; }
+
+/* race results */
+.race-result { margin-top: 8px; padding: 6px 8px; border-radius: 8px; background: var(--ok-soft); display: flex; flex-direction: column; gap: 2px; }
+.race-result .rr-main { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.race-result .rr-main svg { width: 14px; height: 14px; flex: none; color: var(--ok); }
+.race-result .rr-main .tnum { color: var(--text-2); }
+.race-crews-h .btn { margin-left: auto; }
+.race-crews-h .btn + .btn { margin-left: 0; }
+.race-res-rows { display: flex; flex-direction: column; gap: 14px; }
+.race-res-row { display: flex; flex-direction: column; gap: 6px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.race-res-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.my-races { display: flex; flex-direction: column; gap: 12px; }
+.my-race { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.my-race .race-head { display: flex; align-items: center; gap: 12px; }
+.my-race .race-head-main { flex: 1; min-width: 0; }
+.my-race .race-crews { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.my-race-role { margin-top: 4px; color: var(--accent); }

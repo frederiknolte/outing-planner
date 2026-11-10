@@ -290,7 +290,7 @@ const ROUTES = [
   { id: "subs", label: "Sub board", parent: "schedule", icon: I.swap, count: "subs" },
   { id: "signup", label: "Sign up", committeeLabel: "Sign-ups", icon: I.calendar },
   { id: "races", label: "Races", icon: I.flag },
-  { id: "me", label: "My outings", icon: I.user },
+  { id: "me", label: "Me", icon: I.user },
   { id: "stats", label: "Leaderboard", parent: "me", icon: I.trophy },
   { id: "rowers", label: "Members", icon: I.user },
   { id: "reminders", label: "Subs reminders", parent: "rowers", icon: I.user, committee: true, count: "reminders" },
@@ -1587,6 +1587,7 @@ async function pageMe() {
       ${st.cox.expires ? `<span class="chip ${st.cox.state === "expired" ? "bad" : st.cox.state === "soon" ? "warn" : "ok"}">Cox status ${st.cox.state === "expired" ? "expired" : "valid until"} ${esc(fmtYear(st.cox.expires))}</span>` : ""}
       <span class="chip ${!st.capsize_drilled || st.capsize.state === "soon" ? "warn" : st.capsize.state === "expired" ? "bad" : "ok"}">Capsize drill ${!st.capsize_drilled ? "not recorded" : st.capsize.state === "expired" ? `expired ${esc(fmtYear(st.capsize.expires))}` : st.capsize.expires ? `valid until ${esc(fmtYear(st.capsize.expires))}` : "done"}</span>
     </div><p class="small faint" style="margin:10px 0 0">Something wrong? Speak to a committee member.</p></div>
+    ${(d.races || []).length ? `<div class="section-title">Your races</div><div class="my-races">${d.races.map(myRaceCard).join("")}</div>` : ""}
     <div class="section-title">Upcoming sessions</div>
     ${d.upcoming.length ? `<div class="days" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">${d.upcoming.map((o) => `<div><div class="day-head"><b>${DAY[dow(o.date)]}</b><span>${fmtShort(o.date)}</span></div>${outingCard(o)}</div>`).join("")}</div>`
       : `<div class="card empty">${I.calendar}<h3>Nothing scheduled</h3><p>You're not in any published upcoming sessions. Check the sub board for open seats.</p></div>`}`;
@@ -1598,6 +1599,16 @@ async function pageMe() {
     const t = e.target.closest("[data-act]"); if (!t) return;
     outingAct(t, d.upcoming.find((x) => x.id === +card.dataset.oid));
   }));
+}
+
+/* One of your races on Me: where you sat in each crew you're in, and how the crew did. */
+function myRaceCard(r) {
+  const d = pd(r.date);
+  return `<article class="card my-race ${r.past ? "past" : ""}">
+    <div class="race-head"><div class="datebox"><span>${DAY[dow(r.date)]}</span><b>${d.getUTCDate()}</b><span>${MON[d.getUTCMonth()]}</span></div>
+      <div class="race-head-main"><div class="race-title">${esc(r.title)}</div><div class="o-sub">${raceSub(r)}</div></div>
+      ${r.past ? "" : `<span class="chip violet">${I.trophy}Upcoming</span>`}</div>
+    <div class="race-crews">${r.crews.map((c) => `<div>${raceCrewBlock(c)}<div class="small my-race-role">You: <b>${esc(c.places.map((x) => (/^\d+$/.test(x) ? "seat " + x : x)).join(" and "))}</b></div></div>`).join("")}</div></article>`;
 }
 
 // Rowers edit their own side, college, phone and squad.
@@ -3575,14 +3586,19 @@ function raceCrewBlock(c) {
     <div class="rb-top"><b>${esc(c.name)}</b><span class="faint small">${esc(c.boat_type)}</span>${subs ? `<span class="chip warn">${subs} sub${subs === 1 ? "" : "s"} needed</span>` : ""}${c.associates ? `<span class="chip violet" title="Rowers and coxes from a different college">${c.associates} associate${c.associates === 1 ? "" : "s"}</span>` : ""}</div>
     <div class="seats">${c.seats.map(raceSeatRow).join("")}</div>
     ${raceCrewExtras(c)}
+    ${raceResult(c)}
     ${c.notes ? `<div class="small muted race-notes">${esc(c.notes)}</div>` : ""}</div>`;
 }
+/* How a crew did, once the committee has entered it. */
+const raceResult = (c) => c.result || c.result_time || c.result_notes ? `<div class="race-result">
+    <div class="rr-main">${I.flag}${c.result ? `<b>${esc(c.result)}</b>` : `<span class="faint">Result</span>`}${c.result_time ? `<span class="tnum">${esc(c.result_time)}</span>` : ""}</div>
+    ${c.result_notes ? `<div class="small muted">${esc(c.result_notes)}</div>` : ""}</div>` : "";
 /* Shared by the race card and the details popup. */
 const raceSub = (r) => [r.city && `<span>${I.pin}${esc(r.city)}</span>`, r.time_slot && `<span>${esc(r.time_slot)}</span>`, r.term && `<span>${esc(r.term)}</span>`].filter(Boolean).join("");
 const raceChips = (r, data) => `<div class="race-chips"><span class="chip ${RACE_ENTRY_CHIP[r.entry]}">${esc(data.entry[r.entry])}</span>${r.squad !== "any" ? `<span class="chip violet">${esc(data.squads[r.squad])} squad</span>` : ""}${r.race_type ? `<span class="chip">${esc(r.race_type)}</span>` : ""}${!r.open && !r.past ? `<span class="chip warn">Sign-up closed</span>` : ""}</div>`;
 const raceCrewsSection = (r, editBtn) => `<div class="race-crews-h"><span class="section-title flush">Crews</span>
     ${isCommittee() && !r.crews_published ? `<span class="chip warn" title="Only the committee can see these crews">Draft</span>` : ""}
-    ${editBtn && isCommittee() ? `<button type="button" class="btn sm" data-race-crews>${I.users}Edit crews</button>` : ""}</div>
+    ${editBtn && isCommittee() ? `<button type="button" class="btn sm" data-race-results>${I.flag}Results</button><button type="button" class="btn sm" data-race-crews>${I.users}Edit crews</button>` : ""}</div>
   <div class="race-crews ${editBtn && isCommittee() && !r.crews_published ? "editable" : ""}" ${editBtn && isCommittee() && !r.crews_published ? `title="Click a crew to edit crews"` : ""}>${r.crews.map(raceCrewBlock).join("")}</div>`;
 const raceLinks = (r) => r.links.length ? `<div class="race-links">${r.links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${I.link}${esc(l.label || l.url.replace(/^https?:\/\//, "").replace(/\/$/, ""))}</a>`).join("")}</div>` : "";
 
@@ -3632,10 +3648,30 @@ function raceInfoModal(r, data) {
       ${r.notes ? `<div class="race-notes">${esc(r.notes)}</div>` : ""}
       ${raceLinks(r)}
       ${r.crews.length ? `<div class="race-crews-sec">${raceCrewsSection(r, false)}</div>` : ""}`,
-    foot: `${isCommittee() ? `<button class="btn" id="ri-edit">Edit race</button><button class="btn" id="ri-crews">${I.users}${r.crews.length ? "Edit crews" : "Form crews"}</button>` : ""}<div class="r"><button class="btn" data-close>Close</button></div>`,
+    foot: `${isCommittee() ? `<button class="btn" id="ri-edit">Edit race</button>${r.crews.length ? `<button class="btn" id="ri-results">${I.flag}Results</button>` : ""}<button class="btn" id="ri-crews">${I.users}${r.crews.length ? "Edit crews" : "Form crews"}</button>` : ""}<div class="r"><button class="btn" data-close>Close</button></div>`,
     onMount: (m) => {
       const e = $("#ri-edit", m); if (e) e.onclick = () => editRace(r, data);
       const c = $("#ri-crews", m); if (c) c.onclick = () => raceCrewsModal(r, data);
+      const rs = $("#ri-results", m); if (rs) rs.onclick = () => raceResultsModal(r);
+    },
+  });
+}
+
+/* Committee: record how each crew did. Rowers see it with the published crews, here and on Me. */
+function raceResultsModal(r) {
+  modal({
+    title: `Results · ${esc(r.title)}`, wide: true,
+    body: `<div class="race-res-rows">${r.crews.map((c) => `<div class="race-res-row" data-id="${c.id}"><div><b>${esc(c.name)}</b> <span class="faint small">${esc(c.boat_type)}</span></div>
+        <div class="grid-2"><label class="field"><span>Result</span><input class="input" data-k="result" maxlength="120" value="${esc(c.result)}" placeholder="e.g. 1st in Div 2, Won, Lost in the semi"></label>
+          <label class="field"><span>Time</span><input class="input tnum" data-k="result_time" maxlength="40" value="${esc(c.result_time)}" placeholder="e.g. 6:12.4"></label></div>
+        <label class="field"><span>Notes</span><input class="input" data-k="result_notes" maxlength="500" value="${esc(c.result_notes)}" placeholder="Optional, e.g. crab in the last 500 m"></label></div>`).join("")}</div>
+      ${r.crews_published ? "" : `<p class="small muted">The crews are still a draft, so rowers won't see results until you publish them.</p>`}`,
+    foot: `<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="rs-save">Save results</button></div>`,
+    onMount: (m, close) => {
+      $("#rs-save", m).onclick = async () => {
+        const results = $$(".race-res-row", m).map((row) => ({ crew_id: +row.dataset.id, ...Object.fromEntries($$("input", row).map((i) => [i.dataset.k, i.value])) }));
+        try { await api(`/api/committee/races/${r.id}/results`, { method: "PUT", body: { results } }); close(); toast("Results saved"); pageRaces(); } catch (e) { fail(e); }
+      };
     },
   });
 }
@@ -3644,7 +3680,7 @@ function raceInfoModal(r, data) {
 function raceCrewsModal(r, data) {
   const BT = data.boat_types, MAX_RESERVES = 10;
   const newCrew = (name, boat_type) => ({ name, boat_type, notes: "", seats: {}, bankrider: "", reserves: [] });
-  const crews = r.crews.map((c) => ({ name: c.name, boat_type: c.boat_type, notes: c.notes, seats: Object.fromEntries(c.seats.filter((x) => x.member_id != null).map((x) => [x.seat, x.member_id])), bankrider: c.bankrider, reserves: c.reserves.map((x) => x.member_id) }));
+  const crews = r.crews.map((c) => ({ id: c.id, name: c.name, boat_type: c.boat_type, notes: c.notes, seats: Object.fromEntries(c.seats.filter((x) => x.member_id != null).map((x) => [x.seat, x.member_id])), bankrider: c.bankrider, reserves: c.reserves.map((x) => x.member_id) }));
   if (!crews.length) crews.push(newCrew("Crew 1", "8+"));
   const people = new Map(S.boot.members.map((mm) => [mm.id, mm]));
   r.crews.forEach((c) => c.seats.forEach((x) => { if (x.member_id != null && !people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: "", cox_status: "", associate: x.associate }); }));
@@ -3948,7 +3984,7 @@ function raceCrewsModal(r, data) {
             return;
           }
         }
-        const body = { publish, crews: crews.map((c, i) => ({ name: c.name.trim() || `Crew ${i + 1}`, boat_type: c.boat_type, notes: c.notes, seats: c.seats, bankrider: c.bankrider.trim(), reserves: c.reserves })) };
+        const body = { publish, crews: crews.map((c, i) => ({ id: c.id ?? null, name: c.name.trim() || `Crew ${i + 1}`, boat_type: c.boat_type, notes: c.notes, seats: c.seats, bankrider: c.bankrider.trim(), reserves: c.reserves })) };
         try {
           const res = await api(`/api/committee/races/${r.id}/crews`, { method: "PUT", body });
           close();
@@ -3995,6 +4031,7 @@ async function pageRaces() {
     $$("[data-race-set]", card).forEach((b) => b.onclick = () => raceResponseModal(r, data, b.dataset.raceSet ? +b.dataset.raceSet : null));
     $$("[data-race-who]", card).forEach((b) => b.onclick = () => raceWhoModal(r, data, b.dataset.raceWho));
     $$("[data-race-crews]", card).forEach((b) => b.onclick = () => raceCrewsModal(r, data));
+    $$("[data-race-results]", card).forEach((b) => b.onclick = () => raceResultsModal(r));
     // Draft crews (committee only): clicking a crew opens the crew editor.
     $$(".race-crews.editable .race-boat", card).forEach((b) => b.onclick = () => raceCrewsModal(r, data));
     $$("[data-race-info]", card).forEach((b) => b.onclick = () => raceInfoModal(r, data));
