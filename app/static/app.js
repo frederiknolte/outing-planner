@@ -1800,37 +1800,35 @@ function editMember(m, meta) {
       <div class="grid-2">
         <label class="field"><span>Full name</span><input class="input" id="me-name" value="${esc(v.name)}" required></label>
         <label class="field"><span>Category</span><select class="input" id="me-cat"><option ${v.category === "Novice" ? "selected" : ""}>Novice</option><option ${v.category === "Senior" ? "selected" : ""}>Senior</option></select></label>
-      </div>
-      <div class="grid-3">
-        <label class="field"><span>Phone <span class="faint">(committee only · encrypted)</span></span>
-          <div style="display:flex;gap:6px"><input class="input tnum" id="me-phone" type="tel" placeholder="${m && m.has_phone ? esc(m.phone_masked) : "Not on file"}">
-          ${m && m.has_phone ? `<button type="button" class="btn sm" id="me-phone-show" title="Show the full number">Show</button><button type="button" class="btn sm danger" id="me-phone-del" title="Delete this number">Delete</button>` : ""}</div></label>
+        <label class="field"><span>Phone</span>
+          <div class="row"><input class="input tnum" id="me-phone" type="tel" placeholder="${m && m.has_phone ? esc(m.phone_masked) : "Not on file"}">
+          ${m && m.has_phone ? `<button type="button" class="btn sm" id="me-phone-show" title="Show the full number">Show</button><button type="button" class="btn sm danger" id="me-phone-del" title="Delete this number">Delete</button>` : ""}</div>
+          <span class="hint">Committee only. Stored encrypted.</span></label>
         <label class="field"><span>College</span><input class="input" id="me-college" list="me-colleges" value="${esc(v.college || "")}"><datalist id="me-colleges"><option value="Reuben"><option value="Blackfriars"><option value="St Stephen's House"></datalist></label>
         <label class="field"><span>Side preference</span><select class="input" id="me-side">${["", ...Object.keys(SIDE_SHORT)].map((x) => `<option value="${esc(x)}" ${(v.side || "") === x ? "selected" : ""}>${x || "—"}</option>`).join("")}</select></label>
-        <label class="field"><span>Squad</span><select class="input" id="me-squad">${[["", "—"], ["open", "Open"], ["women", "Women's"]].map(([k, l]) => `<option value="${k}" ${(v.squad || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select><span class="hint">Open or Women's. Set from race and outing sign-ups; used to check race entries.</span></label>
-        <div class="field"><span>Crews <span class="faint">(committee only)</span></span><div style="display:flex;gap:12px;flex-wrap:wrap;padding-top:6px">${(meta.crews || ["M1", "M2", "W1", "W2"]).map((c) => `<label class="check"><input type="checkbox" class="me-crew" value="${esc(c)}" ${(v.club_crew || "").split(",").includes(c) ? "checked" : ""}> ${esc(c)}</label>`).join("")}</div><span class="hint">Tick both M1 and M2 for a sub. Never shown to members, not even this one.</span></div>
+        <label class="field"><span>Squad</span><select class="input" id="me-squad">${[["", "—"], ["open", "Open"], ["women", "Women's"]].map(([k, l]) => `<option value="${k}" ${(v.squad || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select><span class="hint">Set from race and outing sign-ups; used to check race entries.</span></label>
+        <div class="field span-all"><span>Crews</span><div class="checks">${(meta.crews || ["M1", "M2", "W1", "W2"]).map((c) => `<label class="check"><input type="checkbox" class="me-crew" value="${esc(c)}" ${(v.club_crew || "").split(",").includes(c) ? "checked" : ""}> ${esc(c)}</label>`).join("")}</div><span class="hint">Committee only: never shown to members, not even this one. Tick both M1 and M2 for a sub.</span></div>
       </div>
+      <div class="form-sec">Subs</div>
       <div class="grid-3">
         <label class="field"><span>Subs plan</span><select class="input" id="me-plan">${(meta.plans || ["Unpaid", "Single term", "Full year"]).map((p) => `<option ${v.subs_plan === p ? "selected" : ""}>${p}</option>`).join("")}</select></label>
         <label class="field" id="me-term-f"><span>Term covered</span><select class="input" id="me-term">${terms.map((t) => `<option ${v.subs_term === t ? "selected" : ""}>${t}</option>`).join("")}</select></label>
         <label class="field" id="me-year-f"><span>Academic year</span><input class="input" id="me-year" value="${esc(v.subs_year || S.boot.settings.academic_year)}" placeholder="2026-27"></label>
       </div>
+      <div class="form-sec">Cox, swim test and capsize drill</div>
       <div class="grid-2">
         <label class="field"><span>Coxing status</span><select class="input" id="me-cox">${[["", "Not a cox"], ["N", "N — Novice (needs bankrider)"], ["X", "X — Experienced"], ["S", "S — Senior"]].map(([k, l]) => `<option value="${k}" ${v.cox_status === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
-        <div class="field"><span>&nbsp;</span><label class="check"><input type="checkbox" id="me-swim" ${v.swim_test ? "checked" : ""}> Swim test passed</label></div>
-      </div>
-      <div class="grid-2">
         <label class="field"><span>Cox status awarded</span><input class="input" type="date" id="me-coxd" max="${esc(S.boot.today)}" value="${esc(v.cox_status_date || "")}"><span class="hint" id="me-coxd-h"></span></label>
+        <div class="field field-check"><label class="check"><input type="checkbox" id="me-swim" ${v.swim_test ? "checked" : ""}> Swim test passed</label></div>
         <label class="field"><span>Swim test date</span><input class="input" type="date" id="me-swimd" max="${esc(S.boot.today)}" value="${esc(v.swim_test_date || "")}"><span class="hint" id="me-swimd-h"></span></label>
-      </div>
-      <div class="grid-3">
-        <div class="field"><span>&nbsp;</span><label class="check"><input type="checkbox" id="me-cap" ${v.capsize_drilled ? "checked" : ""}> Capsize drilled</label></div>
+        <div class="field field-check"><label class="check"><input type="checkbox" id="me-cap" ${v.capsize_drilled ? "checked" : ""}> Capsize drilled</label></div>
         <label class="field"><span>Capsize drill date</span><input class="input" type="date" id="me-capd" max="${esc(S.boot.today)}" value="${esc(v.capsize_drill_date || "")}"><span class="hint" id="me-capd-h"></span></label>
       </div>
+      <div class="form-sec">Record</div>
       <div class="grid-3">
         <label class="field"><span>Earlier water outings</span><input class="input" type="number" min="0" id="me-pw" value="${v.past_water}"><span class="hint">Before using this app</span></label>
         <label class="field"><span>Earlier land sessions</span><input class="input" type="number" min="0" id="me-pl" value="${v.past_land}"></label>
-        <div class="field"><span>&nbsp;</span><label class="check"><input type="checkbox" id="me-active" ${v.active ? "checked" : ""}> Active member</label></div>
+        <div class="field field-check"><label class="check"><input type="checkbox" id="me-active" ${v.active ? "checked" : ""}> Active member</label></div>
       </div>
       <label class="field"><span>Committee notes</span><textarea class="input" id="me-notes" rows="2">${esc(v.notes)}</textarea></label>
       ${m && m.needs_review ? `<div class="callout warn">${I.alert}<div>Added through the sign-up form. Check category, cox status, swim test and subs, then save to mark as reviewed.</div></div>` : ""}
@@ -1843,7 +1841,7 @@ function editMember(m, meta) {
       const vm = { swim: S.boot.settings.swim_test_valid_months, cox: S.boot.settings.cox_status_valid_months, cap: S.boot.settings.capsize_drill_valid_months };
       const hint = (inp, h, months) => {
         const d = $(inp, el).value;
-        if (!d) { $(h, el).textContent = "Optional. Leave blank if unknown (then it never expires)."; return; }
+        if (!d) { $(h, el).textContent = "Optional. Blank = never expires."; return; }
         if (!months) { $(h, el).textContent = "Doesn't expire (see Settings)."; return; }
         const x = pd(d); x.setUTCMonth(x.getUTCMonth() + months); const e = x.toISOString().slice(0, 10);
         $(h, el).textContent = `${e <= S.boot.today ? "Expired" : "Valid until"} ${fmtYear(e)}`;
@@ -2043,7 +2041,7 @@ function editBoat(b, types) {
     body: `<div class="grid-2"><label class="field"><span>Name</span><input class="input" id="b-name" value="${esc(v.name)}" placeholder="e.g. Isis"></label>
         <label class="field"><span>Type</span><select class="input" id="b-type">${Object.keys(types).map((t) => `<option ${v.boat_type === t ? "selected" : ""}>${t}</option>`).join("")}</select></label></div>
       <div class="grid-3"><label class="field"><span>Rowing seats</span><input class="input" type="number" min="1" max="8" id="b-seats" value="${v.seats}"></label>
-        <div class="field"><span>&nbsp;</span><label class="check"><input type="checkbox" id="b-cox" ${v.coxed ? "checked" : ""}> Coxed</label></div>
+        <div class="field field-check"><label class="check"><input type="checkbox" id="b-cox" ${v.coxed ? "checked" : ""}> Coxed</label></div>
         <label class="field"><span>Status</span><select class="input" id="b-status">${[["available", "Available"], ["repair", "Under repair"], ["retired", "Retired"]].map(([k, l]) => `<option value="${k}" ${v.status === k ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
       <label class="field"><span>Rigging / weight class</span><input class="input" id="b-rig" value="${esc(v.rigging)}" placeholder="e.g. Bow-rigged, 75–85 kg"></label>
       <label class="field"><span>Notes</span><textarea class="input" id="b-notes" rows="2">${esc(v.notes)}</textarea></label>`,
@@ -2913,22 +2911,23 @@ async function pageSettings() {
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;align-items:start">
       <div class="card card-pad" style="display:flex;flex-direction:column;gap:14px">
         <h3 style="margin:0">Term &amp; subs</h3>
-        <label class="field"><span>Club name</span><input class="input" id="s-club" value="${esc(s.club_name)}"></label>
         <div class="grid-2">
+          <label class="field span-2"><span>Club name</span><input class="input" id="s-club" value="${esc(s.club_name)}"></label>
           <label class="field"><span>Academic year</span><input class="input" id="s-ay" value="${esc(s.academic_year)}" placeholder="2026-27"><span class="hint">Must match members' “Academic year”.</span></label>
           <label class="field"><span>Current term</span><select class="input" id="s-term">${s.terms.map((t) => `<option ${t === s.current_term ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-        </div>
-        <label class="field"><span>Subs cutoff date</span><input class="input" type="date" id="s-cut" value="${esc(s.subs_cutoff)}"><span class="hint">Unpaid members may row up to and including this date.</span></label>
-        <div class="grid-2">
+          <label class="field"><span>Subs cutoff date</span><input class="input" type="date" id="s-cut" value="${esc(s.subs_cutoff)}"><span class="hint">Unpaid members may row up to and including this date.</span></label>
           <label class="field"><span>Free water outings for novices</span><input class="input" type="number" min="0" max="50" id="s-free" value="${s.novice_free_outings}"><span class="hint">For novices who haven't paid subs yet: no subs needed for these.</span></label>
-          <div class="field"><span>&nbsp;</span><label class="check"><input type="checkbox" id="s-land" ${s.novice_land_free ? "checked" : ""}> Land free for novices while free water outings remain</label></div>
+          <div class="field span-2"><label class="check"><input type="checkbox" id="s-land" ${s.novice_land_free ? "checked" : ""}> Land free for novices while free water outings remain</label></div>
         </div>
+        <div class="form-sec">Swim test, cox status and capsize drill</div>
         <div class="grid-2">
           <label class="field"><span>Swim test required after</span><input class="input" type="number" min="0" max="50" id="s-swim" value="${s.swim_test_after}"><span class="hint">Water outings anyone may do before a swim test is needed (applies to everyone).</span></label>
-          <span></span>
           <label class="field"><span>Swim test valid for (months)</span><input class="input" type="number" min="0" max="240" id="s-swimv" value="${s.swim_test_valid_months}"><span class="hint">Counted from the swim test date. 0 = never expires. An expired swim test counts as no swim test.</span></label>
           <label class="field"><span>Cox status valid for (months)</span><input class="input" type="number" min="0" max="240" id="s-coxv" value="${s.cox_status_valid_months}"><span class="hint">Counted from the date it was awarded. 0 = never expires. Expiry is a warning only.</span></label>
           <label class="field"><span>Capsize drill valid for (months)</span><input class="input" type="number" min="0" max="240" id="s-capv" value="${s.capsize_drill_valid_months}"><span class="hint">Counted from the capsize drill date. 0 = never expires. An expired drill counts as no drill, which blocks small boats (two people or fewer).</span></label>
+        </div>
+        <div class="form-sec">Other</div>
+        <div class="grid-2">
           <label class="field"><span>Coaching year starts</span><input class="input" type="date" id="s-season" value="${esc(s.season_start)}"><span class="hint">First month on the Coaches page.</span></label>
           <label class="field"><span>Override “today” (testing)</span><input class="input" type="date" id="s-today" value="${esc(s.today_override)}"><span class="hint">Leave blank normally.</span></label>
         </div>
@@ -3402,7 +3401,7 @@ async function editSlot(sl, ws, tpl) {
     title: sl ? "Edit session" : "Add session",
     body: `<div class="seg" id="sl-kind">${[["water", "Water"], ["erg", "Erg"], ["tank", "Tank"]].map(([k, l]) => `<button data-k="${k}" class="${v.kind === k ? "on" : ""}">${l}</button>`).join("")}</div>
       <div class="grid-2">${sl ? `<label class="field"><span>Day</span><select class="input" id="sl-date">${days.map((d) => `<option value="${d}" ${d === v.date ? "selected" : ""}>${fmtLong(d)}</option>`).join("")}</select></label>`
-          : `<div class="field"><span>Days <span class="faint">(tick several to add the same session on each)</span></span><div class="seg seg-days" id="sl-days">${days.map((d) => `<button type="button" data-d="${d}" class="${picked.has(d) ? "on" : ""}" title="${esc(fmtLong(d))}">${DAY[dow(d)]}</button>`).join("")}</div></div>`}
+          : `<div class="field"><span>Days</span><div class="seg seg-days" id="sl-days">${days.map((d) => `<button type="button" data-d="${d}" class="${picked.has(d) ? "on" : ""}" title="${esc(fmtLong(d))}">${DAY[dow(d)]}</button>`).join("")}</div><span class="hint">Tick several to add the same session on each.</span></div>`}
         <div class="field"><span>Time <span class="faint">(start – end)</span></span><div class="time-range"><input class="input tnum" type="time" id="sl-time" value="${esc(v.time)}" aria-label="Start time"><span class="faint">–</span><input class="input tnum" type="time" id="sl-end" value="${esc(v.end_time || "")}" aria-label="End time (optional)"></div><span class="hint">Use the same time when you create the outing, so availability matches.</span></div></div>
       <div class="grid-2"><label class="field"><span>Where (optional)</span><input class="input" id="sl-loc" list="sl-places" value="${esc(v.location)}" placeholder="e.g. Boathouse, College gym">${placesDatalist("sl-places")}</label>
         <label class="field"><span>Note (optional)</span><input class="input" id="sl-note" value="${esc(v.note)}" placeholder="e.g. Novices only"></label></div>
@@ -4085,7 +4084,7 @@ function editRace(r, data) {
       <div class="grid-3"><label class="field"><span>City</span><input class="input" id="r-city" value="${esc(v.city)}" placeholder="e.g. Oxford"></label>
         <label class="field"><span>Expected time slot</span><input class="input" id="r-slot" value="${esc(v.time_slot)}" placeholder="e.g. 09:00–13:00, Morning"></label>
         <label class="field"><span>Race type</span><input class="input" id="r-type" list="r-types" value="${esc(v.race_type)}" placeholder="e.g. Head race, Side-by-side"><datalist id="r-types">${types.map((t) => `<option value="${esc(t)}">`).join("")}</datalist></label></div>
-      <div class="grid-3"><label class="field"><span>Entries open</span><input class="input" type="datetime-local" id="r-opens" value="${esc(v.opens_at || "")}"></label>
+      <div class="grid-2"><label class="field"><span>Entries open</span><input class="input" type="datetime-local" id="r-opens" value="${esc(v.opens_at || "")}"></label>
         <label class="field"><span>Entries close</span><input class="input" type="datetime-local" id="r-closes" value="${esc(v.closes_at || "")}"><span class="hint">The committee gets a reminder banner as this approaches.</span></label>
         <div class="field"><span>Scratch by</span><div class="time-range"><input class="input" type="date" id="r-scratch" value="${esc((v.scratch_date || "").split("T")[0])}" aria-label="Scratch date"><input class="input tnum" type="time" id="r-scratch-t" value="${esc((v.scratch_date || "").split("T")[1] || "")}" aria-label="Scratch time (optional)"></div><span class="hint">Deadline to withdraw. Time is optional.</span></div></div>
       <label class="field"><span>Notes</span><textarea class="input" id="r-notes" rows="3">${esc(v.notes)}</textarea></label>

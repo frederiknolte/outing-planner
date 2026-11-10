@@ -810,7 +810,7 @@ def member_create(m: MemberIn, _: str = Depends(require_committee)):
                 """INSERT INTO members(name, category, swim_test, subs_plan, subs_term, subs_year, cox_status,
                    past_water, past_land, active, notes, phone, phone_updated_at, college, side, squad, club_crew, swim_test_date, cox_status_date,
                    capsize_drilled, capsize_drill_date)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ? != '' THEN datetime('now') ELSE '' END,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ? != '' THEN datetime('now') ELSE '' END,?,?,?,?,?,?,?,?)""",
                 (m.name.strip(), m.category, int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
                  m.cox_status, m.past_water, m.past_land, int(m.active), m.notes, _phone_value(m.phone) or "",
                  m.phone or "", m.college.strip(), m.side, m.squad, m.club_crew, m.swim_test_date, m.cox_status_date,
