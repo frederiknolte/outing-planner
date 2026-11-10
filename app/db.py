@@ -373,6 +373,7 @@ MIGRATIONS = {
         "college": "TEXT NOT NULL DEFAULT ''",
         "side": "TEXT NOT NULL DEFAULT ''",
         "squad": "TEXT NOT NULL DEFAULT ''",          # open | women (for race eligibility)
+        "club_crew": "TEXT NOT NULL DEFAULT ''",      # comma-separated M1,M2,W1,W2 e.g. "M1,M2" (committee-only: never sent to non-committee clients)
         "needs_review": "INTEGER NOT NULL DEFAULT 0",  # created via the sign-up form
         "cal_token": "TEXT NOT NULL DEFAULT ''",       # secret for the personal calendar feed
         "phone_updated_at": "TEXT NOT NULL DEFAULT ''",  # for automatic deletion of old numbers

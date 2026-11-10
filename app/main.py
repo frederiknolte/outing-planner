@@ -327,7 +327,7 @@ def rowers(role: str = Depends(require_member)):
             if role != "committee":
                 t.pop("novice_free_left")   # how many free outings someone has left is committee-only
             out.append({"id": m["id"], "name": m["name"], "category": m["category"],
-                        "cox_status": m["cox_status"], **t})
+                        "cox_status": m["cox_status"], "squad": m["squad"] or "", **t})
         out.sort(key=lambda r: r["name"].lower())
         return out
 
@@ -699,6 +699,9 @@ def boat_delete(boat_id: int, _: str = Depends(require_committee)):
 
 
 # -------------------------------------------------------------- members ----
+CLUB_CREWS = ("M1", "M2", "W1", "W2")      # committee-assigned crews; committee-only information
+
+
 class MemberIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     category: str = "Novice"
@@ -719,6 +722,7 @@ class MemberIn(BaseModel):
     college: str = Field("", max_length=80)
     side: str = Field("", max_length=40)
     squad: str = ""                                      # '' | open | women (race eligibility)
+    club_crew: str = ""                                  # comma-separated subset of M1,M2,W1,W2, e.g. "M1,M2" (committee-only)
 
 
 def _phone_value(phone: Optional[str]) -> Optional[str]:
@@ -744,6 +748,10 @@ def _member_validate(m: MemberIn):
         raise HTTPException(400, "Bad cox status")
     if m.squad not in ("", "open", "women"):
         raise HTTPException(400, "Bad squad")
+    picked = [c.strip() for c in m.club_crew.split(",") if c.strip()]
+    if any(c not in CLUB_CREWS for c in picked):
+        raise HTTPException(400, "Bad crew")
+    m.club_crew = ",".join(c for c in CLUB_CREWS if c in picked)   # canonical order, no duplicates
     for k, label in (("swim_test_date", "swim test"), ("cox_status_date", "cox status")):
         v = getattr(m, k).strip()
         if v:
@@ -790,7 +798,7 @@ def members_list(_: str = Depends(require_committee)):
                         "water_ok": st["water"]["ok"], "land_ok": st["land"]["ok"],
                         "water_reasons": st["water"]["reasons"], "land_reasons": st["land"]["reasons"],
                         "note": st["water"]["note"]})
-        return {"members": out, "terms": TERMS, "plans": SUBS_PLANS}
+        return {"members": out, "terms": TERMS, "plans": SUBS_PLANS, "crews": list(CLUB_CREWS)}
 
 
 @app.post("/api/committee/members")
@@ -800,12 +808,12 @@ def member_create(m: MemberIn, _: str = Depends(require_committee)):
         try:
             cur = conn.execute(
                 """INSERT INTO members(name, category, swim_test, subs_plan, subs_term, subs_year, cox_status,
-                   past_water, past_land, active, notes, phone, phone_updated_at, college, side, squad, swim_test_date, cox_status_date,
+                   past_water, past_land, active, notes, phone, phone_updated_at, college, side, squad, club_crew, swim_test_date, cox_status_date,
                    capsize_drilled, capsize_drill_date)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ? != '' THEN datetime('now') ELSE '' END,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ? != '' THEN datetime('now') ELSE '' END,?,?,?,?,?,?,?,?,?)""",
                 (m.name.strip(), m.category, int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
                  m.cox_status, m.past_water, m.past_land, int(m.active), m.notes, _phone_value(m.phone) or "",
-                 m.phone or "", m.college.strip(), m.side, m.squad, m.swim_test_date, m.cox_status_date,
+                 m.phone or "", m.college.strip(), m.side, m.squad, m.club_crew, m.swim_test_date, m.cox_status_date,
                  int(m.capsize_drilled), m.capsize_drill_date))
         except db.sqlite3.IntegrityError:
             raise HTTPException(400, "A member with that name already exists")
@@ -819,12 +827,12 @@ def member_update(member_id: int, m: MemberIn, _: str = Depends(require_committe
         try:
             conn.execute(
                 """UPDATE members SET name=?, category=?, swim_test=?, subs_plan=?, subs_term=?, subs_year=?,
-                   cox_status=?, past_water=?, past_land=?, active=?, notes=?, college=?, side=?, squad=?,
+                   cox_status=?, past_water=?, past_land=?, active=?, notes=?, college=?, side=?, squad=?, club_crew=?,
                    swim_test_date=?, cox_status_date=?, capsize_drilled=?, capsize_drill_date=?,
                    needs_review=0 WHERE id=?""",
                 (m.name.strip(), m.category, int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
                  m.cox_status, m.past_water, m.past_land, int(m.active), m.notes,
-                 m.college.strip(), m.side, m.squad, m.swim_test_date, m.cox_status_date,
+                 m.college.strip(), m.side, m.squad, m.club_crew, m.swim_test_date, m.cox_status_date,
                  int(m.capsize_drilled), m.capsize_drill_date, member_id))
             new_phone = _phone_value(m.phone)
             if new_phone is not None:
@@ -1038,12 +1046,12 @@ def members_csv(include_phone: bool = False, _: str = Depends(require_committee)
         rules = Rules(conn)
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(["Name"] + (["Phone"] if include_phone else []) + ["College", "Side", "Category", "Swim test", "Swim test date", "Swim test expires", "Subs plan", "Term", "Year",
+        w.writerow(["Name"] + (["Phone"] if include_phone else []) + ["College", "Side", "Squad", "Crew", "Category", "Swim test", "Swim test date", "Swim test expires", "Subs plan", "Term", "Year",
                     "Subs valid", "Cox status", "Cox status date", "Cox status expires", "Capsize drilled", "Capsize drill date", "Capsize drill expires",
                     "Water outings", "Land sessions", "Total", "Novice free left", "Active"])
         for m in sorted(rules.members.values(), key=lambda m: m["name"].lower()):
             t = rules.totals(m["id"])
-            w.writerow([m["name"]] + ([privacy.decrypt(m["phone"]) or ""] if include_phone else []) + [m["college"], m["side"], m["category"], "Yes" if m["swim_test"] else "No", m["swim_test_date"], rules.swim_expiry(m)["expires"], m["subs_plan"], m["subs_term"],
+            w.writerow([m["name"]] + ([privacy.decrypt(m["phone"]) or ""] if include_phone else []) + [m["college"], m["side"], m["squad"], m["club_crew"], m["category"], "Yes" if m["swim_test"] else "No", m["swim_test_date"], rules.swim_expiry(m)["expires"], m["subs_plan"], m["subs_term"],
                         m["subs_year"], "Yes" if rules.subs_valid(m) else "No", m["cox_status"], m["cox_status_date"], rules.cox_expiry(m)["expires"],
                         "Yes" if m["capsize_drilled"] else "No", m["capsize_drill_date"], rules.capsize_expiry(m)["expires"], t["water"],
                         t["land"], t["total"], "" if t["novice_free_left"] is None else t["novice_free_left"],

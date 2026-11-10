@@ -1699,7 +1699,7 @@ async function pageStats() {
 }
 
 // ----------------------------------------------------------------- rowers --
-let rowerSort = { k: "name", dir: 1 }, rowerQ = "", rowerCat = "all";
+let rowerSort = { k: "name", dir: 1 }, rowerQ = "", rowerCat = "all", rowerCrew = "";
 
 async function pageRowers() {
   const committee = isCommittee();
@@ -1713,18 +1713,20 @@ async function pageRowers() {
     else rows = await api("/api/rowers");
   } catch (e) { return fail(e); }
   const draw = () => {
-    let list = rows.filter((r) => (!rowerQ || fold(r.name).includes(rowerQ)) && (rowerCat === "all" || (rowerCat === "inactive" ? !r.active : rowerCat === "issues" ? (r.active !== false && (!r.water_ok || !r.land_ok)) : rowerCat === "expiring" ? (r.active && [r.swim?.state, r.cox?.state, r.capsize?.state].some((x) => x === "soon" || x === "expired")) : r.category === rowerCat && r.active !== false)));
+    let list = rows.filter((r) => (!rowerQ || fold(r.name).includes(rowerQ)) && (rowerCat === "all" || (rowerCat === "inactive" ? !r.active : rowerCat === "issues" ? (r.active !== false && (!r.water_ok || !r.land_ok)) : rowerCat === "expiring" ? (r.active && [r.swim?.state, r.cox?.state, r.capsize?.state].some((x) => x === "soon" || x === "expired")) : rowerCat === "open" || rowerCat === "women" ? (r.active !== false && r.squad === rowerCat) : rowerCat === "nosquad" ? (r.active !== false && !r.squad) : r.category === rowerCat && r.active !== false)));
+    if (committee && rowerCrew) list = list.filter((r) => rowerCrew === "none" ? !r.club_crew : (r.club_crew || "").split(",").includes(rowerCrew));
     if (rowerCat !== "inactive" && committee) list = list.filter((r) => rowerCat === "all" || r.active);
     const k = rowerSort.k;
     list.sort((a, b) => (typeof a[k] === "string" ? a[k].localeCompare(b[k]) : (a[k] ?? -1) - (b[k] ?? -1)) * rowerSort.dir || a.name.localeCompare(b.name));
     const max = Math.max(1, ...rows.map((r) => r.total));
     const th = (key, l, cls = "") => `<th class="sort ${cls}" data-k="${key}">${l}${rowerSort.k === key ? (rowerSort.dir > 0 ? " ↑" : " ↓") : ""}</th>`;
-    $("#rw-table").innerHTML = `<table class="t"><thead><tr>${th("name", "Name")}${th("category", "Category")}
+    $("#rw-table").innerHTML = `<table class="t"><thead><tr>${th("name", "Name")}${th("category", "Category")}${th("squad", "Squad")}${committee ? th("club_crew", "Crew") : ""}
       ${committee ? `<th>Swim</th><th title="Capsize drill (needed for boats of two or fewer)">Capsize</th><th>Subs</th>${th("cox_status", "Cox")}<th title="At their next new outing, counting everything already scheduled">May row next</th>` : `${th("cox_status", "Cox")}`}
       ${th("water", "Water", "num")}${th("land", "Land", "num")}${th("total", "Total", "num")}<th style="width:120px"></th>${committee ? th("novice_free_left", "Free left", "num") : ""}</tr></thead>
       <tbody>${list.map((r) => `<tr class="${committee ? "clickable" : ""}" data-id="${r.id}">
         <td><b>${esc(r.name)}</b>${cttee[r.id] ? ` ${committeeBadge(cttee[r.id])}` : ""}${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${committee && !r.active ? ` <span class="chip">inactive</span>` : ""}${committee && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
         <td>${catChip(r.category)}</td>
+        <td>${r.squad ? squadChip(r.squad) : `<span class="faint">—</span>`}</td>${committee ? `<td>${r.club_crew ? r.club_crew.split(",").map((c) => `<span class="chip ${c[0] === "W" ? "violet" : "accent"}">${esc(c)}</span>`).join(" ") : `<span class="faint">—</span>`}</td>` : ""}
         ${committee ? `<td>${!r.swim_test ? `<span class="chip warn">No</span>` : r.swim.state === "expired" || r.swim.state === "soon" ? expiryChip(r.swim, "Swim test") : `<span class="chip ok" title="${r.swim.expires ? `Valid until ${esc(fmtYear(r.swim.expires))}` : "Date not recorded"}">${I.check}Yes</span>`}</td>
           <td>${!r.capsize_drilled ? `<span class="chip">No</span>` : r.capsize.state === "expired" || r.capsize.state === "soon" ? expiryChip(r.capsize, "Capsize drill") : `<span class="chip ok" title="${esc([r.capsize.date ? `Done ${fmtYear(r.capsize.date)}` : "Date not recorded", r.capsize.expires ? `valid until ${fmtYear(r.capsize.expires)}` : "no expiry"].join(", "))}">${I.check}Yes</span>`}</td>
           <td>${r.subs_valid ? `<span class="chip ok">${esc(r.subs_plan === "Full year" ? "Full year" : r.subs_term)}</span>` : `<span class="chip ${r.subs_plan === "Unpaid" ? "warn" : "bad"}" title="${esc(r.subs_plan)} ${esc(r.subs_term)} ${esc(r.subs_year)}">${r.subs_plan === "Unpaid" ? "Unpaid" : "Expired"}</span>`}</td>
@@ -1733,8 +1735,8 @@ async function pageRowers() {
           : `<td>${r.cox_status ? `<span class="chip violet">${esc(r.cox_status)}</span>` : ""}</td>`}
         <td class="num">${r.water}</td><td class="num">${r.land}</td><td class="num"><b>${r.total}</b></td>
         <td><div class="bar"><i style="width:${(r.total / max) * 100}%"></i></div></td>
-        ${committee ? `<td class="num">${r.novice_free_left ?? ""}</td>` : ""}</tr>`).join("") || `<tr><td colspan="12" class="faint" style="text-align:center;padding:30px">No one matches.</td></tr>`}</tbody></table>`;
-    $$("#rw-table th.sort").forEach((t) => t.onclick = () => { rowerSort = { k: t.dataset.k, dir: rowerSort.k === t.dataset.k ? -rowerSort.dir : (t.dataset.k === "name" || t.dataset.k === "category" ? 1 : -1) }; draw(); });
+        ${committee ? `<td class="num">${r.novice_free_left ?? ""}</td>` : ""}</tr>`).join("") || `<tr><td colspan="14" class="faint" style="text-align:center;padding:30px">No one matches.</td></tr>`}</tbody></table>`;
+    $$("#rw-table th.sort").forEach((t) => t.onclick = () => { rowerSort = { k: t.dataset.k, dir: rowerSort.k === t.dataset.k ? -rowerSort.dir : (t.dataset.k === "name" || t.dataset.k === "category" || t.dataset.k === "squad" || t.dataset.k === "club_crew" ? 1 : -1) }; draw(); });
     if (committee) $$("#rw-table tr[data-id]").forEach((tr) => tr.onclick = () => editMember(rows.find((r) => r.id === +tr.dataset.id), meta));
     $("#rw-count").textContent = `${list.length} shown`;
   };
@@ -1752,11 +1754,13 @@ async function pageRowers() {
     </div>
     <div class="filters">
       <input class="input" id="rw-q" placeholder="Search names…" style="max-width:260px" value="${esc(rowerQ)}">
-      <div class="seg" id="rw-cat">${[["all", "All"], ["Novice", "Novice"], ["Senior", "Senior"], ...(committee ? [["issues", "Can't row"], ["expiring", "Expiring"], ["inactive", "Inactive"]] : [])].map(([k, l]) => `<button data-c="${k}" class="${rowerCat === k ? "on" : ""}">${l}</button>`).join("")}</div>
+      <div class="seg" id="rw-cat">${[["all", "All"], ["Novice", "Novice"], ["Senior", "Senior"], ["open", "Open"], ["women", "Women's"], ...(committee ? [["nosquad", "No squad"]] : []), ...(committee ? [["issues", "Can't row"], ["expiring", "Expiring"], ["inactive", "Inactive"]] : [])].map(([k, l]) => `<button data-c="${k}" class="${rowerCat === k ? "on" : ""}">${l}</button>`).join("")}</div>
+      ${committee ? `<select class="input" id="rw-crew" style="width:auto" aria-label="Crew"><option value="">Any crew</option>${(meta.crews || []).map((c) => `<option value="${esc(c)}" ${rowerCrew === c ? "selected" : ""}>${esc(c)}</option>`).join("")}<option value="none" ${rowerCrew === "none" ? "selected" : ""}>No crew</option></select>` : ""}
       <span class="faint small" id="rw-count" style="margin-left:auto"></span>
     </div>
     <div class="card table-wrap" id="rw-table"></div>`;
   $("#rw-q").oninput = (e) => { rowerQ = fold(e.target.value.trim()); draw(); };
+  if (committee) $("#rw-crew").onchange = (e) => { rowerCrew = e.target.value; draw(); };
   $$("#rw-cat button").forEach((b) => b.onclick = () => { rowerCat = b.dataset.c; $$("#rw-cat button").forEach((x) => x.classList.toggle("on", x === b)); draw(); });
   if (committee) { $("#rw-add").onclick = () => editMember(null, meta); $("#rw-export").onclick = () => exportModal("/api/committee/members.csv", "all members"); }
   else $("#rw-add").onclick = addRower;
@@ -1803,7 +1807,8 @@ function editMember(m, meta) {
           ${m && m.has_phone ? `<button type="button" class="btn sm" id="me-phone-show" title="Show the full number">Show</button><button type="button" class="btn sm danger" id="me-phone-del" title="Delete this number">Delete</button>` : ""}</div></label>
         <label class="field"><span>College</span><input class="input" id="me-college" list="me-colleges" value="${esc(v.college || "")}"><datalist id="me-colleges"><option value="Reuben"><option value="Blackfriars"><option value="St Stephen's House"></datalist></label>
         <label class="field"><span>Side preference</span><select class="input" id="me-side">${["", ...Object.keys(SIDE_SHORT)].map((x) => `<option value="${esc(x)}" ${(v.side || "") === x ? "selected" : ""}>${x || "—"}</option>`).join("")}</select></label>
-        <label class="field"><span>Squad</span><select class="input" id="me-squad">${[["", "—"], ["open", "Open"], ["women", "Women's"]].map(([k, l]) => `<option value="${k}" ${(v.squad || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select><span class="hint">Used to check race entries.</span></label>
+        <label class="field"><span>Squad</span><select class="input" id="me-squad">${[["", "—"], ["open", "Open"], ["women", "Women's"]].map(([k, l]) => `<option value="${k}" ${(v.squad || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select><span class="hint">Open or Women's. Set from race and outing sign-ups; used to check race entries.</span></label>
+        <div class="field"><span>Crews <span class="faint">(committee only)</span></span><div style="display:flex;gap:12px;flex-wrap:wrap;padding-top:6px">${(meta.crews || ["M1", "M2", "W1", "W2"]).map((c) => `<label class="check"><input type="checkbox" class="me-crew" value="${esc(c)}" ${(v.club_crew || "").split(",").includes(c) ? "checked" : ""}> ${esc(c)}</label>`).join("")}</div><span class="hint">Tick both M1 and M2 for a sub. Never shown to members, not even this one.</span></div>
       </div>
       <div class="grid-3">
         <label class="field"><span>Subs plan</span><select class="input" id="me-plan">${(meta.plans || ["Unpaid", "Single term", "Full year"]).map((p) => `<option ${v.subs_plan === p ? "selected" : ""}>${p}</option>`).join("")}</select></label>
@@ -1861,7 +1866,7 @@ function editMember(m, meta) {
           swim_test_date: $("#me-swimd", el).value, cox_status_date: $("#me-coxd", el).value,
           capsize_drilled: $("#me-cap", el).checked, capsize_drill_date: $("#me-capd", el).value, past_water: +$("#me-pw", el).value || 0, past_land: +$("#me-pl", el).value || 0,
           active: $("#me-active", el).checked, notes: $("#me-notes", el).value,
-          phone: phoneTouched ? $("#me-phone", el).value.trim() : (m ? null : ($("#me-phone", el).value.trim() || null)), college: $("#me-college", el).value.trim(), side: $("#me-side", el).value, squad: $("#me-squad", el).value };
+          phone: phoneTouched ? $("#me-phone", el).value.trim() : (m ? null : ($("#me-phone", el).value.trim() || null)), college: $("#me-college", el).value.trim(), side: $("#me-side", el).value, squad: $("#me-squad", el).value, club_crew: $$(".me-crew", el).filter((x) => x.checked).map((x) => x.value).join(",") };
         if (!body.name) return toast("Name is required", true);
         try { await api(m ? `/api/committee/members/${m.id}` : "/api/committee/members", { method: m ? "PUT" : "POST", body }); close(); toast("Saved"); await reboot(); pageRowers(); }
         catch (e) { fail(e); }
