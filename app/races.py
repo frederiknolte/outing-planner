@@ -122,6 +122,12 @@ def race_problems(race, category: str, squad: str, role: str, status: str) -> li
     return out
 
 
+def is_associate(college: Optional[str]) -> bool:
+    """Someone from a college other than Reuben (races can cap associate rowers). Unknown college isn't flagged."""
+    c = (college or "").strip().casefold()
+    return bool(c) and not c.startswith("reuben")
+
+
 def _clean_url(u: str) -> str:
     u = u.strip()
     # Add https:// to bare addresses like "ourcs.co.uk", but leave any other scheme (e.g. javascript:) to be rejected.
@@ -211,19 +217,21 @@ def _load_crews(conn, race_ids=None) -> dict[int, list[dict]]:
         by_id[c["id"]] = crew
     if by_id:
         for s in conn.execute(
-                f"""SELECT s.crew_id, s.seat, s.member_id, m.name FROM race_crew_seats s JOIN members m ON m.id = s.member_id
+                f"""SELECT s.crew_id, s.seat, s.member_id, m.name, m.college FROM race_crew_seats s JOIN members m ON m.id = s.member_id
                     WHERE s.crew_id IN ({','.join('?' * len(by_id))})""", list(by_id)):
-            by_id[s["crew_id"]]["seats"][s["seat"]] = (s["member_id"], s["name"])
+            by_id[s["crew_id"]]["seats"][s["seat"]] = (s["member_id"], s["name"], is_associate(s["college"]))
         for s in conn.execute(
-                f"""SELECT s.crew_id, s.member_id, m.name FROM race_crew_reserves s JOIN members m ON m.id = s.member_id
+                f"""SELECT s.crew_id, s.member_id, m.name, m.college FROM race_crew_reserves s JOIN members m ON m.id = s.member_id
                     WHERE s.crew_id IN ({','.join('?' * len(by_id))}) ORDER BY s.position""", list(by_id)):
-            by_id[s["crew_id"]]["reserves"].append({"member_id": s["member_id"], "name": s["name"]})
+            by_id[s["crew_id"]]["reserves"].append({"member_id": s["member_id"], "name": s["name"], "associate": is_associate(s["college"])})
         ids = _member_ids(conn)
         for crew in by_id.values():
             rowers, seats = boat_seats(crew["boat_type"])
             taken = crew["seats"]
             crew["seats"] = [{"seat": n, "label": seat_label(n, rowers, "water"),
-                              "member_id": taken.get(n, (None, ""))[0], "name": taken.get(n, (None, ""))[1]} for n in seats]
+                              "member_id": taken.get(n, (None, "", False))[0], "name": taken.get(n, (None, "", False))[1],
+                              "associate": taken.get(n, (None, "", False))[2]} for n in seats]
+            crew["associates"] = sum(1 for x in crew["seats"] if x["associate"])
             crew["bankrider_ids"] = _bankrider_ids(crew["bankrider"], ids)
     return crews
 
@@ -248,7 +256,7 @@ def races_list(me: Optional[int] = None, role: str = Depends(require_member)):
             links.setdefault(r["race_id"], []).append({"label": r["label"], "url": r["url"]})
         for r in conn.execute(
                 """SELECT rr.race_id, rr.member_id, rr.status, rr.squad, rr.role, rr.side, rr.comment, rr.updated_at,
-                          m.name, m.category
+                          m.name, m.category, m.college
                    FROM race_responses rr JOIN members m ON m.id = rr.member_id
                    ORDER BY m.name COLLATE NOCASE"""):
             resp.setdefault(r["race_id"], []).append(r)
@@ -269,7 +277,7 @@ def races_list(me: Optional[int] = None, role: str = Depends(require_member)):
             # Comments are committee-only (except your own, so the form can be prefilled).
             race["responses"] = [
                 {"member_id": x["member_id"], "name": x["name"], "category": x["category"], "status": x["status"],
-                 "squad": x["squad"], "role": x["role"], "side": x["side"],
+                 "squad": x["squad"], "role": x["role"], "side": x["side"], "associate": is_associate(x["college"]),
                  # committee: why this response breaks the entry rules (it was saved with an override)
                  **({"problems": race_problems(race, x["category"], x["squad"], x["role"], x["status"])} if committee else {}),
                  **({"comment": x["comment"], "updated_at": x["updated_at"]} if committee or x["member_id"] == me else {})}

@@ -28,7 +28,7 @@ from .timeutil import normalize as norm_time, to_minutes
 from .calendar import router as calendar_router
 from .signup import availability_for_outing, week_counts, router as signup_router
 from .stats import router as stats_router
-from .races import router as races_router, closing_soon, week_races
+from .races import router as races_router, closing_soon, week_races, is_associate as races_is_associate
 from . import issues
 from .committee_roster import router as roster_router
 from .tasks import router as tasks_router
@@ -240,7 +240,8 @@ def bootstrap(role: str = Depends(require_member)):
         rules = Rules(conn)
         s = rules.settings
         members = [
-            {"id": m["id"], "name": m["name"], "category": m["category"], "cox_status": m["cox_status"]}
+            {"id": m["id"], "name": m["name"], "category": m["category"], "cox_status": m["cox_status"],
+             "associate": races_is_associate(m["college"])}
             for m in sorted(rules.members.values(), key=lambda m: m["name"].lower()) if m["active"]
         ]
         return {
