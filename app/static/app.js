@@ -1778,7 +1778,7 @@ async function pageRowers() {
   const allOut = rows.reduce((a, r) => a + r.total, 0);
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>Members</h1><p>${committee ? "Manage the squad, subs and swim tests. Outing counts update automatically from the schedule." : "Outing counts across the squad."}</p></div>
-      ${committee ? `<div class="toolbar"><button class="btn" id="rw-export">${I.download}Export CSV</button><button class="btn primary" id="rw-add">${I.plus}Add member</button></div>` : `<div class="toolbar"><button class="btn primary" id="rw-add">${I.plus}Add member</button></div>`}</div>
+      ${committee ? `<div class="toolbar"><button class="btn" id="rw-export">${I.download}Export CSV</button><button class="btn primary" id="rw-add">${I.plus}Add member</button></div>` : ""}</div>
     <div class="stats" style="margin-bottom:16px">
       <div class="card stat"><div class="k">Members</div><div class="v">${rows.filter((r) => r.active !== false).length}</div><div class="s">${novices} novice · ${rows.filter((r) => r.active !== false).length - novices} senior</div></div>
       <div class="card stat"><div class="k">Coxes</div><div class="v">${rows.filter((r) => r.cox_status && r.active !== false).length}</div><div class="s">with a cox status</div></div>
@@ -1796,32 +1796,7 @@ async function pageRowers() {
   if (committee) $("#rw-crew").onchange = (e) => { rowerCrew = e.target.value; draw(); };
   $$("#rw-cat button").forEach((b) => b.onclick = () => { rowerCat = b.dataset.c; $$("#rw-cat button").forEach((x) => x.classList.toggle("on", x === b)); draw(); });
   if (committee) { $("#rw-add").onclick = () => editMember(null, meta); $("#rw-export").onclick = () => exportModal("/api/committee/members.csv", "all members"); }
-  else $("#rw-add").onclick = addRower;
   draw();
-}
-
-// Any rower can add a name; subs, swim test, category etc. are left for the committee to set.
-function addRower() {
-  modal({
-    title: "Add member",
-    body: `
-      <label class="field"><span>Full name</span><input class="input" id="ar-name" placeholder="First and last name" required></label>
-      <div class="grid-2">
-        <label class="field"><span>College</span><input class="input" id="ar-college" list="ar-colleges"><datalist id="ar-colleges"><option value="Reuben"><option value="Blackfriars"><option value="St Stephen's House"></datalist></label>
-        <label class="field"><span>Side preference</span><select class="input" id="ar-side">${["", ...Object.keys(SIDE_SHORT)].map((x) => `<option value="${esc(x)}">${x || "—"}</option>`).join("")}</select></label>
-      </div>
-      <div class="callout">${I.info}<div>They're added as a novice. The committee will check their category, cox status, swim test and subs.</div></div>`,
-    foot: `<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="ar-save">Add</button></div>`,
-    onMount: (el, close) => {
-      $("#ar-name", el).focus();
-      $("#ar-save", el).onclick = async () => {
-        const body = { name: $("#ar-name", el).value.trim(), college: $("#ar-college", el).value.trim(), side: $("#ar-side", el).value };
-        if (!body.name) return toast("Name is required", true);
-        try { await api("/api/rowers", { method: "POST", body }); close(); toast(`${body.name} added`); await reboot(); pageRowers(); }
-        catch (e) { fail(e); }
-      };
-    },
-  });
 }
 
 function editMember(m, meta) {
@@ -3608,7 +3583,7 @@ const raceChips = (r, data) => `<div class="race-chips"><span class="chip ${RACE
 const raceCrewsSection = (r, editBtn) => `<div class="race-crews-h"><span class="section-title flush">Crews</span>
     ${isCommittee() && !r.crews_published ? `<span class="chip warn" title="Only the committee can see these crews">Draft</span>` : ""}
     ${editBtn && isCommittee() ? `<button type="button" class="btn sm" data-race-crews>${I.users}Edit crews</button>` : ""}</div>
-  <div class="race-crews">${r.crews.map(raceCrewBlock).join("")}</div>`;
+  <div class="race-crews ${editBtn && isCommittee() && !r.crews_published ? "editable" : ""}" ${editBtn && isCommittee() && !r.crews_published ? `title="Click a crew to edit crews"` : ""}>${r.crews.map(raceCrewBlock).join("")}</div>`;
 const raceLinks = (r) => r.links.length ? `<div class="race-links">${r.links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${I.link}${esc(l.label || l.url.replace(/^https?:\/\//, "").replace(/\/$/, ""))}</a>`).join("")}</div>` : "";
 
 function raceCard(r, data) {
@@ -3870,7 +3845,7 @@ function raceCrewsModal(r, data) {
           return `<section class="rcb ${ci === active ? "active" : ""}" data-ci="${ci}">
             <div class="rcb-head"><input class="input" data-k="name" value="${esc(c.name)}" placeholder="Crew name, e.g. W1" maxlength="60" aria-label="Crew name">
               <select class="input" data-k="boat_type" aria-label="Boat type">${Object.keys(BT).map((k) => `<option ${k === c.boat_type ? "selected" : ""}>${esc(k)}</option>`).join("")}</select>
-              <span class="faint small tnum">${filled}/${seats.length}</span>${(() => { const n = seats.filter((q) => c.seats[q] != null && isAssoc(c.seats[q])).length; return n ? `<span class="chip violet" title="Rowers and coxes from a different college">${n} assoc.</span>` : ""; })()}
+              <span class="rcb-meta"><span class="faint small tnum">${filled}/${seats.length}</span>${(() => { const n = seats.filter((q) => c.seats[q] != null && isAssoc(c.seats[q])).length; return n ? `<span class="chip violet" title="Rowers and coxes from a different college">${n} assoc.</span>` : ""; })()}</span>
               <button type="button" class="btn ghost icon" data-rm-crew aria-label="Remove crew">${I.x}</button></div>
             <div class="seat-editor">${seats.map((st) => {
               const mid = c.seats[st], iss = mid != null ? issues(mid, st) : [];
@@ -3925,6 +3900,7 @@ function raceCrewsModal(r, data) {
         });
         drawPool();
       };
+      let maybeOpen = true;   // the maybes start expanded
       const drawPool = () => {
         const pool = $("#rcb-pool", m);
         const yes = r.responses.filter((x) => x.status === "yes"), maybe = r.responses.filter((x) => x.status === "maybe");
@@ -3942,9 +3918,10 @@ function raceCrewsModal(r, data) {
         if (!yes.length) html += `<div class="faint small" style="padding:6px 2px">Nobody has said they're available yet. You can still pick anyone from the seat boxes.</div>`;
         html += group("Coxes", c.cox, "cox", "→ cox seat") + group("Open rowers", c.open, "row", "placed on their side") + group("Women's rowers", c.women, "row", "placed on their side") + group("Rowers, squad not set", c.unset, "row");
         if (maybe.length) html += `<details class="pool-group pool-more"><summary class="pool-h">Maybe <span class="faint">${maybe.length}</span></summary>${group("Coxes", cm.cox, "cox")}${group("Rowers", [...cm.open, ...cm.women, ...cm.unset], "row")}</details>`;
-        const open = pool.querySelector("details")?.open;
+        const det = pool.querySelector("details");
+        if (det) maybeOpen = det.open;   // keep it open (the default) or collapsed as the committee left it
         pool.innerHTML = html;
-        if (open) pool.querySelector("details").open = true;
+        const det2 = pool.querySelector("details"); if (det2) det2.open = maybeOpen;
         $$("[data-pick]", pool).forEach((b) => b.onclick = () => place(+b.dataset.pick, b.dataset.intent));
         const out = yes.filter((x) => !where(x.member_id) && reserveCrew(x.member_id) < 0).length;
         const empty = crews.reduce((n, cr) => n + seatsOf(cr).filter((q) => cr.seats[q] == null).length, 0);
@@ -4018,6 +3995,8 @@ async function pageRaces() {
     $$("[data-race-set]", card).forEach((b) => b.onclick = () => raceResponseModal(r, data, b.dataset.raceSet ? +b.dataset.raceSet : null));
     $$("[data-race-who]", card).forEach((b) => b.onclick = () => raceWhoModal(r, data, b.dataset.raceWho));
     $$("[data-race-crews]", card).forEach((b) => b.onclick = () => raceCrewsModal(r, data));
+    // Draft crews (committee only): clicking a crew opens the crew editor.
+    $$(".race-crews.editable .race-boat", card).forEach((b) => b.onclick = () => raceCrewsModal(r, data));
     $$("[data-race-info]", card).forEach((b) => b.onclick = () => raceInfoModal(r, data));
     // The whole top part opens the details too (its own buttons and links keep doing their thing).
     const head = $("[data-race-head]", card);

@@ -370,33 +370,6 @@ def rowers(role: str = Depends(require_member)):
         return out
 
 
-class RowerIn(BaseModel):
-    """What any rower may set when adding someone. Subs, swim test, cox status, category
-    and notes stay committee-only; the new entry is flagged for committee review."""
-    name: str = Field(..., min_length=1, max_length=100)
-    college: str = Field("", max_length=80)
-    side: str = Field("", max_length=40)
-
-
-@app.post("/api/rowers")
-def rower_create(b: RowerIn, role: str = Depends(require_member)):
-    name = " ".join(b.name.split())
-    if len(name) < 3 or " " not in name:
-        raise HTTPException(400, "Please enter a full name (first and last)")
-    from .signup import SIDES
-    if b.side and b.side not in SIDES:
-        raise HTTPException(400, "Bad side preference")
-    with db.get_conn() as conn:
-        try:
-            cur = conn.execute(
-                """INSERT INTO members(name, category, cox_status, needs_review, notes, college, side)
-                   VALUES (?, 'Novice', '', 1, 'Added from the rower list', ?, ?)""",
-                (name, b.college.strip(), b.side))
-        except db.sqlite3.IntegrityError:
-            raise HTTPException(400, "Someone with that name is already on the list")
-        return {"id": cur.lastrowid}
-
-
 # ---------------------------------------------------------------- subs ----
 class SubRequestIn(BaseModel):
     outing_id: int
