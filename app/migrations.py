@@ -86,18 +86,6 @@ def _migrate_coach_tag(conn) -> None:
         conn.execute("UPDATE members SET category = 'Coach' WHERE is_coach = 1")
 
 
-def _migrate_coach_data(conn) -> None:
-    """Coaches are kept apart from the rowers: always inactive, and with no subs, squad, crew, college, side, cox,
-    swim test or capsize drill info. Clear whatever an existing Coach still has (saving a coach does the same)."""
-    conn.execute(
-        """UPDATE members SET active = 0, swim_test = 0, swim_test_date = '', capsize_drilled = 0, capsize_drill_date = '',
-               subs_plan = 'Unpaid', subs_term = '', subs_year = '', cox_status = '', cox_status_date = '',
-               college = '', side = '', squad = '', club_crew = ''
-           WHERE category = 'Coach' AND (active != 0 OR swim_test != 0 OR swim_test_date != '' OR capsize_drilled != 0
-               OR capsize_drill_date != '' OR subs_plan != 'Unpaid' OR subs_term != '' OR subs_year != '' OR cox_status != ''
-               OR cox_status_date != '' OR college != '' OR side != '' OR squad != '' OR club_crew != '')""")
-
-
 def _migrate_max_land(conn) -> None:
     """The sign-up form used to ask for "max outings this week" (water + land together); it now asks
     for max land sessions separately. Rename the column and keep what's left after the water outings."""
@@ -135,7 +123,7 @@ def run(conn) -> None:
     _migrate_task_repeat(conn)
     _migrate_coaches_table(conn)
     _migrate_coach_tag(conn)
-    _migrate_coach_data(conn)
+    conn.execute("UPDATE members SET active = 0 WHERE category = 'Coach' AND active != 0")   # coaches are always inactive (nothing else is touched)
     for table, col in DROPPED_COLUMNS:
         if col in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
             conn.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
