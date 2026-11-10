@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS boats (
 CREATE TABLE IF NOT EXISTS members (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    category TEXT NOT NULL DEFAULT 'Novice',       -- Novice | Senior
+    category TEXT NOT NULL DEFAULT 'Novice',       -- Novice | Senior | Coach
     swim_test INTEGER NOT NULL DEFAULT 0,
     subs_plan TEXT NOT NULL DEFAULT 'Unpaid',      -- Unpaid | Single term | Full year
     subs_term TEXT NOT NULL DEFAULT '',
@@ -377,7 +377,6 @@ MIGRATIONS = {
         "cal_token": "TEXT NOT NULL DEFAULT ''",       # secret for the personal calendar feed
         "phone_updated_at": "TEXT NOT NULL DEFAULT ''",  # for automatic deletion of old numbers
         "subs_reminded_at": "TEXT NOT NULL DEFAULT ''",  # when the committee last reminded them to pay subs
-        "is_coach": "INTEGER NOT NULL DEFAULT 0",       # tagged as a coach: listed on the Coaches page (alongside Novice / Senior)
     },
 }
 
@@ -385,6 +384,7 @@ MIGRATIONS = {
 DROPPED_COLUMNS = [
     ("outings", "happened"),   # the "Happened" confirmation was removed: past + not cancelled = went ahead
     ("tasks", "repeat_yearly"),  # now tasks.repeat = 'year' (to-dos can also repeat every term)
+    ("members", "is_coach"),   # coach is now a category (Novice / Senior / Coach), migrated by _migrate_coach_tag
 ]
 
 DEFAULT_SETTINGS = {
@@ -450,6 +450,7 @@ def init_db() -> None:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
         _migrate_task_repeat(conn)
         _migrate_coaches_table(conn)
+        _migrate_coach_tag(conn)
         for table, col in DROPPED_COLUMNS:
             if col in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
                 conn.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
@@ -472,15 +473,21 @@ def _migrate_task_repeat(conn) -> None:
 
 
 def _migrate_coaches_table(conn) -> None:
-    """Coaches used to be their own table; they're now members tagged is_coach. Carry the old rows over
-    (matching a member by name, else adding them as an inactive Senior so they aren't counted as squad)."""
+    """Coaches used to be their own table; they're now members with category Coach. Carry the old rows over
+    (matching a member by name, else adding them as an inactive Coach so they aren't counted as squad)."""
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coaches'").fetchone():
         return
     for c in conn.execute("SELECT name FROM coaches").fetchall():
         name = c["name"].strip()
-        if conn.execute("UPDATE members SET is_coach = 1 WHERE name = ?", (name,)).rowcount == 0:
-            conn.execute("INSERT INTO members(name, category, active, is_coach) VALUES (?, 'Senior', 0, 1)", (name,))
+        if conn.execute("UPDATE members SET category = 'Coach' WHERE name = ?", (name,)).rowcount == 0:
+            conn.execute("INSERT INTO members(name, category, active) VALUES (?, 'Coach', 0)", (name,))
     conn.execute("DROP TABLE coaches")
+
+
+def _migrate_coach_tag(conn) -> None:
+    """Coach was briefly a tag (members.is_coach) on top of Novice / Senior; it's now a category of its own."""
+    if "is_coach" in {r[1] for r in conn.execute("PRAGMA table_info(members)")}:
+        conn.execute("UPDATE members SET category = 'Coach' WHERE is_coach = 1")
 
 
 def _migrate_max_land(conn) -> None:

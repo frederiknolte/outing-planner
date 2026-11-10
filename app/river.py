@@ -309,7 +309,7 @@ def check_outing(o: dict, crew: dict, members: dict, boat: dict | None, settings
     cox_status = (cox or {}).get("cox_status", "")
     rowers = [members[m] for s, m in crew.items() if s != 0 and m in members]
     seniors = sum(1 for m in rowers if m.get("category") == "Senior")
-    novices = [m["name"] for m in rowers if m.get("category") != "Senior"]
+    novices = [m["name"] for m in rowers if m.get("category") not in ("Senior", "Coach")]
     need = min(4, o.get("capacity") or 4)
     senior_crew = seniors >= need and not novices
     bankrider = bool((o.get("coach") or "").strip())
