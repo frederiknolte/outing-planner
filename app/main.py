@@ -366,7 +366,7 @@ def rowers(role: str = Depends(require_member)):
             if role != "committee":
                 t.pop("novice_free_left")   # how many free outings someone has left is committee-only
             out.append({"id": m["id"], "name": m["name"], "category": m["category"],
-                        "cox_status": m["cox_status"], "squad": m["squad"] or "", **t})
+                        "cox_status": m["cox_status"], "squad": m["squad"] or "", "is_coach": bool(m["is_coach"]), **t})
         out.sort(key=lambda r: r["name"].lower())
         return out
 
@@ -717,6 +717,7 @@ CLUB_CREWS = ("M1", "M2", "W1", "W2")      # committee-assigned crews; committee
 class MemberIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     category: str = "Novice"
+    is_coach: bool = False                               # also listed on the Coaches page
     swim_test: bool = False
     subs_plan: str = "Unpaid"
     subs_term: str = ""
@@ -819,11 +820,11 @@ def member_create(m: MemberIn, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
         try:
             cur = conn.execute(
-                """INSERT INTO members(name, category, swim_test, subs_plan, subs_term, subs_year, cox_status,
+                """INSERT INTO members(name, category, is_coach, swim_test, subs_plan, subs_term, subs_year, cox_status,
                    past_water, past_land, active, notes, phone, phone_updated_at, college, side, squad, club_crew, swim_test_date, cox_status_date,
                    capsize_drilled, capsize_drill_date)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ? != '' THEN datetime('now') ELSE '' END,?,?,?,?,?,?,?,?)""",
-                (m.name.strip(), m.category, int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ? != '' THEN datetime('now') ELSE '' END,?,?,?,?,?,?,?,?)""",
+                (m.name.strip(), m.category, int(m.is_coach), int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
                  m.cox_status, m.past_water, m.past_land, int(m.active), m.notes, _phone_value(m.phone) or "",
                  m.phone or "", m.college.strip(), m.side, m.squad, m.club_crew, m.swim_test_date, m.cox_status_date,
                  int(m.capsize_drilled), m.capsize_drill_date))
@@ -838,11 +839,11 @@ def member_update(member_id: int, m: MemberIn, _: str = Depends(require_committe
     with db.get_conn() as conn:
         try:
             conn.execute(
-                """UPDATE members SET name=?, category=?, swim_test=?, subs_plan=?, subs_term=?, subs_year=?,
+                """UPDATE members SET name=?, category=?, is_coach=?, swim_test=?, subs_plan=?, subs_term=?, subs_year=?,
                    cox_status=?, past_water=?, past_land=?, active=?, notes=?, college=?, side=?, squad=?, club_crew=?,
                    swim_test_date=?, cox_status_date=?, capsize_drilled=?, capsize_drill_date=?,
                    needs_review=0 WHERE id=?""",
-                (m.name.strip(), m.category, int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
+                (m.name.strip(), m.category, int(m.is_coach), int(m.swim_test), m.subs_plan, m.subs_term, m.subs_year.strip(),
                  m.cox_status, m.past_water, m.past_land, int(m.active), m.notes,
                  m.college.strip(), m.side, m.squad, m.club_crew, m.swim_test_date, m.cox_status_date,
                  int(m.capsize_drilled), m.capsize_drill_date, member_id))
@@ -1073,38 +1074,11 @@ def members_csv(include_phone: bool = False, _: str = Depends(require_committee)
 
 
 # -------------------------------------------------------------- coaches ----
-class CoachIn(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
-
-
+# Coaches are members tagged is_coach (set on the Members page); this lists them for the Coaches page and name pickers.
 @app.get("/api/committee/coaches")
 def coaches_list(role: str = Depends(require_member)):
     with db.get_conn() as conn:
-        return [dict(r) for r in conn.execute("SELECT id, name FROM coaches ORDER BY name")]
-
-
-@app.post("/api/committee/coaches")
-def coach_create(c: CoachIn, _: str = Depends(require_committee)):
-    with db.get_conn() as conn:
-        try:
-            cur = conn.execute("INSERT INTO coaches(name) VALUES (?)", (c.name.strip(),))
-        except db.sqlite3.IntegrityError:
-            raise HTTPException(400, "Coach already exists")
-        return {"id": cur.lastrowid}
-
-
-@app.put("/api/committee/coaches/{coach_id}")
-def coach_update(coach_id: int, c: CoachIn, _: str = Depends(require_committee)):
-    with db.get_conn() as conn:
-        conn.execute("UPDATE coaches SET name=? WHERE id=?", (c.name.strip(), coach_id))
-        return {"ok": True}
-
-
-@app.delete("/api/committee/coaches/{coach_id}")
-def coach_delete(coach_id: int, _: str = Depends(require_committee)):
-    with db.get_conn() as conn:
-        conn.execute("DELETE FROM coaches WHERE id=?", (coach_id,))
-        return {"ok": True}
+        return [dict(r) for r in conn.execute("SELECT id, name FROM members WHERE is_coach = 1 ORDER BY name")]
 
 
 @app.get("/api/committee/coaching-stats")
@@ -1117,7 +1091,7 @@ def coaching_stats(_: str = Depends(require_committee)):
         except ValueError:
             start = date(terms.ay_start_of(effective_today(s)), 10, 1)
         months = [add_months(start, i).strftime("%Y-%m") for i in range(12)]
-        coaches = [dict(r) for r in conn.execute("SELECT * FROM coaches ORDER BY name")]
+        coaches = [dict(r) for r in conn.execute("SELECT id, name FROM members WHERE is_coach = 1 ORDER BY name")]
         outings = conn.execute("SELECT date, coach FROM outings WHERE coach != '' AND cancelled = 0 AND date >= ? AND date < ?",
                                (start.isoformat(), add_months(start, 12).isoformat())).fetchall()
         rows, uncounted = [], defaultdict(int)

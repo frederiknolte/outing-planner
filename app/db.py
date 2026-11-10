@@ -35,12 +35,6 @@ CREATE TABLE IF NOT EXISTS members (
     notes TEXT NOT NULL DEFAULT ''
 );
 
-CREATE TABLE IF NOT EXISTS coaches (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    search_text TEXT NOT NULL DEFAULT ''           -- no longer used (coaches match on name only)
-);
-
 CREATE TABLE IF NOT EXISTS outings (
     id INTEGER PRIMARY KEY,
     kind TEXT NOT NULL,                            -- water | land
@@ -383,6 +377,7 @@ MIGRATIONS = {
         "cal_token": "TEXT NOT NULL DEFAULT ''",       # secret for the personal calendar feed
         "phone_updated_at": "TEXT NOT NULL DEFAULT ''",  # for automatic deletion of old numbers
         "subs_reminded_at": "TEXT NOT NULL DEFAULT ''",  # when the committee last reminded them to pay subs
+        "is_coach": "INTEGER NOT NULL DEFAULT 0",       # tagged as a coach: listed on the Coaches page (alongside Novice / Senior)
     },
 }
 
@@ -454,6 +449,7 @@ def init_db() -> None:
                 if col not in have:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
         _migrate_task_repeat(conn)
+        _migrate_coaches_table(conn)
         for table, col in DROPPED_COLUMNS:
             if col in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
                 conn.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
@@ -473,6 +469,18 @@ def _migrate_task_repeat(conn) -> None:
     """Yearly to-dos used to be a repeat_yearly flag; carry it over before the column is dropped."""
     if "repeat_yearly" in {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}:
         conn.execute("UPDATE tasks SET repeat = 'year' WHERE repeat_yearly = 1 AND repeat = ''")
+
+
+def _migrate_coaches_table(conn) -> None:
+    """Coaches used to be their own table; they're now members tagged is_coach. Carry the old rows over
+    (matching a member by name, else adding them as an inactive Senior so they aren't counted as squad)."""
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coaches'").fetchone():
+        return
+    for c in conn.execute("SELECT name FROM coaches").fetchall():
+        name = c["name"].strip()
+        if conn.execute("UPDATE members SET is_coach = 1 WHERE name = ?", (name,)).rowcount == 0:
+            conn.execute("INSERT INTO members(name, category, active, is_coach) VALUES (?, 'Senior', 0, 1)", (name,))
+    conn.execute("DROP TABLE coaches")
 
 
 def _migrate_max_land(conn) -> None:

@@ -1757,9 +1757,9 @@ async function pageRowers() {
     else rows = await api("/api/rowers");
   } catch (e) { return fail(e); }
   const draw = () => {
-    let list = rows.filter((r) => (!rowerQ || fold(r.name).includes(rowerQ)) && (rowerCat === "all" || (rowerCat === "inactive" ? !r.active : rowerCat === "issues" ? (r.active !== false && (!r.water_ok || !r.land_ok)) : rowerCat === "expiring" ? (r.active && [r.swim?.state, r.cox?.state, r.capsize?.state].some((x) => x === "soon" || x === "expired")) : rowerCat === "open" || rowerCat === "women" ? (r.active !== false && r.squad === rowerCat) : rowerCat === "nosquad" ? (r.active !== false && !r.squad) : r.category === rowerCat && r.active !== false)));
+    let list = rows.filter((r) => (!rowerQ || fold(r.name).includes(rowerQ)) && (rowerCat === "all" || (rowerCat === "inactive" ? !r.active : rowerCat === "issues" ? (r.active !== false && (!r.water_ok || !r.land_ok)) : rowerCat === "expiring" ? (r.active && [r.swim?.state, r.cox?.state, r.capsize?.state].some((x) => x === "soon" || x === "expired")) : rowerCat === "open" || rowerCat === "women" ? (r.active !== false && r.squad === rowerCat) : rowerCat === "nosquad" ? (r.active !== false && !r.squad) : rowerCat === "coach" ? !!r.is_coach : r.category === rowerCat && r.active !== false)));
     if (committee && rowerCrew) list = list.filter((r) => rowerCrew === "none" ? !r.club_crew : (r.club_crew || "").split(",").includes(rowerCrew));
-    if (rowerCat !== "inactive" && committee) list = list.filter((r) => rowerCat === "all" || r.active);
+    if (rowerCat !== "inactive" && rowerCat !== "coach" && committee) list = list.filter((r) => rowerCat === "all" || r.active);
     const k = rowerSort.k;
     list.sort((a, b) => (typeof a[k] === "string" ? a[k].localeCompare(b[k]) : (a[k] ?? -1) - (b[k] ?? -1)) * rowerSort.dir || a.name.localeCompare(b.name));
     const max = Math.max(1, ...rows.map((r) => r.total));
@@ -1768,7 +1768,7 @@ async function pageRowers() {
       ${committee ? `<th>Swim</th><th title="Capsize drill (needed for boats of two or fewer)">Capsize</th><th>Subs</th>${th("cox_status", "Cox")}<th title="At their next new outing, counting everything already scheduled">May row next</th>` : `${th("cox_status", "Cox")}`}
       ${th("water", "Water", "num")}${th("land", "Land", "num")}${th("total", "Total", "num")}<th style="width:120px"></th>${committee ? th("novice_free_left", "Free left", "num") : ""}</tr></thead>
       <tbody>${list.map((r) => `<tr class="${committee ? "clickable" : ""}" data-id="${r.id}">
-        <td><b>${esc(r.name)}</b>${cttee[r.id] ? ` ${committeeBadge(cttee[r.id])}` : ""}${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${committee && !r.active ? ` <span class="chip">inactive</span>` : ""}${committee && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
+        <td><b>${esc(r.name)}</b>${r.is_coach ? ` <span class="chip violet" title="Coach">${I.whistle}Coach</span>` : ""}${cttee[r.id] ? ` ${committeeBadge(cttee[r.id])}` : ""}${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${committee && !r.active ? ` <span class="chip">inactive</span>` : ""}${committee && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
         <td>${catChip(r.category)}</td>
         <td>${r.squad ? squadChip(r.squad) : `<span class="faint">—</span>`}</td>${committee ? `<td>${r.club_crew ? r.club_crew.split(",").map((c) => `<span class="chip ${c[0] === "W" ? "violet" : "accent"}">${esc(c)}</span>`).join(" ") : `<span class="faint">—</span>`}</td>` : ""}
         ${committee ? `<td>${!r.swim_test ? `<span class="chip warn">No</span>` : r.swim.state === "expired" || r.swim.state === "soon" ? expiryChip(r.swim, "Swim test") : `<span class="chip ok" title="${r.swim.expires ? `Valid until ${esc(fmtYear(r.swim.expires))}` : "Date not recorded"}">${I.check}Yes</span>`}</td>
@@ -1798,7 +1798,7 @@ async function pageRowers() {
     </div>
     <div class="filters">
       <input class="input" id="rw-q" placeholder="Search names…" style="max-width:260px" value="${esc(rowerQ)}">
-      <div class="seg" id="rw-cat">${[["all", "All"], ["Novice", "Novice"], ["Senior", "Senior"], ["open", "Open"], ["women", "Women's"], ...(committee ? [["nosquad", "No squad"]] : []), ...(committee ? [["issues", "Can't row"], ["expiring", "Expiring"], ["inactive", "Inactive"]] : [])].map(([k, l]) => `<button data-c="${k}" class="${rowerCat === k ? "on" : ""}">${l}</button>`).join("")}</div>
+      <div class="seg" id="rw-cat">${[["all", "All"], ["Novice", "Novice"], ["Senior", "Senior"], ["coach", "Coach"], ["open", "Open"], ["women", "Women's"], ...(committee ? [["nosquad", "No squad"]] : []), ...(committee ? [["issues", "Can't row"], ["expiring", "Expiring"], ["inactive", "Inactive"]] : [])].map(([k, l]) => `<button data-c="${k}" class="${rowerCat === k ? "on" : ""}">${l}</button>`).join("")}</div>
       ${committee ? `<select class="input" id="rw-crew" style="width:auto" aria-label="Crew"><option value="">Any crew</option>${(meta.crews || []).map((c) => `<option value="${esc(c)}" ${rowerCrew === c ? "selected" : ""}>${esc(c)}</option>`).join("")}<option value="none" ${rowerCrew === "none" ? "selected" : ""}>No crew</option></select>` : ""}
       <span class="faint small" id="rw-count" style="margin-left:auto"></span>
     </div>
@@ -1810,15 +1810,16 @@ async function pageRowers() {
   draw();
 }
 
-function editMember(m, meta) {
+function editMember(m, meta, preset = {}, after = () => pageRowers()) {
   const terms = meta.terms || ["Michaelmas", "Hilary", "Trinity"];
-  const v = m || { name: "", category: "Novice", swim_test: false, subs_plan: "Unpaid", subs_term: S.boot.settings.current_term, subs_year: S.boot.settings.academic_year, cox_status: "", past_water: 0, past_land: 0, active: true, notes: "" };
+  const v = m || { name: "", category: "Novice", is_coach: false, swim_test: false, subs_plan: "Unpaid", subs_term: S.boot.settings.current_term, subs_year: S.boot.settings.academic_year, cox_status: "", past_water: 0, past_land: 0, active: true, notes: "", ...preset };
   modal({
     title: m ? "Edit member" : "Add member",
     body: `
       <div class="grid-2">
         <label class="field"><span>Full name</span><input class="input" id="me-name" value="${esc(v.name)}" required></label>
         <label class="field"><span>Category</span><select class="input" id="me-cat"><option ${v.category === "Novice" ? "selected" : ""}>Novice</option><option ${v.category === "Senior" ? "selected" : ""}>Senior</option></select></label>
+        <div class="field span-all"><label class="check"><input type="checkbox" id="me-coach" ${v.is_coach ? "checked" : ""}> Coach</label><span class="hint">Shows on the Coaches page and in the coach / bankrider suggestions. For someone who only coaches, untick “Active member” below.</span></div>
         <label class="field"><span>Phone</span>
           <div class="row"><input class="input tnum" id="me-phone" type="tel" placeholder="${m && m.has_phone ? esc(m.phone_masked) : "Not on file"}">
           ${m && m.has_phone ? `<button type="button" class="btn sm" id="me-phone-show" title="Show the full number">Show</button><button type="button" class="btn sm danger" id="me-phone-del" title="Delete this number">Delete</button>` : ""}</div>
@@ -1877,7 +1878,7 @@ function editMember(m, meta) {
       if (show) show.onclick = async () => { try { ph.value = (await api(`/api/committee/members/${m.id}/phone`)).phone; phoneTouched = false; } catch (e) { fail(e); } };
       if (delp) delp.onclick = () => { ph.value = ""; ph.placeholder = "Will be deleted when you save"; phoneTouched = true; };
       $("#me-save", el).onclick = async () => {
-        const body = { name: $("#me-name", el).value.trim(), category: $("#me-cat", el).value, subs_plan: $("#me-plan", el).value,
+        const body = { name: $("#me-name", el).value.trim(), category: $("#me-cat", el).value, is_coach: $("#me-coach", el).checked, subs_plan: $("#me-plan", el).value,
           subs_term: $("#me-plan", el).value === "Single term" ? $("#me-term", el).value : "", subs_year: $("#me-plan", el).value === "Unpaid" ? "" : $("#me-year", el).value.trim(),
           cox_status: $("#me-cox", el).value, swim_test: $("#me-swim", el).checked,
           swim_test_date: $("#me-swimd", el).value, cox_status_date: $("#me-coxd", el).value,
@@ -1885,13 +1886,13 @@ function editMember(m, meta) {
           active: $("#me-active", el).checked, notes: $("#me-notes", el).value,
           phone: phoneTouched ? $("#me-phone", el).value.trim() : (m ? null : ($("#me-phone", el).value.trim() || null)), college: $("#me-college", el).value.trim(), side: $("#me-side", el).value, squad: $("#me-squad", el).value, club_crew: $$(".me-crew", el).filter((x) => x.checked).map((x) => x.value).join(",") };
         if (!body.name) return toast("Name is required", true);
-        try { await api(m ? `/api/committee/members/${m.id}` : "/api/committee/members", { method: m ? "PUT" : "POST", body }); close(); toast("Saved"); await reboot(); pageRowers(); }
+        try { await api(m ? `/api/committee/members/${m.id}` : "/api/committee/members", { method: m ? "PUT" : "POST", body }); close(); toast("Saved"); await reboot(); after(); }
         catch (e) { fail(e); }
       };
       const d = $("#me-del", el);
       if (d) d.onclick = async () => {
         if (!await confirmBox(`Delete ${esc(m.name)}?`, "They'll be removed from every session they're in. To keep their history, untick “Active member” instead.", "Delete", true)) return;
-        try { await api(`/api/committee/members/${m.id}`, { method: "DELETE" }); toast("Member deleted"); await reboot(); pageRowers(); } catch (e) { fail(e); }
+        try { await api(`/api/committee/members/${m.id}`, { method: "DELETE" }); toast("Member deleted"); await reboot(); after(); } catch (e) { fail(e); }
       };
     },
   });
@@ -2895,30 +2896,18 @@ async function pageHandbook() {
 
 // ---------------------------------------------------------------- coaches --
 async function pageCoaches() {
-  let coaches, stats;
-  try { [coaches, stats] = await Promise.all([api("/api/committee/coaches"), api("/api/committee/coaching-stats")]); } catch (e) { return fail(e); }
+  let md, stats;
+  try { [md, stats] = await Promise.all([api("/api/committee/members"), api("/api/committee/coaching-stats")]); } catch (e) { return fail(e); }
   const mlabel = (m) => { const [y, mo] = m.split("-").map(Number); return `${MON[mo - 1]} ${String(y).slice(2)}`; };
+  const byName = new Map(md.members.map((x) => [x.name, { ...x, ...x.totals }]));
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>Coaches</h1><p>Sessions per coach per month, counted from the Coach / bankrider field on every session.</p></div>
+    <div class="page-head"><div><h1>Coaches</h1><p>Members tagged <b>Coach</b>. Sessions per coach per month, counted from the Coach / bankrider field on every session.</p></div>
       <div class="toolbar"><button class="btn primary" id="c-add">${I.plus}Add coach</button></div></div>
     <div class="card table-wrap"><table class="t"><thead><tr><th>Coach</th>${stats.months.map((m) => `<th class="num">${mlabel(m)}</th>`).join("")}<th class="num">Total</th></tr></thead>
-      <tbody>${stats.rows.map((r) => { const c = coaches.find((x) => x.name === r.name); return `<tr class="clickable" data-id="${c?.id}"><td><b>${esc(r.name)}</b></td>${stats.months.map((m) => `<td class="num ${r.months[m] ? "" : "faint"}">${r.months[m] || "·"}</td>`).join("")}<td class="num"><b>${r.total}</b></td></tr>`; }).join("") || `<tr><td colspan="14" class="faint" style="text-align:center;padding:30px">No coaches yet.</td></tr>`}</tbody></table></div>
-    ${stats.uncounted.length ? `<div class="section-title">Not matched to a coach</div><div class="callout warn">${I.alert}<div>These coach entries don't match anyone above, so they aren't counted: ${stats.uncounted.map((u) => `<b>${esc(u.coach)}</b> (${u.n})`).join(", ")}. Add the coach, or use their full name in the Coach / bankrider field.</div></div>` : ""}`;
-  const edit = (c) => modal({
-    title: c ? "Edit coach" : "Add coach",
-    body: `<label class="field"><span>Name</span><input class="input" id="c-name" value="${esc(c?.name || "")}"></label>`,
-    foot: `${c ? `<button class="btn danger" id="c-del">Delete</button>` : ""}<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="c-save">Save</button></div>`,
-    onMount: (m, close) => {
-      $("#c-save", m).onclick = async () => {
-        const body = { name: $("#c-name", m).value.trim() };
-        if (!body.name) return toast("Name is required", true);
-        try { await api(c ? `/api/committee/coaches/${c.id}` : "/api/committee/coaches", { method: c ? "PUT" : "POST", body }); close(); pageCoaches(); } catch (e) { fail(e); }
-      };
-      const d = $("#c-del", m); if (d) d.onclick = async () => { if (await apiDo(`/api/committee/coaches/${c.id}`, { method: "DELETE" })) { close(); pageCoaches(); } };
-    },
-  });
-  $("#c-add").onclick = () => edit(null);
-  $$("tr[data-id]").forEach((tr) => tr.onclick = () => edit(coaches.find((c) => c.id === +tr.dataset.id)));
+      <tbody>${stats.rows.map((r) => `<tr class="clickable" data-id="${byName.get(r.name)?.id}"><td><b>${esc(r.name)}</b></td>${stats.months.map((m) => `<td class="num ${r.months[m] ? "" : "faint"}">${r.months[m] || "·"}</td>`).join("")}<td class="num"><b>${r.total}</b></td></tr>`).join("") || `<tr><td colspan="14" class="faint" style="text-align:center;padding:30px">No coaches yet. Tag a member as Coach on the Members page, or add one here.</td></tr>`}</tbody></table></div>
+    ${stats.uncounted.length ? `<div class="section-title">Not matched to a coach</div><div class="callout warn">${I.alert}<div>These coach entries don't match anyone above, so they aren't counted: ${stats.uncounted.map((u) => `<b>${esc(u.coach)}</b> (${u.n})`).join(", ")}. Tag them as Coach on the Members page, or use their full name in the Coach / bankrider field.</div></div>` : ""}`;
+  $("#c-add").onclick = () => editMember(null, md, { is_coach: true, category: "Senior", active: false }, pageCoaches);
+  $$("tr[data-id]").forEach((tr) => tr.onclick = () => { const m = [...byName.values()].find((x) => x.id === +tr.dataset.id); if (m) editMember(m, md, {}, pageCoaches); });
 }
 
 // --------------------------------------------------------------- settings --
