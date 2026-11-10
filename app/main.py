@@ -315,6 +315,43 @@ def member_summary(member_id: int, role: str = Depends(require_member)):
         }
 
 
+class ProfileIn(BaseModel):
+    """What a rower may change about themselves."""
+    side: str = Field("", max_length=40)
+    college: str = Field("", max_length=80)
+    phone: Optional[str] = Field(None, max_length=40)   # None = keep, "" = delete
+    squad: str = ""                                      # '' | open | women
+
+
+@app.get("/api/members/{member_id}/profile")
+def member_profile(member_id: int, _: str = Depends(require_member)):
+    with db.get_conn() as conn:
+        m = Rules(conn).members.get(member_id)
+        if not m:
+            raise HTTPException(404, "Unknown member")
+        return {"side": m["side"], "college": m["college"], "squad": m["squad"] or "",
+                "has_phone": bool(m["phone"]), "phone_masked": privacy.mask(m["phone"])}
+
+
+@app.put("/api/members/{member_id}/profile")
+def member_profile_update(member_id: int, b: ProfileIn, _: str = Depends(require_member)):
+    from .signup import SIDES
+    if b.side and b.side not in SIDES:
+        raise HTTPException(400, "Bad side preference")
+    if b.squad not in ("", "open", "women"):
+        raise HTTPException(400, "Bad squad")
+    new_phone = _phone_value(b.phone)
+    with db.get_conn() as conn:
+        if not conn.execute("SELECT 1 FROM members WHERE id = ?", (member_id,)).fetchone():
+            raise HTTPException(404, "Unknown member")
+        conn.execute("UPDATE members SET side=?, college=?, squad=? WHERE id=?",
+                     (b.side, b.college.strip(), b.squad, member_id))
+        if new_phone is not None:
+            conn.execute("UPDATE members SET phone = ?, phone_updated_at = CASE WHEN ? != '' THEN datetime('now') ELSE '' END WHERE id = ?",
+                         (new_phone, new_phone, member_id))
+        return {"ok": True}
+
+
 @app.get("/api/rowers")
 def rowers(role: str = Depends(require_member)):
     """Outing counts for everyone (visible to all signed-in users; free novice outings left are committee-only)."""

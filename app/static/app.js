@@ -1570,7 +1570,7 @@ async function pageMe() {
   const free = t.novice_free_left;
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>${esc(d.member.name)}</h1><p>${catChip(d.member.category)} ${d.member.cox_status ? `<span class="chip violet">Cox · ${({ N: "Novice", X: "Experienced", S: "Senior" })[d.member.cox_status]}</span>` : ""}</p></div>
-      <div class="toolbar"><button class="btn" id="me-notify">${I.bell}Notifications</button><button class="btn" id="me-cal">${I.calendar}Add to calendar</button><button class="btn" id="switch">${I.swap}Not you?</button></div></div>
+      <div class="toolbar"><button class="btn" id="me-profile">${I.user}My details</button><button class="btn" id="me-notify">${I.bell}Notifications</button><button class="btn" id="me-cal">${I.calendar}Add to calendar</button><button class="btn" id="switch">${I.swap}Not you?</button></div></div>
     <div class="stats">
       <div class="card stat"><div class="k">Water outings</div><div class="v">${t.water}</div><div class="s">${t.water_done} done</div></div>
       <div class="card stat"><div class="k">Land sessions</div><div class="v">${t.land}</div><div class="s">${t.land_done} done</div></div>
@@ -1593,10 +1593,43 @@ async function pageMe() {
   $("#switch").onclick = () => pickIdentity();
   $("#me-cal").onclick = () => calendarModal();
   $("#me-notify").onclick = () => notificationsModal();
+  $("#me-profile").onclick = () => profileModal();
   $$(".outing").forEach((card) => card.addEventListener("click", (e) => {
     const t = e.target.closest("[data-act]"); if (!t) return;
     outingAct(t, d.upcoming.find((x) => x.id === +card.dataset.oid));
   }));
+}
+
+// Rowers edit their own side, college, phone and squad.
+async function profileModal() {
+  let p;
+  try { p = await api(`/api/members/${S.me}/profile`); } catch (e) { return fail(e); }
+  modal({
+    title: "My details",
+    body: `
+      <div class="grid-2">
+        <label class="field"><span>Side preference</span><select class="input" id="mp-side">${["", ...Object.keys(SIDE_SHORT)].map((x) => `<option value="${esc(x)}" ${(p.side || "") === x ? "selected" : ""}>${x || "—"}</option>`).join("")}</select></label>
+        <label class="field"><span>Squad</span><select class="input" id="mp-squad">${[["", "—"], ["open", "Open"], ["women", "Women's"]].map(([k, l]) => `<option value="${k}" ${p.squad === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <label class="field"><span>College</span><input class="input" id="mp-college" list="mp-colleges" value="${esc(p.college || "")}"><datalist id="mp-colleges"><option value="Reuben"><option value="Blackfriars"><option value="St Stephen's House"></datalist></label>
+        <label class="field"><span>Phone</span>
+          <div class="row"><input class="input tnum" id="mp-phone" type="tel" placeholder="${p.has_phone ? esc(p.phone_masked) : "Not on file"}">
+          ${p.has_phone ? `<button type="button" class="btn sm danger" id="mp-phone-del" title="Delete my number">Delete</button>` : ""}</div>
+          <span class="hint">Only the committee can see it. Stored encrypted. Leave blank to keep it.</span></label>
+      </div>`,
+    foot: `<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="mp-save">Save</button></div>`,
+    onMount: (el, close) => {
+      let phone = null;   // null = keep the stored number
+      const ph = $("#mp-phone", el);
+      ph.oninput = () => { phone = ph.value.trim() || null; };
+      const del = $("#mp-phone-del", el);
+      if (del) del.onclick = () => { ph.value = ""; ph.placeholder = "Will be deleted when you save"; phone = ""; };
+      $("#mp-save", el).onclick = async () => {
+        const body = { side: $("#mp-side", el).value, squad: $("#mp-squad", el).value, college: $("#mp-college", el).value.trim(), phone };
+        try { await api(`/api/members/${S.me}/profile`, { method: "PUT", body }); close(); toast("Saved"); }
+        catch (e) { fail(e); }
+      };
+    },
+  });
 }
 
 // ------------------------------------------------------------ leaderboard --
@@ -1806,7 +1839,7 @@ function editMember(m, meta) {
           <span class="hint">Committee only. Stored encrypted.</span></label>
         <label class="field"><span>College</span><input class="input" id="me-college" list="me-colleges" value="${esc(v.college || "")}"><datalist id="me-colleges"><option value="Reuben"><option value="Blackfriars"><option value="St Stephen's House"></datalist></label>
         <label class="field"><span>Side preference</span><select class="input" id="me-side">${["", ...Object.keys(SIDE_SHORT)].map((x) => `<option value="${esc(x)}" ${(v.side || "") === x ? "selected" : ""}>${x || "—"}</option>`).join("")}</select></label>
-        <label class="field"><span>Squad</span><select class="input" id="me-squad">${[["", "—"], ["open", "Open"], ["women", "Women's"]].map(([k, l]) => `<option value="${k}" ${(v.squad || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select><span class="hint">Set from race and outing sign-ups; used to check race entries.</span></label>
+        <label class="field"><span>Squad</span><select class="input" id="me-squad">${[["", "—"], ["open", "Open"], ["women", "Women's"]].map(([k, l]) => `<option value="${k}" ${(v.squad || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
         <div class="field span-all"><span>Crews</span><div class="checks">${(meta.crews || ["M1", "M2", "W1", "W2"]).map((c) => `<label class="check"><input type="checkbox" class="me-crew" value="${esc(c)}" ${(v.club_crew || "").split(",").includes(c) ? "checked" : ""}> ${esc(c)}</label>`).join("")}</div><span class="hint">Committee only: never shown to members, not even this one. Tick both M1 and M2 for a sub.</span></div>
       </div>
       <div class="form-sec">Subs</div>
