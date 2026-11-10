@@ -1764,19 +1764,20 @@ async function pageRowers() {
     list.sort((a, b) => (typeof a[k] === "string" ? a[k].localeCompare(b[k]) : (a[k] ?? -1) - (b[k] ?? -1)) * rowerSort.dir || a.name.localeCompare(b.name));
     const max = Math.max(1, ...rows.map((r) => r.total));
     const th = (key, l, cls = "") => `<th class="sort ${cls}" data-k="${key}">${l}${rowerSort.k === key ? (rowerSort.dir > 0 ? " ↑" : " ↓") : ""}</th>`;
+    const cell = (r, f) => (r.category === "Coach" ? `<td><span class="faint">—</span></td>` : f());   // coaches have none of the rower info
     $("#rw-table").innerHTML = `<table class="t"><thead><tr>${th("name", "Name")}${th("category", "Category")}${th("squad", "Squad")}${committee ? th("club_crew", "Crew") : ""}
       ${committee ? `<th>Swim</th><th title="Capsize drill (needed for boats of two or fewer)">Capsize</th><th>Subs</th>${th("cox_status", "Cox")}<th title="At their next new outing, counting everything already scheduled">May row next</th>` : `${th("cox_status", "Cox")}`}
       ${th("water", "Water", "num")}${th("land", "Land", "num")}${th("total", "Total", "num")}<th style="width:120px"></th>${committee ? th("novice_free_left", "Free left", "num") : ""}</tr></thead>
       <tbody>${list.map((r) => `<tr class="${committee ? "clickable" : ""}" data-id="${r.id}">
         <td><b>${esc(r.name)}</b>${cttee[r.id] ? ` ${committeeBadge(cttee[r.id])}` : ""}${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${committee && !r.active && r.category !== "Coach" ? ` <span class="chip">inactive</span>` : ""}${committee && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
         <td>${catChip(r.category)}</td>
-        <td>${r.squad ? squadChip(r.squad) : `<span class="faint">—</span>`}</td>${committee ? `<td>${r.club_crew ? r.club_crew.split(",").map((c) => `<span class="chip ${c[0] === "W" ? "violet" : "accent"}">${esc(c)}</span>`).join(" ") : `<span class="faint">—</span>`}</td>` : ""}
-        ${committee ? `<td>${!r.swim_test ? `<span class="chip warn">No</span>` : r.swim.state === "expired" || r.swim.state === "soon" ? expiryChip(r.swim, "Swim test") : `<span class="chip ok" title="${r.swim.expires ? `Valid until ${esc(fmtYear(r.swim.expires))}` : "Date not recorded"}">${I.check}Yes</span>`}</td>
-          <td>${!r.capsize_drilled ? `<span class="chip">No</span>` : r.capsize.state === "expired" || r.capsize.state === "soon" ? expiryChip(r.capsize, "Capsize drill") : `<span class="chip ok" title="${esc([r.capsize.date ? `Done ${fmtYear(r.capsize.date)}` : "Date not recorded", r.capsize.expires ? `valid until ${fmtYear(r.capsize.expires)}` : "no expiry"].join(", "))}">${I.check}Yes</span>`}</td>
-          <td>${r.subs_valid ? `<span class="chip ok">${esc(r.subs_plan === "Full year" ? "Full year" : r.subs_term)}</span>` : `<span class="chip ${r.subs_plan === "Unpaid" ? "warn" : "bad"}" title="${esc(r.subs_plan)} ${esc(r.subs_term)} ${esc(r.subs_year)}">${r.subs_plan === "Unpaid" ? "Unpaid" : "Expired"}</span>`}</td>
-          <td>${r.cox_status ? `<span class="chip violet" title="${r.cox.expires ? `Valid until ${esc(fmtYear(r.cox.expires))}` : "Date not recorded"}">${esc(r.cox_status)}</span>${expiryChip(r.cox, "Cox status")}` : ""}</td>
-          <td>${r.water_ok && r.land_ok ? `<span class="chip ok">${I.check}Yes</span>` : `<span class="chip bad" title="${esc([...r.water_reasons.map((x) => "Water: " + x), ...r.land_reasons.map((x) => "Land: " + x)].join("\n"))}">${!r.water_ok && !r.land_ok ? "No" : r.water_ok ? "Water only" : "Land only"}</span>`}</td>`
-          : `<td>${r.cox_status ? `<span class="chip violet">${esc(r.cox_status)}</span>` : ""}</td>`}
+        ${cell(r, () => `<td>${r.squad ? squadChip(r.squad) : `<span class="faint">—</span>`}</td>`)}${committee ? cell(r, () => `<td>${r.club_crew ? r.club_crew.split(",").map((c) => `<span class="chip ${c[0] === "W" ? "violet" : "accent"}">${esc(c)}</span>`).join(" ") : `<span class="faint">—</span>`}</td>`) : ""}
+        ${committee ? `${cell(r, () => `<td>${!r.swim_test ? `<span class="chip warn">No</span>` : r.swim.state === "expired" || r.swim.state === "soon" ? expiryChip(r.swim, "Swim test") : `<span class="chip ok" title="${r.swim.expires ? `Valid until ${esc(fmtYear(r.swim.expires))}` : "Date not recorded"}">${I.check}Yes</span>`}</td>`)}
+          ${cell(r, () => `<td>${!r.capsize_drilled ? `<span class="chip">No</span>` : r.capsize.state === "expired" || r.capsize.state === "soon" ? expiryChip(r.capsize, "Capsize drill") : `<span class="chip ok" title="${esc([r.capsize.date ? `Done ${fmtYear(r.capsize.date)}` : "Date not recorded", r.capsize.expires ? `valid until ${fmtYear(r.capsize.expires)}` : "no expiry"].join(", "))}">${I.check}Yes</span>`}</td>`)}
+          ${cell(r, () => `<td>${r.subs_valid ? `<span class="chip ok">${esc(r.subs_plan === "Full year" ? "Full year" : r.subs_term)}</span>` : `<span class="chip ${r.subs_plan === "Unpaid" ? "warn" : "bad"}" title="${esc(r.subs_plan)} ${esc(r.subs_term)} ${esc(r.subs_year)}">${r.subs_plan === "Unpaid" ? "Unpaid" : "Expired"}</span>`}</td>`)}
+          ${cell(r, () => `<td>${r.cox_status ? `<span class="chip violet" title="${r.cox.expires ? `Valid until ${esc(fmtYear(r.cox.expires))}` : "Date not recorded"}">${esc(r.cox_status)}</span>${expiryChip(r.cox, "Cox status")}` : ""}</td>`)}
+          ${cell(r, () => `<td>${r.water_ok && r.land_ok ? `<span class="chip ok">${I.check}Yes</span>` : `<span class="chip bad" title="${esc([...r.water_reasons.map((x) => "Water: " + x), ...r.land_reasons.map((x) => "Land: " + x)].join("\n"))}">${!r.water_ok && !r.land_ok ? "No" : r.water_ok ? "Water only" : "Land only"}</span>`}</td>`)}`
+          : cell(r, () => `<td>${r.cox_status ? `<span class="chip violet">${esc(r.cox_status)}</span>` : ""}</td>`)}
         <td class="num">${r.water}</td><td class="num">${r.land}</td><td class="num"><b>${r.total}</b></td>
         <td><div class="bar"><i style="width:${(r.total / max) * 100}%"></i></div></td>
         ${committee ? `<td class="num">${r.novice_free_left ?? ""}</td>` : ""}</tr>`).join("") || `<tr><td colspan="14" class="faint" style="text-align:center;padding:30px">No one matches.</td></tr>`}</tbody></table>`;
@@ -1823,17 +1824,20 @@ function editMember(m, meta, preset = {}, after = () => pageRowers()) {
           <div class="row"><input class="input tnum" id="me-phone" type="tel" placeholder="${m && m.has_phone ? esc(m.phone_masked) : "Not on file"}">
           ${m && m.has_phone ? `<button type="button" class="btn sm" id="me-phone-show" title="Show the full number">Show</button><button type="button" class="btn sm danger" id="me-phone-del" title="Delete this number">Delete</button>` : ""}</div>
           <span class="hint">Committee only. Stored encrypted.</span></label>
-        <label class="field"><span>College</span><input class="input" id="me-college" list="me-colleges" value="${esc(v.college || "")}"><datalist id="me-colleges"><option value="Reuben"><option value="Blackfriars"><option value="St Stephen's House"></datalist></label>
-        <label class="field"><span>Side preference</span><select class="input" id="me-side">${["", ...Object.keys(SIDE_SHORT)].map((x) => `<option value="${esc(x)}" ${(v.side || "") === x ? "selected" : ""}>${x || "—"}</option>`).join("")}</select></label>
-        <label class="field"><span>Squad</span><select class="input" id="me-squad">${[["", "—"], ["open", "Open"], ["women", "Women's"]].map(([k, l]) => `<option value="${k}" ${(v.squad || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
-        <div class="field span-all"><span>Crews</span><div class="checks">${(meta.crews || ["M1", "M2", "W1", "W2"]).map((c) => `<label class="check"><input type="checkbox" class="me-crew" value="${esc(c)}" ${(v.club_crew || "").split(",").includes(c) ? "checked" : ""}> ${esc(c)}</label>`).join("")}</div><span class="hint">Committee only: never shown to members, not even this one. Tick both M1 and M2 for a sub.</span></div>
+        <label class="field coach-hide"><span>College</span><input class="input" id="me-college" list="me-colleges" value="${esc(v.college || "")}"><datalist id="me-colleges"><option value="Reuben"><option value="Blackfriars"><option value="St Stephen's House"></datalist></label>
+        <label class="field coach-hide"><span>Side preference</span><select class="input" id="me-side">${["", ...Object.keys(SIDE_SHORT)].map((x) => `<option value="${esc(x)}" ${(v.side || "") === x ? "selected" : ""}>${x || "—"}</option>`).join("")}</select></label>
+        <label class="field coach-hide"><span>Squad</span><select class="input" id="me-squad">${[["", "—"], ["open", "Open"], ["women", "Women's"]].map(([k, l]) => `<option value="${k}" ${(v.squad || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <div class="field span-all coach-hide"><span>Crews</span><div class="checks">${(meta.crews || ["M1", "M2", "W1", "W2"]).map((c) => `<label class="check"><input type="checkbox" class="me-crew" value="${esc(c)}" ${(v.club_crew || "").split(",").includes(c) ? "checked" : ""}> ${esc(c)}</label>`).join("")}</div><span class="hint">Committee only: never shown to members, not even this one. Tick both M1 and M2 for a sub.</span></div>
       </div>
+      <div class="coach-hide">
       <div class="form-sec">Subs</div>
       <div class="grid-3">
         <label class="field"><span>Subs plan</span><select class="input" id="me-plan">${(meta.plans || ["Unpaid", "Single term", "Full year"]).map((p) => `<option ${v.subs_plan === p ? "selected" : ""}>${p}</option>`).join("")}</select></label>
         <label class="field" id="me-term-f"><span>Term covered</span><select class="input" id="me-term">${terms.map((t) => `<option ${v.subs_term === t ? "selected" : ""}>${t}</option>`).join("")}</select></label>
         <label class="field" id="me-year-f"><span>Academic year</span><input class="input" id="me-year" value="${esc(v.subs_year || S.boot.settings.academic_year)}" placeholder="2026-27"></label>
       </div>
+      </div>
+      <div class="coach-hide">
       <div class="form-sec">Cox, swim test and capsize drill</div>
       <div class="grid-2">
         <label class="field"><span>Coxing status</span><select class="input" id="me-cox">${[["", "Not a cox"], ["N", "N — Novice (needs bankrider)"], ["X", "X — Experienced"], ["S", "S — Senior"]].map(([k, l]) => `<option value="${k}" ${v.cox_status === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
@@ -1842,6 +1846,7 @@ function editMember(m, meta, preset = {}, after = () => pageRowers()) {
         <label class="field"><span>Swim test date</span><input class="input" type="date" id="me-swimd" max="${esc(S.boot.today)}" value="${esc(v.swim_test_date || "")}"><span class="hint" id="me-swimd-h"></span></label>
         <div class="field field-check"><label class="check"><input type="checkbox" id="me-cap" ${v.capsize_drilled ? "checked" : ""}> Capsize drilled</label></div>
         <label class="field"><span>Capsize drill date</span><input class="input" type="date" id="me-capd" max="${esc(S.boot.today)}" value="${esc(v.capsize_drill_date || "")}"><span class="hint" id="me-capd-h"></span></label>
+      </div>
       </div>
       <div class="form-sec">Record</div>
       <div class="grid-3">
@@ -1869,8 +1874,8 @@ function editMember(m, meta, preset = {}, after = () => pageRowers()) {
       $("#me-swimd", el).oninput = () => { if ($("#me-swimd", el).value) $("#me-swim", el).checked = true; hints(); };
       $("#me-coxd", el).oninput = hints; hints();
       $("#me-capd", el).oninput = () => { if ($("#me-capd", el).value) $("#me-cap", el).checked = true; hints(); };
-      // Coaches are always inactive (set on save), so the flag is hidden for them.
-      const syncCoach = () => { $("#me-active-wrap", el).hidden = $("#me-cat", el).value === "Coach"; };
+      // Coaches are always inactive and have no subs, squad, cox / swim / capsize info etc., so those fields are hidden for them.
+      const syncCoach = () => { const c = $("#me-cat", el).value === "Coach"; $$(".coach-hide", el).forEach((x) => x.classList.toggle("hidden", c)); $("#me-active-wrap", el).classList.toggle("hidden", c); };
       $("#me-cat", el).onchange = syncCoach; syncCoach();
       // Phone: only sent when changed (null = keep the stored, encrypted number).
       let phoneTouched = false;
