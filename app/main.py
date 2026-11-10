@@ -754,6 +754,8 @@ def _phone_value(phone: Optional[str]) -> Optional[str]:
 def _member_validate(m: MemberIn):
     if m.category not in ("Novice", "Senior", "Coach"):
         raise HTTPException(400, "Category must be Novice, Senior or Coach")
+    if m.category == "Coach":
+        m.active = False   # coaches are always stored as inactive, which keeps them out of the rower logic
     if m.subs_plan not in SUBS_PLANS:
         raise HTTPException(400, "Bad subs plan")
     if m.cox_status not in ("", "N", "X", "S"):

@@ -123,6 +123,7 @@ def run(conn) -> None:
     _migrate_task_repeat(conn)
     _migrate_coaches_table(conn)
     _migrate_coach_tag(conn)
+    conn.execute("UPDATE members SET active = 0 WHERE category = 'Coach' AND active != 0")   # coaches are always inactive
     for table, col in DROPPED_COLUMNS:
         if col in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
             conn.execute(f"ALTER TABLE {table} DROP COLUMN {col}")

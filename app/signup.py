@@ -234,7 +234,7 @@ def signup_submit(b: SignupIn, role: str = Depends(require_member)):
             """UPDATE members SET phone = CASE WHEN ? != '' THEN ? ELSE phone END,
                    phone_updated_at = CASE WHEN ? != '' THEN datetime('now') ELSE phone_updated_at END,
                    college = ?, side = CASE WHEN ? != '' THEN ? ELSE side END,
-                   squad = CASE WHEN ? != '' THEN ? ELSE squad END, active = 1 WHERE id = ?""",
+                   squad = CASE WHEN ? != '' THEN ? ELSE squad END, active = CASE WHEN category = 'Coach' THEN 0 ELSE 1 END WHERE id = ?""",
             (enc, enc, enc, college, b.side if rows else "", b.side if rows else "", squad, squad, mid))
 
         existing = conn.execute("SELECT id FROM signups WHERE week_start = ? AND member_id = ?", (ws, mid)).fetchone()

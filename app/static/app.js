@@ -1757,7 +1757,7 @@ async function pageRowers() {
     else rows = await api("/api/rowers");
   } catch (e) { return fail(e); }
   const draw = () => {
-    let list = rows.filter((r) => (!rowerQ || fold(r.name).includes(rowerQ)) && (rowerCat === "all" || (rowerCat === "inactive" ? !r.active : rowerCat === "issues" ? (r.active !== false && (!r.water_ok || !r.land_ok)) : rowerCat === "expiring" ? (r.active && [r.swim?.state, r.cox?.state, r.capsize?.state].some((x) => x === "soon" || x === "expired")) : rowerCat === "open" || rowerCat === "women" ? (r.active !== false && r.squad === rowerCat) : rowerCat === "nosquad" ? (r.active !== false && !r.squad) : r.category === rowerCat && (r.active !== false || rowerCat === "Coach"))));
+    let list = rows.filter((r) => (!rowerQ || fold(r.name).includes(rowerQ)) && (rowerCat === "all" || (rowerCat === "inactive" ? !r.active && r.category !== "Coach" : rowerCat === "issues" ? (r.active !== false && (!r.water_ok || !r.land_ok)) : rowerCat === "expiring" ? (r.active && [r.swim?.state, r.cox?.state, r.capsize?.state].some((x) => x === "soon" || x === "expired")) : rowerCat === "open" || rowerCat === "women" ? (r.active !== false && r.squad === rowerCat) : rowerCat === "nosquad" ? (r.active !== false && !r.squad) : r.category === rowerCat && (r.active !== false || rowerCat === "Coach"))));
     if (committee && rowerCrew) list = list.filter((r) => rowerCrew === "none" ? !r.club_crew : (r.club_crew || "").split(",").includes(rowerCrew));
     if (rowerCat !== "inactive" && rowerCat !== "Coach" && committee) list = list.filter((r) => rowerCat === "all" || r.active);
     const k = rowerSort.k;
@@ -1768,7 +1768,7 @@ async function pageRowers() {
       ${committee ? `<th>Swim</th><th title="Capsize drill (needed for boats of two or fewer)">Capsize</th><th>Subs</th>${th("cox_status", "Cox")}<th title="At their next new outing, counting everything already scheduled">May row next</th>` : `${th("cox_status", "Cox")}`}
       ${th("water", "Water", "num")}${th("land", "Land", "num")}${th("total", "Total", "num")}<th style="width:120px"></th>${committee ? th("novice_free_left", "Free left", "num") : ""}</tr></thead>
       <tbody>${list.map((r) => `<tr class="${committee ? "clickable" : ""}" data-id="${r.id}">
-        <td><b>${esc(r.name)}</b>${cttee[r.id] ? ` ${committeeBadge(cttee[r.id])}` : ""}${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${committee && !r.active ? ` <span class="chip">inactive</span>` : ""}${committee && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
+        <td><b>${esc(r.name)}</b>${cttee[r.id] ? ` ${committeeBadge(cttee[r.id])}` : ""}${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${committee && !r.active && r.category !== "Coach" ? ` <span class="chip">inactive</span>` : ""}${committee && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
         <td>${catChip(r.category)}</td>
         <td>${r.squad ? squadChip(r.squad) : `<span class="faint">—</span>`}</td>${committee ? `<td>${r.club_crew ? r.club_crew.split(",").map((c) => `<span class="chip ${c[0] === "W" ? "violet" : "accent"}">${esc(c)}</span>`).join(" ") : `<span class="faint">—</span>`}</td>` : ""}
         ${committee ? `<td>${!r.swim_test ? `<span class="chip warn">No</span>` : r.swim.state === "expired" || r.swim.state === "soon" ? expiryChip(r.swim, "Swim test") : `<span class="chip ok" title="${r.swim.expires ? `Valid until ${esc(fmtYear(r.swim.expires))}` : "Date not recorded"}">${I.check}Yes</span>`}</td>
@@ -1818,7 +1818,7 @@ function editMember(m, meta, preset = {}, after = () => pageRowers()) {
     body: `
       <div class="grid-2">
         <label class="field"><span>Full name</span><input class="input" id="me-name" value="${esc(v.name)}" required></label>
-        <label class="field"><span>Category</span><select class="input" id="me-cat"><option ${v.category === "Novice" ? "selected" : ""}>Novice</option><option ${v.category === "Senior" ? "selected" : ""}>Senior</option><option ${v.category === "Coach" ? "selected" : ""}>Coach</option></select><span class="hint">Coach is instead of Novice or Senior: it shows on the Coaches page and in the coach / bankrider suggestions. For someone who only coaches, untick “Active member” below.</span></label>
+        <label class="field"><span>Category</span><select class="input" id="me-cat"><option ${v.category === "Novice" ? "selected" : ""}>Novice</option><option ${v.category === "Senior" ? "selected" : ""}>Senior</option><option ${v.category === "Coach" ? "selected" : ""}>Coach</option></select><span class="hint">Coach is instead of Novice or Senior: it shows on the Coaches page and in the coach / bankrider suggestions. Coaches are kept apart from the rowers (no crew seats, subs reminders or stats).</span></label>
         <label class="field"><span>Phone</span>
           <div class="row"><input class="input tnum" id="me-phone" type="tel" placeholder="${m && m.has_phone ? esc(m.phone_masked) : "Not on file"}">
           ${m && m.has_phone ? `<button type="button" class="btn sm" id="me-phone-show" title="Show the full number">Show</button><button type="button" class="btn sm danger" id="me-phone-del" title="Delete this number">Delete</button>` : ""}</div>
@@ -1847,7 +1847,7 @@ function editMember(m, meta, preset = {}, after = () => pageRowers()) {
       <div class="grid-3">
         <label class="field"><span>Earlier water outings</span><input class="input" type="number" min="0" id="me-pw" value="${v.past_water}"><span class="hint">Before using this app</span></label>
         <label class="field"><span>Earlier land sessions</span><input class="input" type="number" min="0" id="me-pl" value="${v.past_land}"></label>
-        <div class="field field-check"><label class="check"><input type="checkbox" id="me-active" ${v.active ? "checked" : ""}> Active member</label></div>
+        <div class="field field-check" id="me-active-wrap"><label class="check"><input type="checkbox" id="me-active" ${v.active ? "checked" : ""}> Active member</label></div>
       </div>
       <label class="field"><span>Committee notes</span><textarea class="input" id="me-notes" rows="2">${esc(v.notes)}</textarea></label>
       ${m && m.needs_review ? `<div class="callout warn">${I.alert}<div>Added through the sign-up form. Check category, cox status, swim test and subs, then save to mark as reviewed.</div></div>` : ""}
@@ -1869,6 +1869,9 @@ function editMember(m, meta, preset = {}, after = () => pageRowers()) {
       $("#me-swimd", el).oninput = () => { if ($("#me-swimd", el).value) $("#me-swim", el).checked = true; hints(); };
       $("#me-coxd", el).oninput = hints; hints();
       $("#me-capd", el).oninput = () => { if ($("#me-capd", el).value) $("#me-cap", el).checked = true; hints(); };
+      // Coaches are always inactive (set on save), so the flag is hidden for them.
+      const syncCoach = () => { $("#me-active-wrap", el).hidden = $("#me-cat", el).value === "Coach"; };
+      $("#me-cat", el).onchange = syncCoach; syncCoach();
       // Phone: only sent when changed (null = keep the stored, encrypted number).
       let phoneTouched = false;
       const ph = $("#me-phone", el);
