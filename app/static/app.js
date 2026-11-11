@@ -288,6 +288,7 @@ function renderLogin() {
    Child pages keep their own URL, so old links like #/subs still work. */
 const ROUTES = [
   { id: "schedule", label: "Schedule", tab: "Week", icon: I.calendar },
+  { id: "month", label: "Month", parent: "schedule", icon: I.calendar },
   { id: "subs", label: "Sub board", parent: "schedule", icon: I.swap, count: "subs" },
   { id: "signup", label: "Sign up", committeeLabel: "Sign-ups", icon: I.calendar },
   { id: "races", label: "Races", icon: I.flag },
@@ -744,6 +745,72 @@ function dayItems(races, socials, outings) {
   return [...races.map((x) => [raceStart(x), raceScheduleCard(x)]), ...socials.map((x) => [pad(x.time), socialScheduleCard(x)]), ...outings.map((x) => [pad(x.time), outingCard(x)])]
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map((x) => x[1]).join("");
 }
+/* Month overview: a calendar grid of the whole month with each day's sessions boiled down to one line.
+   Tapping a day (or a session) opens that week on the Week tab. */
+const monthLabel = (m) => { const [y, mo] = m.split("-").map(Number); return `${["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][mo - 1]} ${y}`; };
+const addMonths = (m, n) => { const [y, mo] = m.split("-").map(Number); const d = new Date(Date.UTC(y, mo - 1 + n, 1)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; };
+function monthChip(it) {
+  const mine = S.me != null && (it.members || []).includes(S.me);
+  const cls = it.type === "race" ? "violet" : it.type === "social" ? (it.kind === "sport" ? "sport" : "social") : it.kind;
+  const label = it.type === "outing" ? (it.title || it.boat || (it.kind === "water" ? "Water" : "Land")) : it.title;
+  const time = (it.time || "").replace(/^(\d):/, "0$1:");
+  const need = !it.cancelled && !it.past && ((it.type === "outing" && (it.kind === "water" ? it.spots > 0 : false)) || it.open_subs > 0);
+  const tip = [it.time ? `${it.time}${it.end_time ? "–" + it.end_time : ""}` : it.time_slot || "", label, it.boat && it.title ? it.boat : "", it.cancelled ? "Cancelled" : "", it.type === "outing" && it.spots_text && it.kind === "water" ? it.spots_text : "", it.open_subs ? `${it.open_subs} sub${it.open_subs === 1 ? "" : "s"} needed` : "", it.published ? "" : "Draft"].filter(Boolean).join(" · ");
+  return `<div class="mo-item ${cls} ${mine ? "mine" : ""} ${it.past ? "past" : ""} ${it.cancelled ? "cancelled" : ""} ${it.published ? "" : "draft"}" title="${esc(tip)}">${time ? `<span class="mo-t tnum">${esc(time)}</span>` : it.type === "race" ? `<span class="mo-t">${I.trophy}</span>` : ""}<span class="mo-l">${esc(label)}</span>${need ? `<i class="mo-need" aria-label="Needs people"></i>` : ""}</div>`;
+}
+async function pageMonth() {
+  const committee = isCommittee();
+  if (!S.month) S.month = (S.week || S.boot.this_week).slice(0, 7);
+  const main = $("#main");
+  let data;
+  try { data = await api(`/api/month?month=${S.month}`); } catch (e) { return fail(e); }
+  S.month = data.month;
+  const all = data.days.filter((d) => d.in_month).flatMap((d) => d.items);
+  const n = (f) => all.filter(f).length;
+  const plural = (c, one, many) => `${c} ${c === 1 ? one : many}`;
+  const nw = n((i) => i.type === "outing" && i.kind === "water" && !i.cancelled), nl = n((i) => i.type === "outing" && i.kind === "land" && !i.cancelled);
+  const nr = n((i) => i.type === "race"), ns = n((i) => i.type === "social");
+  const bits = [nw && plural(nw, "water outing", "water outings"), nl && plural(nl, "land session", "land sessions"), nr && plural(nr, "race", "races"), ns && plural(ns, "social/activity", "socials & activities")].filter(Boolean);
+  const mineN = S.me != null ? all.filter((i) => (i.members || []).includes(S.me) && !i.cancelled).length : 0;
+  const isThis = data.month === data.this_month;
+  const weeks = [];
+  for (let i = 0; i < data.days.length; i += 7) weeks.push(data.days.slice(i, i + 7));
+  const MAXI = 4;
+  const cell = (d) => {
+    const shown = d.items.slice(0, MAXI), more = d.items.length - shown.length;
+    return `<div class="mo-day ${d.in_month ? "" : "out"} ${d.date === data.today ? "today" : ""} ${d.items.length ? "has" : "none"}" data-d="${d.date}" role="button" tabindex="0">
+      <div class="mo-dh"><span class="mo-dn">${pd(d.date).getUTCDate()}</span><span class="mo-dw">${DAY[dow(d.date)]} · ${fmtShort(d.date)}</span></div>
+      ${shown.map(monthChip).join("")}${more > 0 ? `<div class="mo-more">+${more} more</div>` : ""}</div>`;
+  };
+  main.innerHTML = `
+    <div class="page-head">
+      <div><h1>${esc(monthLabel(data.month))}</h1>
+        <p>${bits.length ? bits.join(" · ") : "Nothing scheduled"}${mineN ? ` · <b>${mineN}</b> for you` : ""} · ${S.boot.settings.current_term} ${esc(S.boot.settings.academic_year)}</p></div>
+      <div class="toolbar"><div class="weekbar">
+        <button class="btn icon" id="mo-prev" title="Previous month">${I.left}</button>
+        <button class="btn" id="mo-today" ${isThis ? "disabled" : ""}>This month</button>
+        <button class="btn icon" id="mo-next" title="Next month">${I.right}</button>
+      </div></div>
+    </div>
+    ${!committee && !all.length ? `<div class="card empty">${I.calendar}<h3>Nothing published yet</h3><p>No sessions have been released for this month.</p></div>` : `
+    <div class="mo-grid" id="mo-grid">
+      <div class="mo-wd">${DAY.map((x) => `<div>${x}</div>`).join("")}</div>
+      ${weeks.map((w) => `<div class="mo-week">${w.map(cell).join("")}</div>`).join("")}
+    </div>`}
+    <div class="legend">
+      <span><i class="sw" style="background:var(--water)"></i>Water</span><span><i class="sw" style="background:var(--land)"></i>Land</span>
+      <span><i class="sw" style="background:var(--violet)"></i>Race</span><span><i class="sw" style="background:var(--ok)"></i>Social</span><span><i class="sw" style="background:var(--accent)"></i>Sports activity</span>
+      <span><i class="sw" style="background:var(--accent-soft);border:1px solid var(--accent)"></i>You</span>
+      <span><i class="mo-need" style="margin:0 5px 0 0"></i>People needed</span>
+      <span class="faint">Tap a day to open that week.</span>
+    </div>`;
+  $("#mo-prev").onclick = () => { S.month = addMonths(data.month, -1); pageMonth(); };
+  $("#mo-next").onclick = () => { S.month = addMonths(data.month, 1); pageMonth(); };
+  $("#mo-today").onclick = () => { S.month = data.this_month; pageMonth(); };
+  const go = (d) => { S.week = addDays(d, -dow(d)); location.hash = "#/schedule"; };
+  $$(".mo-day").forEach((c) => { c.onclick = () => go(c.dataset.d); c.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(c.dataset.d); } }; });
+}
+
 async function pageSchedule() {
   if (!S.week) S.week = isCommittee() ? addDays(S.boot.this_week, 0) : S.boot.this_week;
   const main = $("#main");
@@ -4317,7 +4384,7 @@ function route() {
   const id = (location.hash.replace(/^#\/?/, "") || "schedule").split("?")[0];
   const r = ROUTES.find((x) => x.id === id && routeAllowed(x)) || ROUTES[0];
   shell(r.id);
-  S.page = ({ schedule: pageSchedule, signup: pageSignup, subs: pageSubs, races: pageRaces, me: pageMe, stats: pageStats, rowers: pageRowers,
+  S.page = ({ schedule: pageSchedule, signup: pageSignup, month: pageMonth, subs: pageSubs, races: pageRaces, me: pageMe, stats: pageStats, rowers: pageRowers,
     committee: pageCommittee, todo: pageTasks, handbook: pageHandbook, reminders: pageSubsReminders, coaches: pageCoaches, handover: pageHandover, boats: pageBoats, issues: pageIssues, usage: pageUsage, incidents: pageIncidents, settings: pageSettings })[r.id];
   window.scrollTo(0, 0);
   return S.page();

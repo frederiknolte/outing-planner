@@ -291,6 +291,53 @@ def week(start: Optional[str] = None, role: str = Depends(require_member)):
         }
 
 
+@app.get("/api/month")
+def month(month: Optional[str] = None, role: str = Depends(require_member)):
+    """A compact overview of one calendar month for the Month tab: whole weeks (Monday to Sunday) covering the
+    month, with each day's sessions, races and socials boiled down to what a calendar cell shows."""
+    committee = role == "committee"
+    with db.get_conn() as conn:
+        rules = Rules(conn)
+        if month:
+            try:
+                first = date.fromisoformat(month + "-01")
+            except ValueError:
+                raise HTTPException(400, "Bad month")
+        else:
+            first = rules.today.replace(day=1)
+        last = add_months(first, 1) - timedelta(days=1)
+        gs, ge = monday_of(first), monday_of(last) + timedelta(days=6)
+        where = "date BETWEEN ? AND ?" + ("" if committee else " AND published = 1")
+        items = defaultdict(list)
+        for o in _outings_payload(conn, rules, where, (gs.isoformat(), ge.isoformat()), committee):
+            items[o["date"]].append({
+                "type": "outing", "id": o["id"], "kind": o["kind"], "time": o["time"], "end_time": o["end_time"],
+                "title": o["title"], "boat": o["boat"]["name"] if o["boat"] else "", "published": o["published"],
+                "cancelled": o["cancelled"], "past": o["past"], "spots": o["spots"], "spots_text": o["spots_text"],
+                "cox_check": o["cox_check"], "open_subs": o["open_subs"],
+                "members": [s["member"]["id"] for s in o["seats"] if s["member"]],
+                "warnings": len(o["warnings"]) if committee else 0})
+        for rc in week_races(conn, gs.isoformat(), ge.isoformat(), committee):
+            items[rc["date"]].append({
+                "type": "race", "id": rc["id"], "title": rc["title"], "time": "", "time_slot": rc["time_slot"],
+                "published": rc["published"], "past": rc["date"] < rules.today.isoformat(),
+                "members": [s["member_id"] for c in rc["crews"] for s in c["seats"] if s["member_id"] is not None],
+                "open_subs": sum(1 for c in rc["crews"] for s in c["seats"] if s["member_id"] is None)})
+        for sc in week_socials(conn, gs.isoformat(), ge.isoformat(), committee):
+            items[sc["date"]].append({
+                "type": "social", "id": sc["id"], "kind": sc["kind"], "title": sc["title"], "time": sc["time"],
+                "end_time": sc["end_time"], "published": sc["published"], "past": sc["past"],
+                "members": [g["id"] for g in sc["going"]], "going": len(sc["going"])})
+        days = []
+        d = gs
+        while d <= ge:
+            day = sorted(items.get(d.isoformat(), []), key=lambda x: (x["time"] or "99:99", x["type"]))
+            days.append({"date": d.isoformat(), "in_month": d.month == first.month, "items": day})
+            d += timedelta(days=1)
+        return {"month": first.strftime("%Y-%m"), "first": first.isoformat(), "days": days,
+                "today": rules.today.isoformat(), "this_month": rules.today.strftime("%Y-%m")}
+
+
 # ------------------------------------------------------------- members ----
 @app.get("/api/members/{member_id}/summary")
 def member_summary(member_id: int, role: str = Depends(require_member)):

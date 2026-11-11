@@ -1009,3 +1009,42 @@ button.race-person:hover { border-color: var(--accent); }
 .my-race .race-head-main { flex: 1; min-width: 0; }
 .my-race .race-crews { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
 .my-race-role { margin-top: 4px; color: var(--accent); }
+
+/* Month overview */
+.mo-grid { display: flex; flex-direction: column; gap: 6px; }
+.mo-wd, .mo-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.mo-wd div { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-2); padding: 0 6px; }
+.mo-day { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 6px; min-height: 104px; display: flex; flex-direction: column; gap: 3px; cursor: pointer; min-width: 0; transition: border-color .12s, box-shadow .12s; }
+.mo-day:hover, .mo-day:focus-visible { border-color: var(--accent); box-shadow: var(--shadow-lg); outline: none; }
+.mo-day.out { background: transparent; border-style: dashed; opacity: .55; }
+.mo-day.today { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.mo-dh { display: flex; justify-content: space-between; align-items: baseline; }
+.mo-dn { font-size: 13px; font-weight: 700; color: var(--text-2); }
+.mo-day.today .mo-dn { background: var(--accent); color: var(--accent-text); border-radius: 99px; padding: 0 7px; }
+.mo-dw { display: none; font-size: 12.5px; color: var(--text-3); }
+.mo-item { display: flex; align-items: center; gap: 5px; font-size: 12px; line-height: 1.25; padding: 2px 6px; border-radius: 6px; min-width: 0; border-left: 3px solid var(--text-3); background: var(--surface-3); color: var(--text); }
+.mo-item .mo-t { font-weight: 700; flex: none; color: var(--text-2); display: inline-flex; }
+.mo-item .mo-t svg { width: 12px; height: 12px; }
+.mo-item .mo-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.mo-item.water { border-color: var(--water); background: var(--water-soft); }
+.mo-item.land { border-color: var(--land); background: var(--land-soft); }
+.mo-item.violet { border-color: var(--violet); background: var(--violet-soft); }
+.mo-item.social { border-color: var(--ok); background: var(--ok-soft); }
+.mo-item.sport { border-color: var(--accent); background: var(--accent-soft); }
+.mo-item.mine { box-shadow: 0 0 0 1.5px var(--accent); font-weight: 650; }
+.mo-item.past { opacity: .6; }
+.mo-item.cancelled .mo-l { text-decoration: line-through; opacity: .7; }
+.mo-item.draft { border-style: dashed; border-left-style: solid; }
+.mo-need { display: inline-block; width: 7px; height: 7px; border-radius: 99px; background: var(--warn); flex: none; }
+.mo-more { font-size: 11.5px; color: var(--text-3); padding: 0 6px; font-weight: 600; }
+/* phones: a week-by-week list of only the days that have something on */
+@media (max-width: 760px) {
+  .mo-wd { display: none; }
+  .mo-week { grid-template-columns: minmax(0, 1fr); }
+  .mo-day { min-height: 0; }
+  .mo-day.none, .mo-day.out { display: none; }
+  .mo-dw { display: inline; }
+  .mo-dn { display: none; }
+  .mo-day.today .mo-dw { color: var(--accent); font-weight: 700; }
+  .mo-item { font-size: 13px; padding: 4px 8px; }
+}
