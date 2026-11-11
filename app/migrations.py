@@ -28,6 +28,8 @@ MIGRATIONS = {
         "closes_at": "TEXT NOT NULL DEFAULT ''",                    # when entries close, same format
         "scratch_date": "TEXT NOT NULL DEFAULT ''",                 # scratch (withdraw) deadline, YYYY-MM-DD[THH:MM] or ''
         "crews_published": "INTEGER NOT NULL DEFAULT 0",            # rowers can see the race's crews
+        "time": "TEXT NOT NULL DEFAULT ''",                         # start, HH:MM (replaces the free-text time_slot)
+        "end_time": "TEXT NOT NULL DEFAULT ''",
     },
     "race_responses": {
         "squad": "TEXT NOT NULL DEFAULT ''",                        # open | women
@@ -60,6 +62,7 @@ DROPPED_COLUMNS = [
     ("outings", "happened"),   # the "Happened" confirmation was removed: past + not cancelled = went ahead
     ("tasks", "repeat_yearly"),  # now tasks.repeat = 'year' (to-dos can also repeat every term)
     ("members", "is_coach"),   # coach is now a category (Novice / Senior / Coach), migrated by _migrate_coach_tag
+    ("races", "time_slot"),    # now races.time / end_time, migrated by _migrate_race_times
 ]
 
 
@@ -85,6 +88,21 @@ def _migrate_coach_tag(conn) -> None:
     """Coach was briefly a tag (members.is_coach) on top of Novice / Senior; it's now a category of its own."""
     if "is_coach" in {r[1] for r in conn.execute("PRAGMA table_info(members)")}:
         conn.execute("UPDATE members SET category = 'Coach' WHERE is_coach = 1")
+
+
+def _migrate_race_times(conn) -> None:
+    """Races used to have a free-text time slot ("09:00-13:00", "Morning"). Read a clock time into
+    time / end_time; anything else goes into the notes so it isn't lost."""
+    if "time_slot" not in {r[1] for r in conn.execute("PRAGMA table_info(races)")}:
+        return
+    from .timeutil import normalize, to_minutes
+    for r in conn.execute("SELECT id, time_slot, notes FROM races WHERE time_slot != '' AND time = ''").fetchall():
+        start, end = normalize(r["time_slot"])
+        if to_minutes(start) is not None:
+            conn.execute("UPDATE races SET time = ?, end_time = ? WHERE id = ?", (start, end, r["id"]))
+        else:
+            notes = f"{r['notes']}\n\n" if r["notes"] else ""
+            conn.execute("UPDATE races SET notes = ? WHERE id = ?", (f"{notes}Time: {r['time_slot']}", r["id"]))
 
 
 def _migrate_max_land(conn) -> None:
@@ -124,6 +142,7 @@ def run(conn) -> None:
     _migrate_task_repeat(conn)
     _migrate_coaches_table(conn)
     _migrate_coach_tag(conn)
+    _migrate_race_times(conn)
     conn.execute("UPDATE members SET active = 0 WHERE category = 'Coach' AND active != 0")   # coaches are always inactive (nothing else is touched)
     for table, col in DROPPED_COLUMNS:
         if col in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:

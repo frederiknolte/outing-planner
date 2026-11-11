@@ -144,7 +144,7 @@ def month(month: Optional[str] = None, role: str = Depends(require_member)):
                 "warnings": len(o["warnings"]) if committee else 0})
         for rc in week_races(conn, gs.isoformat(), ge.isoformat(), committee):
             items[rc["date"]].append({
-                "type": "race", "id": rc["id"], "title": rc["title"], "time": "", "time_slot": rc["time_slot"],
+                "type": "race", "id": rc["id"], "title": rc["title"], "time": rc["time"], "end_time": rc["end_time"],
                 "published": rc["published"], "past": rc["date"] < rules.today.isoformat(),
                 "members": [s["member_id"] for c in rc["crews"] for s in c["seats"] if s["member_id"] is not None],
                 "open_subs": sum(1 for c in rc["crews"] for s in c["seats"] if s["member_id"] is None)})

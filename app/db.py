@@ -270,7 +270,8 @@ CREATE TABLE IF NOT EXISTS races (
     date TEXT NOT NULL,                            -- YYYY-MM-DD
     term TEXT NOT NULL DEFAULT '',                 -- Michaelmas | Hilary | Trinity
     city TEXT NOT NULL DEFAULT '',
-    time_slot TEXT NOT NULL DEFAULT '',            -- free text, e.g. "Morning" or "09:00-13:00"
+    time TEXT NOT NULL DEFAULT '',                 -- start, HH:MM ('' = time to be confirmed)
+    end_time TEXT NOT NULL DEFAULT '',             -- HH:MM or ''
     entry TEXT NOT NULL DEFAULT 'all',             -- all | novice | senior
     race_type TEXT NOT NULL DEFAULT '',
     notes TEXT NOT NULL DEFAULT '',

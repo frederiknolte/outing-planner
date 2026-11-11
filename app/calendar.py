@@ -166,7 +166,7 @@ def build_feed(conn, member: dict, base_url: str) -> str:
 def _race_events(conn, member: dict, club: str, since: str, base_url: str, host: str, now: str, places: dict) -> list[str]:
     """One event per race where they have a place in a published crew (a seat, bankriding or reserve),
     with the whole crew in the description. Someone with places in several crews still gets one event.
-    Timed if the race's time slot reads as a time ("09:00-13:00"), otherwise all day."""
+    Timed if the race has a start time, otherwise all day."""
     races = {r["id"]: r for r in conn.execute(
         "SELECT * FROM races WHERE crews_published = 1 AND date >= ? ORDER BY date", (since,))}
     lines = []
@@ -194,11 +194,10 @@ def _race_events(conn, member: dict, club: str, since: str, base_url: str, host:
             continue
         desc = [f"{club} · Race"]
         d = date.fromisoformat(r["date"])
-        when = _when(d, r["time_slot"], "", timedelta(hours=RACE_HOURS))
+        when = _when(d, r["time"], r["end_time"], timedelta(hours=RACE_HOURS))
         if not when:
             when = _all_day(d)
-            if r["time_slot"]:
-                desc.append(f"Time: {r['time_slot']}")
+            desc.append("Time to be confirmed")
         for i, block in enumerate(blocks):
             desc += ([""] if i else []) + block
         if r["notes"]:

@@ -640,7 +640,7 @@ function raceScheduleCard(rc) {
   const crew = (c) => `<div class="rs-crew"><div class="rs-crew-h"><b>${esc(c.name)}</b><span class="faint">${esc(c.boat_type)}</span></div>
     <div class="seats">${c.seats.map(raceSeatRow).join("")}</div>${raceCrewExtras(c)}</div>`;
   return `<article class="card outing race-out ${rc.published ? "" : "draft"} clickable" data-race-go="${rc.id}" title="Open in Races">
-    <div class="o-top"><div><div class="o-time">${esc(rc.time_slot || "Race day")}</div><div class="o-title">${esc(rc.title)}</div></div>
+    <div class="o-top"><div><div class="o-time">${esc(tRange(rc) || "Race day")}</div><div class="o-title">${esc(rc.title)}</div></div>
       <div class="o-tags"><span class="chip violet">${I.trophy}Race</span>${committee && !rc.published ? `<span class="chip">Draft</span>` : ""}</div></div>
     ${rc.city ? `<div class="o-sub"><span>${I.pin}${esc(rc.city)}</span></div>` : ""}
     ${rc.crews.map(crew).join("")}
@@ -732,20 +732,10 @@ async function editSocial(sc, defaults = {}) {
   });
 }
 
-/* A day's races, socials/activities and outings in one list, earliest first (no time, or Time TBC, last).
-   A race's time is free text, so use the first clock time in it, or morning/afternoon/evening; otherwise it leads the day. */
-function raceStart(rc) {
-  const slot = (rc.time_slot || "").toLowerCase();
-  const m = /(\d{1,2})\s*[:.h]\s*(\d{2})|\b(\d{1,2})\s*(am|pm)\b/.exec(slot);
-  if (m) {
-    let h = m[1] != null ? +m[1] : (+m[3] % 12) + (m[4] === "pm" ? 12 : 0);
-    return `${String(h).padStart(2, "0")}:${m[2] || "00"}`;
-  }
-  return /morning/.test(slot) ? "09:00" : /afternoon/.test(slot) ? "14:00" : /evening|night/.test(slot) ? "19:00" : "00:00";
-}
+/* A day's races, socials/activities and outings in one list, earliest first (no time last). */
 function dayItems(races, socials, outings) {
   const pad = (t) => (t ? t.replace(/^(\d):/, "0$1:") : "99:99");
-  return [...races.map((x) => [raceStart(x), raceScheduleCard(x)]), ...socials.map((x) => [pad(x.time), socialScheduleCard(x)]), ...outings.map((x) => [pad(x.time), outingCard(x)])]
+  return [...races.map((x) => [pad(x.time), raceScheduleCard(x)]), ...socials.map((x) => [pad(x.time), socialScheduleCard(x)]), ...outings.map((x) => [pad(x.time), outingCard(x)])]
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map((x) => x[1]).join("");
 }
 /* Month overview: a calendar grid of the whole month with each day's sessions boiled down to one line.
@@ -758,7 +748,7 @@ function monthChip(it) {
   const label = it.type === "outing" ? (it.title || it.boat || (it.kind === "water" ? "Water" : "Land")) : it.title;
   const time = (it.time || "").replace(/^(\d):/, "0$1:");
   const need = !it.cancelled && !it.past && ((it.type === "outing" && (it.kind === "water" ? it.spots > 0 : false)) || it.open_subs > 0);
-  const tip = [it.time ? `${it.time}${it.end_time ? "–" + it.end_time : ""}` : it.time_slot || "", label, it.boat && it.title ? it.boat : "", it.cancelled ? "Cancelled" : "", it.type === "outing" && it.spots_text && it.kind === "water" ? it.spots_text : "", it.open_subs ? `${it.open_subs} sub${it.open_subs === 1 ? "" : "s"} needed` : "", it.published ? "" : "Draft"].filter(Boolean).join(" · ");
+  const tip = [tRange(it), label, it.boat && it.title ? it.boat : "", it.cancelled ? "Cancelled" : "", it.type === "outing" && it.spots_text && it.kind === "water" ? it.spots_text : "", it.open_subs ? `${it.open_subs} sub${it.open_subs === 1 ? "" : "s"} needed` : "", it.published ? "" : "Draft"].filter(Boolean).join(" · ");
   return `<div class="mo-item ${cls} ${mine ? "mine" : ""} ${it.past ? "past" : ""} ${it.cancelled ? "cancelled" : ""} ${it.published ? "" : "draft"}" title="${esc(tip)}">${time ? `<span class="mo-t tnum">${esc(time)}</span>` : it.type === "race" ? `<span class="mo-t">${I.trophy}</span>` : ""}<span class="mo-l">${esc(label)}</span>${need ? `<i class="mo-need" aria-label="Needs people"></i>` : ""}</div>`;
 }
 async function pageMonth() {
@@ -3790,7 +3780,7 @@ const raceResult = (c) => c.result || c.result_time || c.result_notes ? `<div cl
     <div class="rr-main">${I.flag}${c.result ? `<b>${esc(c.result)}</b>` : `<span class="faint">Result</span>`}${c.result_time ? `<span class="tnum">${esc(c.result_time)}</span>` : ""}</div>
     ${c.result_notes ? `<div class="small muted">${esc(c.result_notes)}</div>` : ""}</div>` : "";
 /* Shared by the race card and the details popup. */
-const raceSub = (r) => [r.city && `<span>${I.pin}${esc(r.city)}</span>`, r.time_slot && `<span>${esc(r.time_slot)}</span>`, r.term && `<span>${esc(r.term)}</span>`].filter(Boolean).join("");
+const raceSub = (r) => [r.city && `<span>${I.pin}${esc(r.city)}</span>`, tRange(r) && `<span>${esc(tRange(r))}</span>`, r.term && `<span>${esc(r.term)}</span>`].filter(Boolean).join("");
 const raceChips = (r, data) => `<div class="race-chips"><span class="chip ${RACE_ENTRY_CHIP[r.entry]}">${esc(data.entry[r.entry])}</span>${r.squad !== "any" ? `<span class="chip violet">${esc(data.squads[r.squad])} squad</span>` : ""}${r.race_type ? `<span class="chip">${esc(r.race_type)}</span>` : ""}${!r.open && !r.past ? `<span class="chip warn">Sign-up closed</span>` : ""}</div>`;
 const raceCrewsSection = (r, editBtn) => `<div class="race-crews-h"><span class="section-title flush">Crews</span>
     ${isCommittee() && !r.crews_published ? `<span class="chip warn" title="Only the committee can see these crews">Draft</span>` : ""}
@@ -4336,7 +4326,7 @@ function raceResponseModal(r, data, memberId, presetStatus) {
 }
 
 function editRace(r, data) {
-  const v = r || { title: "", date: S.boot.today, term: S.boot.settings.current_term || "", city: "", time_slot: "", entry: "all", squad: "any", race_type: "", notes: "", open: true, opens_at: "", closes_at: "", scratch_date: "", links: [] };
+  const v = r || { title: "", date: S.boot.today, term: S.boot.settings.current_term || "", city: "", time: "", end_time: "", entry: "all", squad: "any", race_type: "", notes: "", open: true, opens_at: "", closes_at: "", scratch_date: "", links: [] };
   const links = v.links.map((l) => ({ ...l }));
   const types = [...new Set(data.races.map((x) => x.race_type).filter(Boolean))];
   const linkRows = () => links.map((l, i) => `<div class="race-link-row" data-i="${i}"><input class="input" data-k="label" placeholder="Label, e.g. Entry info" value="${esc(l.label)}"><input class="input" data-k="url" type="url" placeholder="https://…" value="${esc(l.url)}"><button type="button" class="btn ghost icon" data-rm aria-label="Remove link">${I.x}</button></div>`).join("");
@@ -4348,7 +4338,7 @@ function editRace(r, data) {
         <label class="field"><span>Who should enter</span><div class="grid-2" style="gap:6px"><select class="input" id="r-entry" aria-label="Novice or senior">${Object.entries(data.entry).map(([k, l]) => `<option value="${k}" ${v.entry === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
           <select class="input" id="r-squad" aria-label="Squad">${Object.entries(data.race_squads).map(([k, l]) => `<option value="${k}" ${(v.squad || "any") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div></label></div>
       <div class="grid-3"><label class="field"><span>City</span><input class="input" id="r-city" value="${esc(v.city)}" placeholder="e.g. Oxford"></label>
-        <label class="field"><span>Expected time slot</span><input class="input" id="r-slot" value="${esc(v.time_slot)}" placeholder="e.g. 09:00–13:00, Morning"></label>
+        <div class="field"><span>Expected time <span class="faint">(start – end, optional)</span></span><div class="time-range"><input class="input tnum" type="time" id="r-time" value="${esc(v.time)}" aria-label="Start time"><span class="faint">–</span><input class="input tnum" type="time" id="r-end" value="${esc(v.end_time)}" aria-label="End time (optional)"></div></div>
         <label class="field"><span>Race type</span><input class="input" id="r-type" list="r-types" value="${esc(v.race_type)}" placeholder="e.g. Head race, Side-by-side"><datalist id="r-types">${types.map((t) => `<option value="${esc(t)}">`).join("")}</datalist></label></div>
       <div class="grid-2"><label class="field"><span>Entries open</span><input class="input" type="datetime-local" id="r-opens" value="${esc(v.opens_at || "")}"></label>
         <label class="field"><span>Entries close</span><input class="input" type="datetime-local" id="r-closes" value="${esc(v.closes_at || "")}"><span class="hint">The committee gets a reminder banner as this approaches.</span></label>
@@ -4365,7 +4355,7 @@ function editRace(r, data) {
       $("#r-addlink", m).onclick = () => { sync(); links.push({ label: "", url: "" }); draw(); $$(".race-link-row input[data-k=label]", box).pop()?.focus(); };
       $("#r-save", m).onclick = async () => {
         sync();
-        const body = { title: $("#r-title", m).value.trim(), date: $("#r-date", m).value, term: $("#r-term", m).value, city: $("#r-city", m).value, time_slot: $("#r-slot", m).value,
+        const body = { title: $("#r-title", m).value.trim(), date: $("#r-date", m).value, term: $("#r-term", m).value, city: $("#r-city", m).value, time: $("#r-time", m).value.trim(), end_time: $("#r-end", m).value.trim(),
           entry: $("#r-entry", m).value, squad: $("#r-squad", m).value, race_type: $("#r-type", m).value, notes: $("#r-notes", m).value, open: $("#r-open", m).checked,
           opens_at: $("#r-opens", m).value, closes_at: $("#r-closes", m).value, scratch_date: $("#r-scratch", m).value && $("#r-scratch-t", m).value ? `${$("#r-scratch", m).value}T${$("#r-scratch-t", m).value}` : $("#r-scratch", m).value,
           links: links.filter((l) => l.url.trim()) };

@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 
 from . import db, push
 from .auth import require_committee, require_member
-from .common import optional_date, parse_date, published_only, today as common_today
+from .common import optional_date, parse_date, parse_times, published_only, today as common_today
 from .logic import BOAT_TYPES, TERMS, TZ, boat_seats, seat_label, seat_name
 from .signup import SIDES, SQUADS
 
@@ -58,7 +58,8 @@ class RaceIn(BaseModel):
     date: str
     term: str = ""
     city: str = Field("", max_length=120)
-    time_slot: str = Field("", max_length=120)
+    time: str = Field("", max_length=20)
+    end_time: str = Field("", max_length=20)
     entry: str = "all"
     squad: str = "any"
     race_type: str = Field("", max_length=200)
@@ -190,11 +191,12 @@ def _validate(b: RaceIn) -> dict:
         scratch = _dt(scratch, "the scratch deadline")
     else:
         scratch = optional_date(scratch, "Not a valid scratch date")
+    start, end = parse_times(b.time, b.end_time, "13:00")
     links = [l for l in b.links if l.url.strip()]
     if len(links) > MAX_LINKS:
         raise HTTPException(400, f"At most {MAX_LINKS} links")
     return {
-        "title": title, "date": d, "term": b.term, "city": b.city.strip(), "time_slot": b.time_slot.strip(),
+        "title": title, "date": d, "term": b.term, "city": b.city.strip(), "time": start, "end_time": end,
         "entry": b.entry, "squad": b.squad, "race_type": b.race_type.strip(), "notes": b.notes.strip(), "open": int(b.open),
         "opens_at": opens_at, "closes_at": closes_at, "scratch_date": scratch,
         "links": [(l.label.strip(), _clean_url(l.url)) for l in links],
@@ -254,18 +256,18 @@ def _load_crews(conn, race_ids=None) -> dict[int, list[dict]]:
 
 def week_races(conn, start: str, end: str, committee: bool) -> list[dict]:
     """Races between start and end (inclusive) that have crews, for the schedule. Rowers only get published crews."""
-    rows = conn.execute("SELECT id, title, date, city, time_slot, crews_published FROM races WHERE date BETWEEN ? AND ?"
+    rows = conn.execute("SELECT id, title, date, city, time, end_time, crews_published FROM races WHERE date BETWEEN ? AND ?"
                         + published_only(committee, "crews_published") + " ORDER BY date, id", (start, end)).fetchall()
     crews = _load_crews(conn, [r["id"] for r in rows]) if rows else {}
-    return [{"id": r["id"], "title": r["title"], "date": r["date"], "city": r["city"], "time_slot": r["time_slot"],
-             "published": bool(r["crews_published"]), "crews": crews[r["id"]]} for r in rows if crews.get(r["id"])]
+    return [{"id": r["id"], "title": r["title"], "date": r["date"], "city": r["city"], "time": r["time"],
+             "end_time": r["end_time"], "published": bool(r["crews_published"]), "crews": crews[r["id"]]} for r in rows if crews.get(r["id"])]
 
 
 def member_races(conn, member_id: int, today: str) -> list[dict]:
     """The races someone is in a published crew for (a seat, bankriding or a reserve), newest first,
     each with just their crews (and results, once the committee has entered them)."""
     rows = conn.execute(
-        """SELECT DISTINCT r.id, r.title, r.date, r.city, r.time_slot, r.race_type FROM races r
+        """SELECT DISTINCT r.id, r.title, r.date, r.city, r.time, r.end_time, r.race_type FROM races r
            JOIN race_crews c ON c.race_id = r.id
            WHERE r.crews_published = 1 AND (
                  EXISTS (SELECT 1 FROM race_crew_seats s WHERE s.crew_id = c.id AND s.member_id = ?)
@@ -285,8 +287,8 @@ def member_races(conn, member_id: int, today: str) -> list[dict]:
             if places:
                 mine.append({**c, "places": places})
         if mine:
-            out.append({"id": r["id"], "title": r["title"], "date": r["date"], "city": r["city"], "time_slot": r["time_slot"],
-                        "race_type": r["race_type"], "past": r["date"] < today, "crews": mine})
+            out.append({"id": r["id"], "title": r["title"], "date": r["date"], "city": r["city"], "time": r["time"],
+                        "end_time": r["end_time"], "race_type": r["race_type"], "past": r["date"] < today, "crews": mine})
     return out
 
 
@@ -339,9 +341,9 @@ def race_create(b: RaceIn, _: str = Depends(require_committee)):
     v = _validate(b)
     with db.get_conn() as conn:
         cur = conn.execute(
-            """INSERT INTO races(title, date, term, city, time_slot, entry, squad, race_type, notes, open, opens_at, closes_at, scratch_date)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (v["title"], v["date"], v["term"], v["city"], v["time_slot"], v["entry"], v["squad"], v["race_type"], v["notes"], v["open"], v["opens_at"], v["closes_at"], v["scratch_date"]))
+            """INSERT INTO races(title, date, term, city, time, end_time, entry, squad, race_type, notes, open, opens_at, closes_at, scratch_date)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (v["title"], v["date"], v["term"], v["city"], v["time"], v["end_time"], v["entry"], v["squad"], v["race_type"], v["notes"], v["open"], v["opens_at"], v["closes_at"], v["scratch_date"]))
         _save_links(conn, cur.lastrowid, v["links"])
         return {"id": cur.lastrowid}
 
@@ -351,9 +353,9 @@ def race_update(race_id: int, b: RaceIn, _: str = Depends(require_committee)):
     v = _validate(b)
     with db.get_conn() as conn:
         cur = conn.execute(
-            """UPDATE races SET title=?, date=?, term=?, city=?, time_slot=?, entry=?, squad=?, race_type=?, notes=?, open=?, opens_at=?, closes_at=?, scratch_date=?
+            """UPDATE races SET title=?, date=?, term=?, city=?, time=?, end_time=?, entry=?, squad=?, race_type=?, notes=?, open=?, opens_at=?, closes_at=?, scratch_date=?
                WHERE id=?""",
-            (v["title"], v["date"], v["term"], v["city"], v["time_slot"], v["entry"], v["squad"], v["race_type"], v["notes"], v["open"], v["opens_at"], v["closes_at"], v["scratch_date"], race_id))
+            (v["title"], v["date"], v["term"], v["city"], v["time"], v["end_time"], v["entry"], v["squad"], v["race_type"], v["notes"], v["open"], v["opens_at"], v["closes_at"], v["scratch_date"], race_id))
         if not cur.rowcount:
             raise HTTPException(404, "Race not found")
         _save_links(conn, race_id, v["links"])
