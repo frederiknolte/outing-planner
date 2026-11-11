@@ -18,7 +18,7 @@ the crews are published; publishing notifies everyone whose place is new or chan
 
 Like an outing's coach, the bankrider is free text, because it's often a coach who isn't a
 member. Names that match a member count as that member (bankrider_ids). One person can
-hold a place in several crews, e.g. row in one and bankride or be a reserve for another,
+hold a place in several crews, e.g. row in one and cox, bankride or be a reserve for another,
 but not two places in the same crew.
 """
 from __future__ import annotations
@@ -389,7 +389,6 @@ def race_crews_save(race_id: int, b: CrewsIn, _: str = Depends(require_committee
     """Replace the race's crews. publish=False keeps (or puts) them back in draft."""
     if len(b.crews) > MAX_CREWS:
         raise HTTPException(400, f"At most {MAX_CREWS} crews")
-    seen: dict[int, str] = {}
     clean = []
     for i, c in enumerate(b.crews):
         name = c.name.strip() or f"Crew {i + 1}"
@@ -400,9 +399,8 @@ def race_crews_save(race_id: int, b: CrewsIn, _: str = Depends(require_committee
         for seat, mid in c.seats.items():
             if seat not in valid:
                 continue                  # seat no longer in the boat (boat type changed)
-            if mid in seen:
-                raise HTTPException(400, f"Someone is in two seats ({seen[mid]} and {name})")
-            seen[mid] = name
+            if mid in seats.values():     # (the same person may be in other crews, e.g. row in one and cox in another)
+                raise HTTPException(400, f"{name}: someone is in two seats")
             seats[seat] = mid
         reserves = list(dict.fromkeys(c.reserves))
         if len(reserves) > MAX_RESERVES:
@@ -414,7 +412,7 @@ def race_crews_save(race_id: int, b: CrewsIn, _: str = Depends(require_committee
         race = conn.execute("SELECT id, title, date, crews_published FROM races WHERE id = ?", (race_id,)).fetchone()
         if not race:
             raise HTTPException(404, "Race not found")
-        everyone = set(seen).union(*(c[5] for c in clean))
+        everyone = {mid for c in clean for mid in (*c[3].values(), *c[5])}   # seats and reserves
         old_results = {r["id"]: (r["result"], r["result_time"], r["result_notes"])
                        for r in conn.execute("SELECT id, result, result_time, result_notes FROM race_crews WHERE race_id = ?", (race_id,))}
         if everyone:
