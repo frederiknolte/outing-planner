@@ -86,6 +86,7 @@ const I = {
   bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
   history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>',
   lifebuoy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M5.6 5.6l3.6 3.6M14.8 14.8l3.6 3.6M14.8 9.2l3.6-3.6M5.6 18.4l3.6-3.6"/></svg>',
+  run: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="14" cy="4.5" r="1.8"/><path d="M5 12.5l3-3 4 .5 2.5 3 3.5.5M12 10l-2 5 3.5 2.5-1 4M10 15l-3 2"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
 };
 
@@ -642,51 +643,86 @@ function raceScheduleCard(rc) {
   </article>`;
 }
 
-/* A social: just a date, time, place and note. No seats or sign-ups. The committee taps it to edit. */
+/* A social (date, time, place and note, no sign-up) or a sports activity (same, plus a list of members who signed themselves up).
+   The committee taps the card to edit it; anyone can join or leave an activity with the button. */
+const isSport = (sc) => sc.kind === "sport";
 function socialScheduleCard(sc) {
   const committee = isCommittee();
-  return `<article class="card outing social-out ${sc.published ? "" : "draft"} ${committee ? "clickable" : ""}" data-social="${sc.id}">
+  const sport = isSport(sc);
+  const going = sc.going || [];
+  const mine = going.some((g) => g.id === S.me);
+  const open = !sc.past && sc.published;
+  return `<article class="card outing ${sport ? "sport-out" : "social-out"} ${sc.published ? "" : "draft"} ${sc.past ? "past" : ""} ${committee ? "clickable" : ""}" data-social="${sc.id}">
     <div class="o-top"><div>${sc.time ? `<div class="o-time tnum">${esc(tRange(sc))}</div><div class="o-title">${esc(sc.title)}</div>` : `<div class="o-time">${esc(sc.title)}</div><div class="o-title faint small">Time TBC</div>`}</div>
-      <div class="o-tags"><span class="chip ok">${I.users}Social</span>${committee && !sc.published ? `<span class="chip">Draft</span>` : ""}</div></div>
+      <div class="o-tags"><span class="chip ${sport ? "accent" : "ok"}">${sport ? I.run : I.users}${sport ? "Sports activity" : "Social"}</span>${committee && !sc.published ? `<span class="chip">Draft</span>` : ""}</div></div>
     ${sc.location ? `<div class="o-sub">${sc.maps_url ? `<a href="${esc(sc.maps_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open in maps">${I.pin}${esc(sc.location)}</a>` : `<span>${I.pin}${esc(sc.location)}</span>`}</div>` : ""}
-    ${sc.notes ? `<div class="small muted" style="margin-top:6px">${esc(sc.notes)}</div>` : ""}
+    ${sc.notes ? `<div class="small muted act-notes">${esc(sc.notes)}</div>` : ""}
+    ${sport ? `<div class="act-going">${going.length ? `<span class="faint small">${going.length} going</span>
+        <div class="act-names">${going.map((g) => `<span class="chip ${g.id === S.me ? "ok" : ""}">${esc(g.name)}</span>`).join("")}</div>` : `<span class="faint small">${open ? "No one yet. Be the first!" : "No sign-ups"}</span>`}</div>
+      ${open ? `<div class="o-foot land-open"><span></span>${mine
+        ? `<button class="btn sm" data-act="act-leave" title="Take yourself off the list">${I.x}Can't go</button>`
+        : `<button class="btn sm primary" data-act="act-join" title="Put your name down">${I.plus}Sign up</button>`}</div>` : ""}` : ""}
   </article>`;
+}
+
+function joinActivity(sc) {
+  requireMe(async () => {
+    try {
+      await api(`/api/socials/${sc.id}/join`, { method: "POST", body: { member_id: S.me } });
+      toast(`You're signed up: ${sc.title}, ${DAY[dow(sc.date)]} ${fmtShort(sc.date)}${sc.time ? " " + tRange(sc) : ""}`);
+      rerender();
+    } catch (e) { fail(e); }
+  });
+}
+async function leaveActivity(sc) {
+  if (!await confirmBox("Take yourself off the list?", `You won't be down for <b>${esc(sc.title)}</b> on ${fmtLong(sc.date)} any more.`, "Can't go")) return;
+  try { await api(`/api/socials/${sc.id}/leave`, { method: "POST", body: { member_id: S.me } }); toast("You're off the list"); rerender(); } catch (e) { fail(e); }
 }
 
 async function editSocial(sc, defaults = {}) {
   try { await loadPlaces(); } catch (e) { return fail(e); }
   const week = S.weekData;
   const date = sc?.date || defaults.date;
+  const kind = sc?.kind || defaults.kind || "social";   // fixed once created: the two behave differently
+  const sport = kind === "sport";
   modal({
-    title: sc ? "Edit social" : "New social",
+    title: `${sc ? "Edit" : "New"} ${sport ? "sports activity" : "social"}`,
     body: `
-      <label class="field"><span>Name</span><input class="input" id="so-title" maxlength="80" placeholder="e.g. Bar night, Boat club formal" value="${esc(sc?.title || "")}"></label>
+      <label class="field"><span>Name</span><input class="input" id="so-title" maxlength="80" value="${esc(sc?.title || "")}"></label>
       <div class="grid-3">
         <label class="field"><span>Day</span><select class="input" id="so-date">${(week?.days || [date]).map((d) => `<option value="${d}" ${d === date ? "selected" : ""}>${fmtLong(d)}</option>`).join("")}${week && !week.days.includes(date) ? `<option value="${date}" selected>${fmtLong(date)}</option>` : ""}</select></label>
         <div class="field"><span>Time <span class="faint">(start – end)</span></span><div class="time-range"><input class="input tnum" type="time" id="so-time" value="${esc(sc ? sc.time || "" : defaults.time || "19:00")}" aria-label="Start time"><span class="faint">–</span><input class="input tnum" type="time" id="so-end" value="${esc(sc?.end_time || "")}" aria-label="End time (optional)"></div></div>
-        <label class="field"><span>Where</span><input class="input" id="so-loc" list="so-places" placeholder="e.g. The Bear" value="${esc(sc?.location || "")}">${placesDatalist("so-places")}</label>
+        <label class="field"><span>Where</span><input class="input" id="so-loc" list="so-places" value="${esc(sc?.location || "")}">${placesDatalist("so-places")}</label>
       </div>
-      <label class="field"><span>Notes</span><textarea class="input" id="so-notes" rows="2" maxlength="500" placeholder="Optional — visible to everyone">${esc(sc?.notes || "")}</textarea></label>
-      <p class="small faint" style="margin:0">Socials have no sign-up. Once published they show on the schedule and in everyone's subscribed calendar.</p>`,
+      <label class="field"><span id="so-notes-l"></span><textarea class="input" id="so-notes" rows="4" maxlength="1000">${esc(sc?.notes || "")}</textarea></label>
+      <p class="small faint" id="so-hint" style="margin:0"></p>`,
     foot: `${sc ? `<button class="btn danger" id="so-del">Delete</button>` : ""}<div class="r">
       <button class="btn" data-close>Close</button>
       ${sc && sc.published ? "" : `<button class="btn" id="so-draft">${sc ? "Save draft" : "Save as draft"}</button>`}
       <button class="btn primary" id="so-save">${sc && sc.published ? "Save" : "Save & publish"}</button></div>`,
     onMount: (m, close) => {
+      $("#so-title", m).placeholder = sport ? "e.g. Sunday morning run" : "e.g. Bar night, Boat club formal";
+      $("#so-loc", m).placeholder = sport ? "Meeting point" : "e.g. The Bear";
+      $("#so-notes-l", m).textContent = sport ? "What is it?" : "Notes";
+      $("#so-notes", m).placeholder = sport ? "Describe it: what, where to meet, pace or distance, what to bring… Visible to everyone." : "Optional — visible to everyone";
+      $("#so-hint", m).textContent = sport
+        ? "Members sign themselves up from the schedule, and see who else is going. Activities don't count as outings. Once published they show in the calendar of everyone who signs up."
+        : "Socials have no sign-up. Once published they show on the schedule and in everyone's subscribed calendar.";
       const save = async (published) => {
-        const body = { title: $("#so-title", m).value, date: $("#so-date", m).value, time: $("#so-time", m).value.trim(), end_time: $("#so-end", m).value.trim(),
+        const body = { kind, title: $("#so-title", m).value, date: $("#so-date", m).value, time: $("#so-time", m).value.trim(), end_time: $("#so-end", m).value.trim(),
           location: $("#so-loc", m).value, notes: $("#so-notes", m).value, published };
         try {
           await api(sc ? `/api/committee/socials/${sc.id}` : "/api/committee/socials", { method: sc ? "PUT" : "POST", body });
-          close(); toast(sc ? "Social saved" : "Social created"); pageSchedule();
+          close(); toast(sc ? "Saved" : kind === "sport" ? "Sports activity created" : "Social created"); pageSchedule();
         } catch (e) { fail(e); }
       };
       $("#so-save", m).onclick = () => save(true);
       const d = $("#so-draft", m); if (d) d.onclick = () => save(false);
       const del = $("#so-del", m);
       if (del) del.onclick = async () => {
-        if (!await confirmBox("Delete this social?", "It is removed from the schedule and from everyone's calendar.", "Delete", true)) return;
-        try { await api(`/api/committee/socials/${sc.id}`, { method: "DELETE" }); close(); toast("Social deleted"); pageSchedule(); } catch (e) { fail(e); }
+        const n = (sc.going || []).length;
+        if (!await confirmBox(`Delete this ${isSport(sc) ? "activity" : "social"}?`, `It is removed from the schedule and from everyone's calendar${n ? `, along with its ${n} sign-up${n > 1 ? "s" : ""}` : ""}.`, "Delete", true)) return;
+        try { await api(`/api/committee/socials/${sc.id}`, { method: "DELETE" }); close(); toast("Deleted"); pageSchedule(); } catch (e) { fail(e); }
       };
     },
   });
@@ -709,8 +745,10 @@ async function pageSchedule() {
   const inRace = (rc) => S.me != null && racePlaces(rc, S.me).length > 0;
   const raceSubs = (rc) => rc.crews.some((c) => c.seats.some((x) => x.member_id == null));
   const races = (data.races || []).filter((rc) => S.filter === "all" || (S.filter === "mine" && inRace(rc)) || (S.filter === "subs" && raceSubs(rc)) || S.filter === "water");
-  const socials = S.filter === "all" ? data.socials || [] : [];   // for everyone, so only on the full schedule
-  const myCount = data.outings.filter((o) => o.seats.some((s) => s.member && s.member.id === S.me)).length + (data.races || []).filter(inRace).length;
+  const inActivity = (sc) => isSport(sc) && S.me != null && (sc.going || []).some((g) => g.id === S.me);
+  // Socials are for everyone, so only on the full schedule. Sports activities also show under "Mine" when you're signed up.
+  const socials = S.filter === "all" ? data.socials || [] : S.filter === "mine" ? (data.socials || []).filter(inActivity) : [];
+  const myCount = data.outings.filter((o) => o.seats.some((s) => s.member && s.member.id === S.me)).length + (data.races || []).filter(inRace).length + (data.socials || []).filter(inActivity).length;
   main.innerHTML = `
     <div class="page-head">
       <div><h1>${isThis ? "This week" : data.start > S.boot.this_week ? (addDays(S.boot.this_week, 7) === data.start ? "Next week" : "Upcoming week") : "Past week"}</h1>
@@ -732,7 +770,7 @@ async function pageSchedule() {
         ${[["all", "All"], ["water", "Water"], ["land", "Land"], ["open", "Open spots"], ["mine", `Mine${S.me ? ` (${myCount})` : ""}`], ["subs", "Needs sub"]].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? "on" : ""}">${l}</button>`).join("")}
       </div>
       <div class="filters-right">
-        ${committee ? `<div class="toolbar"><button class="btn" id="wk-new-social">${I.plus}Social</button><button class="btn" data-new="land">${I.plus}Land session</button><button class="btn primary" data-new="water">${I.plus}Water outing</button></div>` : ""}
+        ${committee ? `<div class="toolbar"><button class="btn" id="wk-new-social">${I.plus}Social</button><button class="btn" id="wk-new-sport">${I.plus}Sports activity</button><button class="btn" data-new="land">${I.plus}Land session</button><button class="btn primary" data-new="water">${I.plus}Water outing</button></div>` : ""}
         ${flagPill(data.river && data.river.flag)}
       </div>
     </div>
@@ -744,7 +782,7 @@ async function pageSchedule() {
         <div class="day-body">${rlist.map(raceScheduleCard).join("") + slist.map(socialScheduleCard).join("") + list.map(outingCard).join("") || (committee ? `<div class="day-empty">No sessions<br><button class="btn sm" data-new="water" data-date="${d}">${I.plus}Add</button></div>` : `<div class="day-empty">Rest day</div>`)}</div></section>`;
     }).join("")}</div>`}
     <div class="legend">
-      <span><i class="sw" style="background:var(--water)"></i>Water</span><span><i class="sw" style="background:var(--land)"></i>Land</span>${(data.races || []).length ? `<span><i class="sw" style="background:var(--violet)"></i>Race</span>` : ""}${(data.socials || []).length ? `<span><i class="sw" style="background:var(--ok)"></i>Social</span>` : ""}
+      <span><i class="sw" style="background:var(--water)"></i>Water</span><span><i class="sw" style="background:var(--land)"></i>Land</span>${(data.races || []).length ? `<span><i class="sw" style="background:var(--violet)"></i>Race</span>` : ""}${(data.socials || []).some((x) => !isSport(x)) ? `<span><i class="sw" style="background:var(--ok)"></i>Social</span>` : ""}${(data.socials || []).some(isSport) ? `<span><i class="sw" style="background:var(--accent)"></i>Sports activity</span>` : ""}
       <span><i class="sw" style="background:var(--accent-soft);border:1px solid var(--accent)"></i>You</span>
       <span><i class="sw" style="background:var(--warn)"></i>Sub needed — tap to take the seat</span>
       ${committee ? `<span><i class="sw" style="background:var(--bad)"></i>Ineligible (no subs after cutoff / no swim test)</span><span><i class="sw" style="background:repeating-linear-gradient(135deg,var(--surface),var(--surface) 3px,var(--surface-3) 3px,var(--surface-3) 6px);border:1px solid var(--border)"></i>Draft</span>` : ""}
@@ -764,15 +802,22 @@ async function pageSchedule() {
   });
   if (committee) {
     $$("[data-new]").forEach((b) => b.onclick = () => editOuting(null, { kind: b.dataset.new, date: b.dataset.date || data.days.find((d) => d >= data.today) || data.start }));
-    $("#wk-new-social").onclick = () => editSocial(null, { date: data.days.find((d) => d >= data.today) || data.start });
-    $$("[data-social]").forEach((card) => card.onclick = () => editSocial((data.socials || []).find((x) => x.id === +card.dataset.social)));
+    const firstDay = data.days.find((d) => d >= data.today) || data.start;
+    $("#wk-new-social").onclick = () => editSocial(null, { date: firstDay, kind: "social" });
+    $("#wk-new-sport").onclick = () => editSocial(null, { date: firstDay, kind: "sport", time: "09:00" });
     const pub = $("#wk-pub"), unpub = $("#wk-unpub");
     if (pub) pub.onclick = async () => { if (await confirmBox("Publish this week?", "All sessions for this week become visible to rowers.", "Publish")) { if (await apiDo("/api/committee/week/publish", { method: "POST", body: { start: data.start, published: true } }, "Week published")) pageSchedule(); } };
     if (unpub) unpub.onclick = async () => { if (await apiDo("/api/committee/week/publish", { method: "POST", body: { start: data.start, published: false } }, "Week set back to draft")) pageSchedule(); };
   }
   if (committee && S.pendingNew) { const d = S.pendingNew; S.pendingNew = null; editOuting(null, d); }
   $$("[data-race-go]").forEach((card) => card.onclick = () => { location.hash = "#/races"; });
-  $$(".outing:not(.race-out):not(.social-out)").forEach((card) => card.addEventListener("click", (e) => {
+  $$("[data-social]").forEach((card) => card.addEventListener("click", (e) => {
+    const sc = (data.socials || []).find((x) => x.id === +card.dataset.social);
+    const t = e.target.closest("[data-act]");
+    if (t) { e.stopPropagation(); return t.dataset.act === "act-join" ? joinActivity(sc) : leaveActivity(sc); }
+    if (committee) editSocial(sc);
+  }));
+  $$(".outing:not(.race-out):not(.social-out):not(.sport-out)").forEach((card) => card.addEventListener("click", (e) => {
     const t = e.target.closest("[data-act]");
     const o = data.outings.find((x) => x.id === +card.dataset.oid);
     if (t) { e.stopPropagation(); return outingAct(t, o); }

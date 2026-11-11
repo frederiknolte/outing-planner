@@ -14,6 +14,7 @@ MIGRATIONS = {
         "cancel_reason": "TEXT NOT NULL DEFAULT ''",   # free-text note shown with the cancellation
         "cancel_category": "TEXT NOT NULL DEFAULT ''", # flag | weather | bankrider | numbers | other (see logic.CANCEL_REASONS)
     },
+    "socials": {"kind": "TEXT NOT NULL DEFAULT 'social'"},        # social | sport (see socials.py)
     "boats": {"last_serviced": "TEXT NOT NULL DEFAULT ''"},       # YYYY-MM-DD or '' (see usage.py)
     "race_crews": {
         "bankrider": "TEXT NOT NULL DEFAULT ''",                    # free text like outings.coach: a member, a coach or anyone else

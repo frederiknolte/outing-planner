@@ -969,6 +969,10 @@ button.race-person:hover { border-color: var(--accent); }
 /* Races on the schedule */
 .outing.race-out::before { background: var(--violet); }
 .outing.social-out::before { background: var(--ok); }
+.outing.sport-out::before { background: var(--accent); }
+.act-notes { margin-top: 6px; white-space: pre-line; }
+.act-going { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.act-names { display: flex; flex-wrap: wrap; gap: 4px; }
 .rs-crew { margin-top: 8px; }
 .rs-crew + .rs-crew { padding-top: 8px; border-top: 1px dashed var(--border); }
 .rs-crew-h { display: flex; gap: 6px; align-items: baseline; font-size: 13px; }

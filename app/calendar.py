@@ -158,7 +158,7 @@ def build_feed(conn, member: dict, base_url: str) -> str:
         ev += ["END:VEVENT"]
         lines += ev
     lines += _race_events(conn, member, club, since, base_url, host, now, places)
-    lines += _social_events(conn, club, since, base_url, host, now, places)
+    lines += _social_events(conn, member, club, since, base_url, host, now, places)
     lines.append("END:VCALENDAR")
     return "\r\n".join(_fold(x) for x in lines) + "\r\n"
 
@@ -212,12 +212,17 @@ def _race_events(conn, member: dict, club: str, since: str, base_url: str, host:
     return lines
 
 
-def _social_events(conn, club: str, since: str, base_url: str, host: str, now: str, places: dict) -> list[str]:
-    """Every published social, for every member (there are no sign-ups). Timed if it has a start time, else all day."""
+def _social_events(conn, member: dict, club: str, since: str, base_url: str, host: str, now: str, places: dict) -> list[str]:
+    """Every published social, for every member, plus the sports activities this member signed up to.
+    Timed if it has a start time, else all day."""
     lines = []
-    for r in conn.execute("SELECT * FROM socials WHERE published = 1 AND date >= ? ORDER BY date, time, id", (since,)):
+    rows = conn.execute("""SELECT * FROM socials WHERE published = 1 AND date >= ?1 AND (kind != 'sport' OR id IN
+                           (SELECT social_id FROM social_signups WHERE member_id = ?2)) ORDER BY date, time, id""",
+                        (since, member["id"]))
+    for r in rows:
+        sport = r["kind"] == "sport"
         d = date.fromisoformat(r["date"])
-        desc = [f"{club} · Social"]
+        desc = [f"{club} · {'Sports activity' if sport else 'Social'}"]
         when = _when(d, r["time"], r["end_time"], timedelta(hours=SOCIAL_HOURS))
         if not when:
             when = _all_day(d)
@@ -225,8 +230,8 @@ def _social_events(conn, club: str, since: str, base_url: str, host: str, now: s
         if r["notes"]:
             desc += ["", r["notes"]]
         desc += ["", f"Schedule: {base_url.rstrip('/')}/#/schedule"]
-        lines += ["BEGIN:VEVENT", f"UID:social-{r['id']}@{host}", f"DTSTAMP:{now}", *when,
-                  f"SUMMARY:{_esc('Social: ' + r['title'])}", f"DESCRIPTION:{_esc(chr(10).join(desc))}",
+        lines += ["BEGIN:VEVENT", f"UID:social-{r['id']}" + (f"-m{member['id']}" if sport else "") + f"@{host}", f"DTSTAMP:{now}", *when,
+                  f"SUMMARY:{_esc(('Sports activity: ' if sport else 'Social: ') + r['title'])}", f"DESCRIPTION:{_esc(chr(10).join(desc))}",
                   *(_location_lines(r["location"], places.get(r["location"].strip().lower())) if r["location"] else []),
                   "STATUS:CONFIRMED", "TRANSP:OPAQUE", "END:VEVENT"]
     return lines

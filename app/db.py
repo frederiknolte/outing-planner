@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS outings (
 );
 CREATE INDEX IF NOT EXISTS idx_outings_date ON outings(date);
 
--- Socials: club events shown on the schedule and in calendar feeds. No seats or sign-ups (see socials.py).
+-- Socials and sports activities: club events shown on the schedule and in calendar feeds (see socials.py).
 CREATE TABLE IF NOT EXISTS socials (
     id INTEGER PRIMARY KEY,
     title TEXT NOT NULL,
@@ -62,9 +62,18 @@ CREATE TABLE IF NOT EXISTS socials (
     end_time TEXT NOT NULL DEFAULT '',
     location TEXT NOT NULL DEFAULT '',
     notes TEXT NOT NULL DEFAULT '',
-    published INTEGER NOT NULL DEFAULT 0
+    published INTEGER NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL DEFAULT 'social'            -- social | sport (a sports activity such as a run: members sign themselves up)
 );
 CREATE INDEX IF NOT EXISTS idx_socials_date ON socials(date);
+
+-- Who has signed up to a sports activity (socials.kind = 'sport'). Plain list: no seats or limit.
+CREATE TABLE IF NOT EXISTS social_signups (
+    social_id INTEGER NOT NULL REFERENCES socials(id) ON DELETE CASCADE,
+    member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (social_id, member_id)
+);
 
 CREATE TABLE IF NOT EXISTS assignments (
     id INTEGER PRIMARY KEY,
