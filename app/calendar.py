@@ -2,8 +2,8 @@
 
 Each member gets a secret, unguessable feed URL (calendar apps can't log in, so
 the token *is* the credential). The feed lists the published outings they're
-seated in, sessions where they're named as coach/bankrider, and races where
-they're in a published crew. Calendar apps
+seated in, sessions where they're named as coach/bankrider, races where
+they're in a published crew, and every published social. Calendar apps
 poll it, so changes to crews, subs and times show up automatically.
 """
 from __future__ import annotations
@@ -26,6 +26,7 @@ from .timeutil import DEFAULT_MINUTES, parse_time
 router = APIRouter()
 
 RACE_HOURS = 3   # a race with only a start time
+SOCIAL_HOURS = 2   # a social with only a start time
 HISTORY_DAYS = 60
 
 
@@ -109,7 +110,7 @@ def build_feed(conn, member: dict, base_url: str) -> str:
     lines = [
         "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Outing Planner//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
         f"X-WR-CALNAME:{_esc(club)} – {_esc(member['name'])}",
-        f"X-WR-CALDESC:{_esc('Your outings with ' + club)}",
+        f"X-WR-CALDESC:{_esc('Your outings, races and socials with ' + club)}",
         "X-WR-TIMEZONE:Europe/London", "REFRESH-INTERVAL;VALUE=DURATION:PT1H", "X-PUBLISHED-TTL:PT1H",
     ]
     for oid, (o, why) in sorted(events.items(), key=lambda kv: (kv[1][0]["date"], kv[1][0]["time"])):
@@ -157,6 +158,7 @@ def build_feed(conn, member: dict, base_url: str) -> str:
         ev += ["END:VEVENT"]
         lines += ev
     lines += _race_events(conn, member, club, since, base_url, host, now, places)
+    lines += _social_events(conn, club, since, base_url, host, now, places)
     lines.append("END:VCALENDAR")
     return "\r\n".join(_fold(x) for x in lines) + "\r\n"
 
@@ -206,6 +208,26 @@ def _race_events(conn, member: dict, club: str, since: str, base_url: str, host:
         lines += ["BEGIN:VEVENT", f"UID:race-{rid}-m{member['id']}@{host}", f"DTSTAMP:{now}", *when,
                   f"SUMMARY:{_esc(summary)}", f"DESCRIPTION:{_esc(chr(10).join(desc))}",
                   *(_location_lines(r["city"], places.get(r["city"].strip().lower())) if r["city"] else []),
+                  "STATUS:CONFIRMED", "TRANSP:OPAQUE", "END:VEVENT"]
+    return lines
+
+
+def _social_events(conn, club: str, since: str, base_url: str, host: str, now: str, places: dict) -> list[str]:
+    """Every published social, for every member (there are no sign-ups). Timed if it has a start time, else all day."""
+    lines = []
+    for r in conn.execute("SELECT * FROM socials WHERE published = 1 AND date >= ? ORDER BY date, time, id", (since,)):
+        d = date.fromisoformat(r["date"])
+        desc = [f"{club} · Social"]
+        when = _when(d, r["time"], r["end_time"], timedelta(hours=SOCIAL_HOURS))
+        if not when:
+            when = _all_day(d)
+            desc.append("Time to be confirmed")
+        if r["notes"]:
+            desc += ["", r["notes"]]
+        desc += ["", f"Schedule: {base_url.rstrip('/')}/#/schedule"]
+        lines += ["BEGIN:VEVENT", f"UID:social-{r['id']}@{host}", f"DTSTAMP:{now}", *when,
+                  f"SUMMARY:{_esc('Social: ' + r['title'])}", f"DESCRIPTION:{_esc(chr(10).join(desc))}",
+                  *(_location_lines(r["location"], places.get(r["location"].strip().lower())) if r["location"] else []),
                   "STATUS:CONFIRMED", "TRANSP:OPAQUE", "END:VEVENT"]
     return lines
 

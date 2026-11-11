@@ -642,6 +642,56 @@ function raceScheduleCard(rc) {
   </article>`;
 }
 
+/* A social: just a date, time, place and note. No seats or sign-ups. The committee taps it to edit. */
+function socialScheduleCard(sc) {
+  const committee = isCommittee();
+  return `<article class="card outing social-out ${sc.published ? "" : "draft"} ${committee ? "clickable" : ""}" data-social="${sc.id}">
+    <div class="o-top"><div>${sc.time ? `<div class="o-time tnum">${esc(tRange(sc))}</div><div class="o-title">${esc(sc.title)}</div>` : `<div class="o-time">${esc(sc.title)}</div><div class="o-title faint small">Time TBC</div>`}</div>
+      <div class="o-tags"><span class="chip ok">${I.users}Social</span>${committee && !sc.published ? `<span class="chip">Draft</span>` : ""}</div></div>
+    ${sc.location ? `<div class="o-sub">${sc.maps_url ? `<a href="${esc(sc.maps_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open in maps">${I.pin}${esc(sc.location)}</a>` : `<span>${I.pin}${esc(sc.location)}</span>`}</div>` : ""}
+    ${sc.notes ? `<div class="small muted" style="margin-top:6px">${esc(sc.notes)}</div>` : ""}
+  </article>`;
+}
+
+async function editSocial(sc, defaults = {}) {
+  try { await loadPlaces(); } catch (e) { return fail(e); }
+  const week = S.weekData;
+  const date = sc?.date || defaults.date;
+  modal({
+    title: sc ? "Edit social" : "New social",
+    body: `
+      <label class="field"><span>Name</span><input class="input" id="so-title" maxlength="80" placeholder="e.g. Bar night, Boat club formal" value="${esc(sc?.title || "")}"></label>
+      <div class="grid-3">
+        <label class="field"><span>Day</span><select class="input" id="so-date">${(week?.days || [date]).map((d) => `<option value="${d}" ${d === date ? "selected" : ""}>${fmtLong(d)}</option>`).join("")}${week && !week.days.includes(date) ? `<option value="${date}" selected>${fmtLong(date)}</option>` : ""}</select></label>
+        <div class="field"><span>Time <span class="faint">(start – end)</span></span><div class="time-range"><input class="input tnum" type="time" id="so-time" value="${esc(sc ? sc.time || "" : defaults.time || "19:00")}" aria-label="Start time"><span class="faint">–</span><input class="input tnum" type="time" id="so-end" value="${esc(sc?.end_time || "")}" aria-label="End time (optional)"></div></div>
+        <label class="field"><span>Where</span><input class="input" id="so-loc" list="so-places" placeholder="e.g. The Bear" value="${esc(sc?.location || "")}">${placesDatalist("so-places")}</label>
+      </div>
+      <label class="field"><span>Notes</span><textarea class="input" id="so-notes" rows="2" maxlength="500" placeholder="Optional — visible to everyone">${esc(sc?.notes || "")}</textarea></label>
+      <p class="small faint" style="margin:0">Socials have no sign-up. Once published they show on the schedule and in everyone's subscribed calendar.</p>`,
+    foot: `${sc ? `<button class="btn danger" id="so-del">Delete</button>` : ""}<div class="r">
+      <button class="btn" data-close>Close</button>
+      ${sc && sc.published ? "" : `<button class="btn" id="so-draft">${sc ? "Save draft" : "Save as draft"}</button>`}
+      <button class="btn primary" id="so-save">${sc && sc.published ? "Save" : "Save & publish"}</button></div>`,
+    onMount: (m, close) => {
+      const save = async (published) => {
+        const body = { title: $("#so-title", m).value, date: $("#so-date", m).value, time: $("#so-time", m).value.trim(), end_time: $("#so-end", m).value.trim(),
+          location: $("#so-loc", m).value, notes: $("#so-notes", m).value, published };
+        try {
+          await api(sc ? `/api/committee/socials/${sc.id}` : "/api/committee/socials", { method: sc ? "PUT" : "POST", body });
+          close(); toast(sc ? "Social saved" : "Social created"); pageSchedule();
+        } catch (e) { fail(e); }
+      };
+      $("#so-save", m).onclick = () => save(true);
+      const d = $("#so-draft", m); if (d) d.onclick = () => save(false);
+      const del = $("#so-del", m);
+      if (del) del.onclick = async () => {
+        if (!await confirmBox("Delete this social?", "It is removed from the schedule and from everyone's calendar.", "Delete", true)) return;
+        try { await api(`/api/committee/socials/${sc.id}`, { method: "DELETE" }); close(); toast("Social deleted"); pageSchedule(); } catch (e) { fail(e); }
+      };
+    },
+  });
+}
+
 async function pageSchedule() {
   if (!S.week) S.week = isCommittee() ? addDays(S.boot.this_week, 0) : S.boot.this_week;
   const main = $("#main");
@@ -659,6 +709,7 @@ async function pageSchedule() {
   const inRace = (rc) => S.me != null && racePlaces(rc, S.me).length > 0;
   const raceSubs = (rc) => rc.crews.some((c) => c.seats.some((x) => x.member_id == null));
   const races = (data.races || []).filter((rc) => S.filter === "all" || (S.filter === "mine" && inRace(rc)) || (S.filter === "subs" && raceSubs(rc)) || S.filter === "water");
+  const socials = S.filter === "all" ? data.socials || [] : [];   // for everyone, so only on the full schedule
   const myCount = data.outings.filter((o) => o.seats.some((s) => s.member && s.member.id === S.me)).length + (data.races || []).filter(inRace).length;
   main.innerHTML = `
     <div class="page-head">
@@ -681,19 +732,19 @@ async function pageSchedule() {
         ${[["all", "All"], ["water", "Water"], ["land", "Land"], ["open", "Open spots"], ["mine", `Mine${S.me ? ` (${myCount})` : ""}`], ["subs", "Needs sub"]].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? "on" : ""}">${l}</button>`).join("")}
       </div>
       <div class="filters-right">
-        ${committee ? `<div class="toolbar"><button class="btn" data-new="land">${I.plus}Land session</button><button class="btn primary" data-new="water">${I.plus}Water outing</button></div>` : ""}
+        ${committee ? `<div class="toolbar"><button class="btn" id="wk-new-social">${I.plus}Social</button><button class="btn" data-new="land">${I.plus}Land session</button><button class="btn primary" data-new="water">${I.plus}Water outing</button></div>` : ""}
         ${flagPill(data.river && data.river.flag)}
       </div>
     </div>
-    ${!committee && data.outings.length === 0 && !(data.races || []).length ? `<div class="card empty">${I.calendar}<h3>Nothing published yet</h3><p>The schedule for this week hasn't been released. Check back soon.</p></div>` : `
+    ${!committee && data.outings.length === 0 && !(data.races || []).length && !(data.socials || []).length ? `<div class="card empty">${I.calendar}<h3>Nothing published yet</h3><p>The schedule for this week hasn't been released. Check back soon.</p></div>` : `
     <div class="days week" id="wk-days">${data.days.map((d) => {
-      const list = outs.filter((o) => o.date === d), rlist = races.filter((rc) => rc.date === d);
+      const list = outs.filter((o) => o.date === d), rlist = races.filter((rc) => rc.date === d), slist = socials.filter((sc) => sc.date === d);
       return `<section class="day ${d === data.today ? "today" : ""}"><div class="day-head"><b>${DAY[dow(d)]}</b><span>${d === data.today ? "Today · " : ""}${fmtShort(d)}</span></div>
         ${data.river && data.river.days[d] ? (() => { const x = data.river.days[d]; return `<div class="day-sun" title="Sunrise ${x.sunrise} · sunset ${x.sunset}. Rowing allowed from 1 hour before sunrise to 1 hour after sunset.">On the water ${x.first}–${x.last}</div>`; })() : ""}
-        <div class="day-body">${rlist.map(raceScheduleCard).join("") + list.map(outingCard).join("") || (committee ? `<div class="day-empty">No sessions<br><button class="btn sm" data-new="water" data-date="${d}">${I.plus}Add</button></div>` : `<div class="day-empty">Rest day</div>`)}</div></section>`;
+        <div class="day-body">${rlist.map(raceScheduleCard).join("") + slist.map(socialScheduleCard).join("") + list.map(outingCard).join("") || (committee ? `<div class="day-empty">No sessions<br><button class="btn sm" data-new="water" data-date="${d}">${I.plus}Add</button></div>` : `<div class="day-empty">Rest day</div>`)}</div></section>`;
     }).join("")}</div>`}
     <div class="legend">
-      <span><i class="sw" style="background:var(--water)"></i>Water</span><span><i class="sw" style="background:var(--land)"></i>Land</span>${(data.races || []).length ? `<span><i class="sw" style="background:var(--violet)"></i>Race</span>` : ""}
+      <span><i class="sw" style="background:var(--water)"></i>Water</span><span><i class="sw" style="background:var(--land)"></i>Land</span>${(data.races || []).length ? `<span><i class="sw" style="background:var(--violet)"></i>Race</span>` : ""}${(data.socials || []).length ? `<span><i class="sw" style="background:var(--ok)"></i>Social</span>` : ""}
       <span><i class="sw" style="background:var(--accent-soft);border:1px solid var(--accent)"></i>You</span>
       <span><i class="sw" style="background:var(--warn)"></i>Sub needed — tap to take the seat</span>
       ${committee ? `<span><i class="sw" style="background:var(--bad)"></i>Ineligible (no subs after cutoff / no swim test)</span><span><i class="sw" style="background:repeating-linear-gradient(135deg,var(--surface),var(--surface) 3px,var(--surface-3) 3px,var(--surface-3) 6px);border:1px solid var(--border)"></i>Draft</span>` : ""}
@@ -713,13 +764,15 @@ async function pageSchedule() {
   });
   if (committee) {
     $$("[data-new]").forEach((b) => b.onclick = () => editOuting(null, { kind: b.dataset.new, date: b.dataset.date || data.days.find((d) => d >= data.today) || data.start }));
+    $("#wk-new-social").onclick = () => editSocial(null, { date: data.days.find((d) => d >= data.today) || data.start });
+    $$("[data-social]").forEach((card) => card.onclick = () => editSocial((data.socials || []).find((x) => x.id === +card.dataset.social)));
     const pub = $("#wk-pub"), unpub = $("#wk-unpub");
     if (pub) pub.onclick = async () => { if (await confirmBox("Publish this week?", "All sessions for this week become visible to rowers.", "Publish")) { if (await apiDo("/api/committee/week/publish", { method: "POST", body: { start: data.start, published: true } }, "Week published")) pageSchedule(); } };
     if (unpub) unpub.onclick = async () => { if (await apiDo("/api/committee/week/publish", { method: "POST", body: { start: data.start, published: false } }, "Week set back to draft")) pageSchedule(); };
   }
   if (committee && S.pendingNew) { const d = S.pendingNew; S.pendingNew = null; editOuting(null, d); }
   $$("[data-race-go]").forEach((card) => card.onclick = () => { location.hash = "#/races"; });
-  $$(".outing:not(.race-out)").forEach((card) => card.addEventListener("click", (e) => {
+  $$(".outing:not(.race-out):not(.social-out)").forEach((card) => card.addEventListener("click", (e) => {
     const t = e.target.closest("[data-act]");
     const o = data.outings.find((x) => x.id === +card.dataset.oid);
     if (t) { e.stopPropagation(); return outingAct(t, o); }
@@ -1290,7 +1343,7 @@ function calendarModal() {
     modal({
       title: "Add your outings to your calendar",
       body: `
-        <p style="margin:0">Subscribe once and every outing <b>${esc(name)}</b> is put in shows up in your calendar. Crew changes, subs and new sessions update on their own, and outings you hand to a sub disappear.</p>
+        <p style="margin:0">Subscribe once and every outing <b>${esc(name)}</b> is put in shows up in your calendar, along with the club's socials. Crew changes, subs and new sessions update on their own, and outings you hand to a sub disappear.</p>
         <div class="cal-opts">
           <a class="cal-opt" id="cal-apple" href="${esc(L.webcal)}"><b>Apple Calendar</b><span>iPhone, iPad, Mac</span></a>
           <a class="cal-opt" href="${esc(L.google)}" target="_blank" rel="noopener"><b>Google Calendar</b><span>Android, web</span></a>
@@ -1298,7 +1351,7 @@ function calendarModal() {
         </div>
         <label class="field"><span>Or copy your personal link into any calendar app (“Subscribe to calendar” / “From URL”)</span>
           <div style="display:flex;gap:8px"><input class="input tnum" id="cal-url" readonly value="${esc(L.url)}"><button class="btn" id="cal-copy">${I.copy}Copy</button></div></label>
-        <div class="callout">${I.info}<div>Calendar apps check for changes every so often (Google can take up to a day), so always check the schedule here on the day. Only published outings are included.</div></div>
+        <div class="callout">${I.info}<div>Calendar apps check for changes every so often (Google can take up to a day), so always check the schedule here on the day. Only published outings and socials are included.</div></div>
         <p class="small faint" style="margin:0">This link is private to you: anyone who has it can see your outings. <a href="#" id="cal-reset">Get a new link</a> to stop an old one working.</p>`,
       foot: `<button class="btn ghost" id="cal-who">Not ${esc(name.split(" ")[0])}?</button><div class="r"><button class="btn primary" data-close>Done</button></div>`,
       onMount: (m, close) => {

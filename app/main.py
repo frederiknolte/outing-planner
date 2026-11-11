@@ -36,6 +36,7 @@ from .autofill import router as autofill_router
 from .usage import router as usage_router
 from .handover import router as handover_router
 from .incidents import router as incidents_router
+from .socials import router as socials_router, week_socials
 from .logic import (BOAT_TYPES, CANCEL_REASONS, SUBS_PLANS, TERMS, TZ, Rules, add_months, effective_today, is_small_boat, monday_of,
                     outing_payload, real_today, seat_label, seat_list)
 
@@ -272,13 +273,16 @@ def week(start: Optional[str] = None, role: str = Depends(require_member)):
         where = "date BETWEEN ? AND ?" + ("" if committee else " AND published = 1")
         outings = _outings_payload(conn, rules, where, (ws.isoformat(), we.isoformat()), committee)
         counts = conn.execute(
-            "SELECT COUNT(*) AS n, SUM(published) AS p FROM outings WHERE date BETWEEN ? AND ?",
+            """SELECT COUNT(*) AS n, SUM(published) AS p FROM
+               (SELECT published FROM outings WHERE date BETWEEN ?1 AND ?2 UNION ALL
+                SELECT published FROM socials WHERE date BETWEEN ?1 AND ?2)""",
             (ws.isoformat(), we.isoformat())).fetchone()
         return {
             "start": ws.isoformat(),
             "days": [(ws + timedelta(days=i)).isoformat() for i in range(7)],
             "outings": outings,
             "races": week_races(conn, ws.isoformat(), we.isoformat(), committee),
+            "socials": week_socials(conn, ws.isoformat(), we.isoformat(), committee),
             "total": counts["n"] or 0,
             "published": counts["p"] or 0,
             "today": rules.today.isoformat(),
@@ -1320,6 +1324,7 @@ def week_publish(b: WeekIn, _: str = Depends(require_committee)):
         before = push.snapshot(conn, start=ws.isoformat(), end=we)
         conn.execute("UPDATE outings SET published=? WHERE date BETWEEN ? AND ?",
                      (int(b.published), ws.isoformat(), we))
+        conn.execute("UPDATE socials SET published=? WHERE date BETWEEN ? AND ?", (int(b.published), ws.isoformat(), we))
         msgs = push.crew_changes(conn, before)
     push.dispatch(msgs)
     return {"ok": True}
@@ -1566,6 +1571,7 @@ app.include_router(autofill_router)
 app.include_router(usage_router)
 app.include_router(handover_router)
 app.include_router(incidents_router)
+app.include_router(socials_router)
 app.include_router(push.router)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
