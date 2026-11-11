@@ -613,12 +613,15 @@ const crewLogLatest = (o) => {
   return `<div class="o-log small" title="Tap the session to see all changes">${I.history}<span>${logLine(e)}${log.length > 1 ? ` <span class="faint">· ${log.length} changes</span>` : ""}</span></div>`;
 };
 
+/* Top of a schedule card: time and tags share the first line, so the title below gets the card's full width. */
+const cardTop = (time, title, tags) => `<div class="o-top"><div class="o-time tnum">${time ? esc(time) : `<span class="faint">Time TBC</span>`}</div><div class="o-tags">${tags}</div></div>
+    <div class="o-title">${esc(title)}</div>`;
+
 function outingCard(o) {
   const committee = isCommittee();
   const kindChip = o.kind === "water" ? `<span class="chip water">${I.water}Water</span>` : `<span class="chip land">${I.land}Land</span>`;
   return `<article class="card outing ${o.kind} ${o.published ? "" : "draft"} ${o.past ? "past" : ""} ${o.cancelled ? "cancelled" : ""} clickable" data-oid="${o.id}">
-    <div class="o-top"><div>${o.time ? `<div class="o-time tnum">${esc(tRange(o))}</div><div class="o-title">${esc(oTitle(o))}</div>` : `<div class="o-time">${esc(oTitle(o))}</div><div class="o-title faint small">Time TBC</div>`}</div>
-      <div class="o-tags">${kindChip}${o.cancelled ? `<span class="chip bad">Cancelled</span>` : ""}${committee && !o.published ? `<span class="chip">Draft</span>` : ""}</div></div>
+    ${cardTop(tRange(o), oTitle(o), `${kindChip}${o.cancelled ? `<span class="chip bad">Cancelled</span>` : ""}${committee && !o.published ? `<span class="chip">Draft</span>` : ""}`)}
     ${o.cancelled ? `<div class="o-cancel">${I.x}<span>${esc(cancelText(o) || "This session has been cancelled")}</span></div>` : ""}
     <div class="o-sub">
       ${o.boat ? `<span>${I.boat}${esc(o.boat.name)} <span class="faint">${esc(o.boat.type)}</span></span>` : o.kind === "water" ? `<span class="faint">${I.boat}${o.capacity}${o.coxed ? "+" : ""} · no boat set</span>` : ""}
@@ -640,8 +643,7 @@ function raceScheduleCard(rc) {
   const crew = (c) => `<div class="rs-crew"><div class="rs-crew-h"><b>${esc(c.name)}</b><span class="faint">${esc(c.boat_type)}</span></div>
     <div class="seats">${c.seats.map(raceSeatRow).join("")}</div>${raceCrewExtras(c)}</div>`;
   return `<article class="card outing race-out ${rc.published ? "" : "draft"} clickable" data-race-go="${rc.id}" title="Open in Races">
-    <div class="o-top"><div><div class="o-time">${esc(tRange(rc) || "Race day")}</div><div class="o-title">${esc(rc.title)}</div></div>
-      <div class="o-tags"><span class="chip violet">${I.trophy}Race</span>${committee && !rc.published ? `<span class="chip">Draft</span>` : ""}</div></div>
+    ${cardTop(tRange(rc) || "Race day", rc.title, `<span class="chip violet">${I.trophy}Race</span>${committee && !rc.published ? `<span class="chip">Draft</span>` : ""}`)}
     ${rc.city ? `<div class="o-sub"><span>${I.pin}${esc(rc.city)}</span></div>` : ""}
     ${rc.crews.map(crew).join("")}
   </article>`;
@@ -657,8 +659,7 @@ function socialScheduleCard(sc) {
   const mine = going.some((g) => g.id === S.me);
   const open = !sc.past && sc.published;
   return `<article class="card outing ${sport ? "sport-out" : "social-out"} ${sc.published ? "" : "draft"} ${sc.past ? "past" : ""} ${committee ? "clickable" : ""}" data-social="${sc.id}">
-    <div class="o-top"><div>${sc.time ? `<div class="o-time tnum">${esc(tRange(sc))}</div><div class="o-title">${esc(sc.title)}</div>` : `<div class="o-time">${esc(sc.title)}</div><div class="o-title faint small">Time TBC</div>`}</div>
-      <div class="o-tags"><span class="chip ${sport ? "accent" : "ok"}" ${sport ? `title="Sports activity"` : ""}>${sport ? I.run : I.users}${sport ? "Sport" : "Social"}</span>${committee && !sc.published ? `<span class="chip">Draft</span>` : ""}</div></div>
+    ${cardTop(tRange(sc), sc.title, `<span class="chip ${sport ? "accent" : "ok"}" ${sport ? `title="Sports activity"` : ""}>${sport ? I.run : I.users}${sport ? "Sport" : "Social"}</span>${committee && !sc.published ? `<span class="chip">Draft</span>` : ""}`)}
     ${sc.location ? `<div class="o-sub">${sc.maps_url ? `<a href="${esc(sc.maps_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open in maps">${I.pin}${esc(sc.location)}</a>` : `<span>${I.pin}${esc(sc.location)}</span>`}</div>` : ""}
     ${sc.notes ? `<div class="small muted act-notes">${esc(sc.notes)}</div>` : ""}
     <div class="act-going">${going.length ? `<span class="faint small">${going.length} going</span>

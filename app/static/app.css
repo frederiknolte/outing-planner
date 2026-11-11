@@ -278,9 +278,9 @@ textarea.input { resize: vertical; min-height: 64px; }
 .outing.clickable { cursor: pointer; }
 .outing.clickable:hover { box-shadow: var(--shadow-lg); transform: translateY(-1px); }
 .o-top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+.o-top > .o-time { flex: none; }   /* the tags wrap instead */
 .o-time { font-weight: 750; font-size: 15px; letter-spacing: -.01em; }
-.o-title { font-weight: 600; color: var(--text); }
-.o-top > div:first-child { flex: 1; min-width: 0; overflow-wrap: break-word; }   /* the tags don't squeeze the title */
+.o-title { font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
 .o-meta { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 8px; }
 .o-sub { color: var(--text-2); font-size: 12.5px; display: flex; gap: 10px; flex-wrap: wrap; }
 .o-sub svg { width: 13px; height: 13px; vertical-align: -2px; margin-right: 3px; opacity: .7; }
@@ -985,7 +985,7 @@ button.race-person:hover { border-color: var(--accent); }
 .t-warn { color: var(--warn); }
 .t-bad { color: var(--bad); }
 .section-title.flush { margin: 0; }
-.o-tags { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; max-width: 50%; }
+.o-tags { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; min-width: 0; }
 .o-tags .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .race-boat .race-notes { margin-top: 6px; }
 .race-extras { margin-top: 6px; font-size: 12.5px; color: var(--text-2); display: flex; flex-direction: column; gap: 2px; }
