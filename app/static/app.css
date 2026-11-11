@@ -219,7 +219,7 @@ textarea.input { resize: vertical; min-height: 64px; }
 .chip.bad { background: var(--bad-soft); color: var(--bad); }
 .chip.accent { background: var(--accent-soft); color: var(--accent); }
 .chip.violet { background: var(--violet-soft); color: var(--violet); }
-.chip svg { width: 13px; height: 13px; }
+.chip svg { width: 13px; height: 13px; flex: none; }   /* a squeezed chip clips its text, never its icon */
 .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; display: inline-block; }
 
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
@@ -261,7 +261,7 @@ textarea.input { resize: vertical; min-height: 64px; }
 .day-empty { border: 1.5px dashed var(--border); border-radius: var(--radius); padding: 14px; text-align: center; color: var(--text-3); font-size: 12.5px; }
 .day-empty button { margin-top: 6px; }
 
-.outing { position: relative; overflow: hidden; padding: 12px 12px 10px; cursor: default; transition: box-shadow .15s, transform .15s; }
+.outing { container-type: inline-size; position: relative; overflow: hidden; padding: 12px 12px 10px; cursor: default; transition: box-shadow .15s, transform .15s; }
 .outing::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--water); }
 .outing.land::before { background: var(--land); }
 .outing.draft { background: repeating-linear-gradient(135deg, var(--surface), var(--surface) 10px, var(--surface-2) 10px, var(--surface-2) 20px); }
@@ -279,8 +279,15 @@ textarea.input { resize: vertical; min-height: 64px; }
 .outing.clickable:hover { box-shadow: var(--shadow-lg); transform: translateY(-1px); }
 .o-top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
 .o-top > .o-time { flex: none; }   /* the tags wrap instead */
+.o-tags { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; min-width: 0; }
+.o-tags .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+/* a card too narrow for time and tags side by side (a day column) puts the tags above the time */
+@container (max-width: 280px) {
+  .o-top { flex-direction: column-reverse; align-items: flex-start; gap: 6px; }
+  .o-tags { justify-content: flex-start; }
+}
 .o-time { font-weight: 750; font-size: 15px; letter-spacing: -.01em; }
-.o-title { font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.o-title { font-weight: 600; font-size: 14px; line-height: 1.3; margin-top: 2px; color: var(--text); overflow-wrap: anywhere; }
 .o-meta { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 8px; }
 .o-sub { color: var(--text-2); font-size: 12.5px; display: flex; gap: 10px; flex-wrap: wrap; }
 .o-sub svg { width: 13px; height: 13px; vertical-align: -2px; margin-right: 3px; opacity: .7; }
@@ -985,8 +992,6 @@ button.race-person:hover { border-color: var(--accent); }
 .t-warn { color: var(--warn); }
 .t-bad { color: var(--bad); }
 .section-title.flush { margin: 0; }
-.o-tags { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; min-width: 0; }
-.o-tags .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .race-boat .race-notes { margin-top: 6px; }
 .race-extras { margin-top: 6px; font-size: 12.5px; color: var(--text-2); display: flex; flex-direction: column; gap: 2px; }
 .race-extras b { font-weight: 600; color: var(--text-3); }
