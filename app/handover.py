@@ -202,7 +202,8 @@ def handover_apply(b: HandoverIn, _: str = Depends(require_committee)):
             data = {
                 "stats": stats,
                 "usage": {"totals": usage["totals"], "boats": [
-                    {k: x[k] for k in ("id", "name", "boat_type", "status", "outings", "hours")} for x in usage["boats"]]},
+                    {**{k: x[k] for k in ("id", "name", "boat_type", "outings", "hours")}, "status": x["condition"]["key"]}
+                    for x in usage["boats"]]},
                 "roster": {"positions": [{"key": k, "label": l, "max": n} for k, l, n in POSITIONS], "holders": before_roster},
                 "handbook": handbook,
                 "subs": subs,

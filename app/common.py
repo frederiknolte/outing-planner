@@ -73,10 +73,6 @@ def published_only(committee: bool, column: str = "published") -> str:
     return "" if committee else f" AND {column} = 1"
 
 
-def boats_by_id(conn) -> dict:
-    return {r["id"]: dict(r) for r in conn.execute("SELECT * FROM boats")}
-
-
 def visible_outing(conn, oid: int, role: str, what: str = "Outing", upcoming: bool = False):
     """An outing the caller may see (drafts are committee-only), else 404. With `upcoming`, also
     400 if it's in the past or cancelled, for changes a rower makes."""

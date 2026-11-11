@@ -9,7 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from . import crewlog, db, river
 from .auth import require_member
-from .common import boats_by_id, parse_date, published_only
+from .boats import boats_by_id
+from .common import parse_date, published_only
 from .logic import TZ, Rules, add_months, monday_of, outing_payload, to_date
 from .races import closing_soon, is_associate, week_races
 from .socials import week_socials

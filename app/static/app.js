@@ -15,6 +15,9 @@ const SQUAD_SHORT = { open: "Open", women: "Women's" };
 const SIDE_SHORT = { "Bow side only": "Bow only", "Bow side preferred": "Bow pref", "Equally happy": "Either side", "Stroke side preferred": "Stroke pref", "Stroke side only": "Stroke only" };
 const squadChip = (sq) => (sq === "open" || sq === "women" ? `<span class="chip ${sq === "women" ? "violet" : "accent"}">${esc(SQUAD_SHORT[sq])}</span>` : "");
 const sideChip = (side) => (side ? `<span class="chip" title="${esc(side)}">${esc(SIDE_SHORT[side] || side)}</span>` : "");
+// A boat's condition comes from the server: its status plus its worst open issue (see boats.py).
+const boatChip = (b) => `<span class="chip ${b.condition.tone}">${esc(b.condition.label)}</span>`;
+const inService = (b, keepId) => b.condition.key !== "retired" || b.id === keepId;   // retired boats only stay listed where already chosen
 const catChip = (cat) => `<span class="chip ${cat === "Novice" ? "accent" : cat === "Coach" ? "violet" : ""}" title="${esc(cat || "Category not set")}">${esc(cat || "?")}</span>`;
 /* A row of pill buttons (one choice); the chosen value is read back from data-v. */
 const pills = (name, opts, cur) => `<div class="pills" data-name="${name}">${opts.map(([v, l]) => `<button type="button" class="pill ${cur === v ? "on" : ""}" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</div>`;
@@ -1073,7 +1076,7 @@ async function autofillWeek(start, includePublished = false) {
 async function editOuting(o, defaults = {}) {
   const [boatsRes, coaches] = await Promise.all([api("/api/committee/boats"), api("/api/committee/coaches"), loadPlaces()]).catch((e) => { fail(e); return [null, null]; });
   if (!boatsRes) return;
-  const boats = boatsRes.boats.filter((b) => b.status !== "retired" || (o && o.boat && o.boat.id === b.id));
+  const boats = boatsRes.boats.filter((b) => inService(b, o?.boat?.id));
   const st = {
     kind: o?.kind || defaults.kind || "water",
     date: o?.date || defaults.date, time: o ? o.time || "" : defaults.time || "06:30", end_time: o ? o.end_time || "" : (defaults.time ? defaults.end_time || "" : "08:00"), location: o?.location || defaults.location || "",
@@ -1110,7 +1113,7 @@ async function editOuting(o, defaults = {}) {
       <label class="field"><span id="oe-coach-l">${st.kind === "water" ? "Coach / bankrider" : "Coach"}</span><div class="combo" id="oe-coach-wrap"><input class="input" id="oe-coach" autocomplete="off" value="${esc(st.coach)}" placeholder="Optional · pick anyone or type a name"></div></label>
     </div>
     <div class="grid-2" id="oe-water-row">
-      <label class="field"><span>Boat</span><select class="input" id="oe-boat"><option value="">— No specific boat —</option>${boats.map((b) => `<option value="${b.id}" ${b.id === st.boat_id ? "selected" : ""}>${esc(b.name)} · ${esc(b.boat_type)}${b.status !== "available" ? ` (${b.status})` : ""}</option>`).join("")}</select>
+      <label class="field"><span>Boat</span><select class="input" id="oe-boat"><option value="">— No specific boat —</option>${boats.map((b) => `<option value="${b.id}" ${b.id === st.boat_id ? "selected" : ""}>${esc(b.name)} · ${esc(b.boat_type)}${b.condition.key !== "available" ? ` (${esc(b.condition.label)})` : ""}</option>`).join("")}</select>
         ${boats.length ? "" : `<span class="hint">No boats yet — add them in the <a href="#/boats">Boat park</a>.</span>`}</label>
       <label class="field" id="oe-cap-f"><span>Seats</span><select class="input" id="oe-cap"></select></label>
     </div>
@@ -1257,7 +1260,7 @@ async function editOuting(o, defaults = {}) {
         const extra = [];
         if (cox && cox.cox_status === "N" && !$("#oe-coach", m).value.trim()) extra.push("Novice cox — a bankrider/coach is needed.");
         const b = boats.find((x) => x.id === st.boat_id);
-        if (st.kind === "water" && b && b.status !== "available") extra.push(`${b.name} is marked “${b.status}”.`);
+        if (st.kind === "water" && b && b.condition.key !== "available") extra.push(`${b.name}: ${b.condition.label}`);
         $("#oe-warn", m).innerHTML = (extra.length || warns.length) ? `<div class="callout warn">${I.alert}<div>${[...extra, ...warns].map(esc).join("<br>")}</div></div>` : "";
         drawPool();
         riverCheck();
@@ -2234,14 +2237,14 @@ async function pageBoats() {
   let data;
   try { data = await api("/api/committee/boats"); } catch (e) { return fail(e); }
   const committee = isCommittee();
-  const avail = data.boats.filter((b) => b.status === "available").length;
+  const avail = data.boats.filter((b) => b.condition.usable).length;
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>Boat park</h1><p>${data.boats.length} boats · ${avail} available${data.boats.length - avail ? ` · ${data.boats.length - avail} out of service` : ""}</p></div>
       <div class="toolbar"><button class="btn" id="bt-report">${I.alert}Report an issue</button>${committee ? `<button class="btn primary" id="bt-add">${I.plus}Add boat</button>` : ""}</div></div>
     ${data.boats.length ? `<div class="boats">${data.boats.map((b) => `
-      <article class="card boat ${b.status} ${committee ? "clickable" : ""}" data-id="${b.id}">
+      <article class="card boat ${b.condition.key} ${committee ? "clickable" : ""}" data-id="${b.id}">
         <div class="boat-head"><div><div class="boat-name">${esc(b.name)}</div><div class="muted small">${esc(b.boat_type)} · ${b.seats} seat${b.seats > 1 ? "s" : ""}${b.coxed ? " + cox" : ""}</div></div>
-          <span class="chip ${b.status === "available" ? "ok" : b.status === "repair" ? "warn" : ""}">${b.status === "available" ? "Available" : b.status === "repair" ? "Under repair" : "Retired"}</span></div>
+          ${boatChip(b)}</div>
         ${boatSvg(b.seats, b.coxed)}
         <div class="o-sub">${b.rigging ? `<span>${esc(b.rigging)}</span>` : ""}<span>${b.outings} outing${b.outings === 1 ? "" : "s"}</span>${b.next_outing ? `<span>Next: ${fmtShort(b.next_outing)}</span>` : ""}</div>
         ${b.notes ? `<div class="small muted">${esc(b.notes)}</div>` : ""}
@@ -2251,13 +2254,13 @@ async function pageBoats() {
   $("#bt-report").onclick = () => reportIssue(data.boats);
   $$("[data-boat-issues]").forEach((b) => b.onclick = (e) => { e.stopPropagation(); S.issueBoat = +b.dataset.boatIssues; S.issueFilter = "active"; go("issues"); });
   if (committee) {
-    const add = () => editBoat(null, data.types);
+    const add = () => editBoat(null, data);
     $("#bt-add").onclick = add; const a2 = $("#bt-add2"); if (a2) a2.onclick = add;
-    $$(".boat[data-id]").forEach((c) => c.onclick = () => editBoat(data.boats.find((b) => b.id === +c.dataset.id), data.types));
+    $$(".boat[data-id]").forEach((c) => c.onclick = () => editBoat(data.boats.find((b) => b.id === +c.dataset.id), data));
   }
 }
 
-function editBoat(b, types) {
+function editBoat(b, { types, statuses }) {
   const v = b || { name: "", boat_type: "8+", seats: 8, coxed: 1, status: "available", rigging: "", notes: "" };
   modal({
     title: b ? "Edit boat" : "Add boat",
@@ -2265,7 +2268,8 @@ function editBoat(b, types) {
         <label class="field"><span>Type</span><select class="input" id="b-type">${Object.keys(types).map((t) => `<option ${v.boat_type === t ? "selected" : ""}>${t}</option>`).join("")}</select></label></div>
       <div class="grid-3"><label class="field"><span>Rowing seats</span><input class="input" type="number" min="1" max="8" id="b-seats" value="${v.seats}"></label>
         <div class="field field-check"><label class="check"><input type="checkbox" id="b-cox" ${v.coxed ? "checked" : ""}> Coxed</label></div>
-        <label class="field"><span>Status</span><select class="input" id="b-status">${[["available", "Available"], ["repair", "Under repair"], ["retired", "Retired"]].map(([k, l]) => `<option value="${k}" ${v.status === k ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
+        <label class="field"><span>Status</span><select class="input" id="b-status">${Object.entries(statuses).map(([k, l]) => `<option value="${k}" ${v.status === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>
+      ${b && b.condition.key !== b.status ? `<div class="callout warn">${I.alert}<div>Shown as “${esc(b.condition.label)}” because of an open issue, until that issue is fixed or closed.</div></div>` : ""}
       <label class="field"><span>Rigging / weight class</span><input class="input" id="b-rig" value="${esc(v.rigging)}" placeholder="e.g. Bow-rigged, 75–85 kg"></label>
       <label class="field"><span>Notes</span><textarea class="input" id="b-notes" rows="2">${esc(v.notes)}</textarea></label>`,
     foot: `${b ? `<button class="btn danger" id="b-del">Delete</button>` : ""}<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="b-save">Save</button></div>`,
@@ -2301,12 +2305,12 @@ async function pageUsage() {
   const svcCell = (b) => {
     const s = b.since_service;
     const pct = b.service_pct;
-    const bar = pct != null && b.status !== "retired" ? `<div class="bar ${b.service_due ? "due" : pct >= 80 ? "near" : ""}" title="${pct}% of the ${iv} h service interval"><i style="width:${Math.min(100, pct)}%"></i></div>` : "";
+    const bar = pct != null && b.condition.key !== "retired" ? `<div class="bar ${b.service_due ? "due" : pct >= 80 ? "near" : ""}" title="${pct}% of the ${iv} h service interval"><i style="width:${Math.min(100, pct)}%"></i></div>` : "";
     return `<div class="u-svc"><span>${fmtHours(s.hours)} h <span class="faint">· ${plural(s.outings, "outings")}</span>${b.service_due ? ` <span class="chip bad">Due</span>` : ""}</span>${bar}</div>`;
   };
-  const row = (b) => `<tr class="${b.status === "retired" ? "u-retired" : ""}">
+  const row = (b) => `<tr class="${b.condition.key === "retired" ? "u-retired" : ""}">
       <td><b>${esc(b.name)}</b> <span class="faint">${esc(b.boat_type)}</span>
-        ${b.status === "repair" ? ` <span class="chip warn">Under repair</span>` : b.status === "retired" ? ` <span class="chip">Retired</span>` : b.idle ? ` <span class="chip warn" title="No outing in the last ${d.idle_after_days} days and nothing booked">Idle</span>` : ""}</td>
+        ${b.condition.key !== "available" ? ` ${boatChip(b)}` : b.idle ? ` <span class="chip warn" title="No outing in the last ${d.idle_after_days} days and nothing booked">Idle</span>` : ""}</td>
       <td class="num">${b.outings}</td>
       <td><div class="u-hours"><span class="num">${fmtHours(b.hours)}</span><div class="bar"><i style="width:${(b.hours / maxH) * 100}%"></i></div></div></td>
       <td>${b.last_used ? `${fmtShort(b.last_used)} <span class="faint small">${ago(b.idle_days)}</span>` : `<span class="faint">Never</span>`}</td>
@@ -2408,7 +2412,7 @@ async function uploadPhotos(issueId, files, onProgress) {
 const photoPicker = (id) => `<div class="field"><span>Photos (optional)</span><input class="input" type="file" id="${id}" accept="image/*" multiple><span class="hint">Resized on your device before uploading, so big photos are fine.</span></div>`;
 
 function reportIssue(boats, boatId) {
-  const list = boats.filter((b) => b.status !== "retired" || b.id === boatId);
+  const list = boats.filter((b) => inService(b, boatId));
   let sev = "minor";
   modal({
     title: "Report a boat issue",
@@ -3055,7 +3059,7 @@ async function editTask(t, d) {
 
 async function moveTaskToBoat(t) {
   let boats;
-  try { boats = (await api("/api/committee/boats")).boats.filter((b) => b.status !== "retired"); } catch (e) { return fail(e); }
+  try { boats = (await api("/api/committee/boats")).boats.filter((b) => inService(b)); } catch (e) { return fail(e); }
   let sev = "minor";
   modal({
     title: "Move to boat issues",

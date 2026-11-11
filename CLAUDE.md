@@ -16,7 +16,8 @@ The aim of these notes is that **every edit leaves the code as tidy as a dedicat
 | `outings.py` | Committee outing create/edit/cancel/delete, week publish and copy, seat-picker candidates, river check and settings, weather |
 | `subs.py` | Sub board, sub candidates, request/fill/cancel, joining and leaving land sessions |
 | `members.py` | Profiles, `/api/rowers`, the committee members list and editing, subs reminders, phone numbers, the members CSV, coaches |
-| `boats.py`, `places.py`, `settings.py` | What their names say (`settings.py` also has the backup) |
+| `boats.py` | The boat park, and each boat's **condition** (`boats_by_id`, `CONDITIONS`) |
+| `places.py`, `settings.py` | What their names say (`settings.py` also has the backup) |
 | `signup.py`, `races.py`, `socials.py`, `crewlog.py`, `push.py`, `calendar.py`, `stats.py`, `usage.py`, `issues.py`, `incidents.py`, `tasks.py`, `handover.py`, `autofill.py`, `committee_roster.py` | One feature each; each module's docstring explains the feature |
 | `db.py` / `migrations.py` | `SCHEMA` for new databases; `MIGRATIONS` adds columns to existing ones (add a new column to **both**) |
 | `timeutil.py`, `terms.py`, `river.py`, `privacy.py`, `weather.py`, `presence.py` | Times of day, Oxford terms and academic years, river rules and flag, phone encryption, forecasts, who's online |
@@ -40,14 +41,16 @@ A new feature gets its own module with a `router = APIRouter()`, added to the ro
 | Close, fill or cancel sub requests | `resolve_sub`, `cancel_open_subs`, `settle_open_subs`. Never write `UPDATE sub_requests SET status…` inline |
 | Someone already seated at the same time | `busy_at(conn, o, exclude_id)` |
 | Can this member take this seat? | `subs.candidates(...)`, then `problems_error("Can't X", status)` |
-| Boats keyed by id, places keyed by lower-case name | `boats_by_id(conn)`, `logic.places_by_name(conn)` (or `rules.places`) |
+| Boats keyed by id, with open issues and condition | `boats.boats_by_id(conn)`; `boats.in_order(...)` for the boat park order |
+| Places keyed by lower-case name | `logic.places_by_name(conn)` (or `rules.places`) |
+| Open boat issues | `issues.ACTIVE_SQL` in a WHERE clause, `issues.worst_open(conn)` |
 | Number settings | `logic.int_setting(settings, key, default)`; `settings.NUMBER_SETTINGS` lists the ones the page edits |
 | Season start | `logic.season_start(settings, today)` |
 | Members in name order, or only rowers | `rules.sorted_members(active_only=...)` |
 | A rower's status and qualifications | `rules.status_fields(m)` |
 | Logging crew changes, sending push notifications | `crewlog.state` before the change → `crewlog.record` after it; `push.snapshot` → `push.crew_changes` → `push.dispatch` **after** the `with` block |
 
-**Frontend (top of `app.js`)**: `api`, `apiDo(path, opts, okMsg)` (use it for every call whose error should just be a toast), `modal`, `confirmBox`, `combo`, `nameSuggest`, `pills`, `toast`/`fail`, `esc` (escape **every** value put into HTML), `isCommittee()`, `requireMe`, chips (`catChip`, `squadChip`, `sideChip`, `expiryChip`), dates (`pd`, `iso`, `addDays`, `fmtShort`, `fmtLong`, `fmtYear`), `tRange`, `oTitle`, seat helpers, `loadPlaces`/`placesDatalist`, `rerender`.
+**Frontend (top of `app.js`)**: `api`, `apiDo(path, opts, okMsg)` (use it for every call whose error should just be a toast), `modal`, `confirmBox`, `combo`, `nameSuggest`, `pills`, `toast`/`fail`, `esc` (escape **every** value put into HTML), `isCommittee()`, `requireMe`, chips (`catChip`, `squadChip`, `sideChip`, `expiryChip`, `boatChip`), `inService(boat, keepId)`, dates (`pd`, `iso`, `addDays`, `fmtShort`, `fmtLong`, `fmtYear`), `tRange`, `oTitle`, seat helpers, `loadPlaces`/`placesDatalist`, `rerender`.
 
 ## Rules for every edit
 
@@ -66,6 +69,7 @@ A new feature gets its own module with a `router = APIRouter()`, added to the ro
 - **Say "committee", never "admin"**, in code, UI text and messages. Committee members are rowers too: anything a rower can do, they can do. Committee-only extras are added on top, never instead.
 - **Coaches** are members with category `Coach` and are always stored with `active = 0`, which keeps them out of the rower logic. Rower-side code just checks `active`. Don't add `category != 'Coach'` checks or a separate rowers view. Anything that creates or edits members must keep Coach → inactive.
 - **Drafts**: outings, socials and race crews are hidden from rowers until published. A committee member previewing as a rower (`X-View-As: member`) gets the role `"member"` from `require_member`, so always compare `role == "committee"`; never read the session yourself.
+- **A boat's condition** (`boat.condition`: `key`, `label`, `tone`, `usable`) combines the status the committee sets (available, under repair, retired) with its worst open issue ("Do not use", "Use with care"). It's what every page shows and checks. Never read `boats.status` to decide whether a boat can be used, and never relabel it in JS: use `boatChip` / `inService`.
 - **Cancelled outings** stay on the schedule, but don't count for totals, free outings, stats, double-booking or boat usage (`cancelled = 0` in those queries).
 - **Phone numbers** are committee-only and stored encrypted (`privacy`). No endpoint a rower can call may return one; return `has_phone` / `phone_masked` instead.
 - **Dates** are stored as `YYYY-MM-DD` text and times as `HH:MM`, so plain string comparison sorts correctly. Compare against `today(conn).isoformat()`, never against `date.today()`.

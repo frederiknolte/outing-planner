@@ -43,6 +43,20 @@ MEDIA = {ext: mt for _, ext, mt in SIGNATURES}
 
 
 # ------------------------------------------------------------- helpers ----
+ACTIVE_SQL = "status IN (" + ", ".join(f"'{s}'" for s in ACTIVE) + ")"
+
+
+def worst_open(conn) -> dict[int, tuple[int, str]]:
+    """boat id -> (number of open issues, severity of the worst one), for boats with open issues."""
+    out: dict[int, tuple[int, str]] = {}
+    for r in conn.execute(f"SELECT boat_id, severity FROM boat_issues WHERE {ACTIVE_SQL}"):
+        n, worst = out.get(r["boat_id"], (0, ""))
+        if SEVERITY_RANK[r["severity"]] > SEVERITY_RANK.get(worst, 0):
+            worst = r["severity"]
+        out[r["boat_id"]] = (n + 1, worst)
+    return out
+
+
 def _photo_path(filename: str) -> str:
     return os.path.join(PHOTO_DIR, os.path.basename(filename))
 

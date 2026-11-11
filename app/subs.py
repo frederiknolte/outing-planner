@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field
 
 from . import crewlog, db, push
 from .auth import require_member
-from .common import (boats_by_id, busy_at, cancel_open_subs, problems_error, require_upcoming, resolve_sub,
+from .boats import boats_by_id
+from .common import (busy_at, cancel_open_subs, problems_error, require_upcoming, resolve_sub,
                      visible_outing)
 from .logic import Rules, is_small_boat, seat_label
 

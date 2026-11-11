@@ -22,7 +22,7 @@ from . import db, terms
 from .auth import require_committee
 from .common import optional_date
 from .logic import add_months, real_today
-from .issues import SEVERITIES, create_issue
+from .issues import ACTIVE_SQL, SEVERITIES, create_issue
 
 router = APIRouter()
 
@@ -115,7 +115,7 @@ def tasks_list(_: str = Depends(require_committee)):
             r["latest"] = latest.get(r["id"])
             r["notes"] = counts.get(r["id"], 0)
         rows.sort(key=lambda r: (r["status"] == "done", -PRIORITY_RANK.get(r["priority"], 0), r["due"] or "9999", r["title"].lower()))
-        open_issues = conn.execute("SELECT COUNT(*) FROM boat_issues WHERE status IN ('open', 'in_progress', 'waiting')").fetchone()[0]
+        open_issues = conn.execute(f"SELECT COUNT(*) FROM boat_issues WHERE {ACTIVE_SQL}").fetchone()[0]
         return {"tasks": rows, "statuses": STATUSES, "priorities": PRIORITIES, "repeats": REPEATS, "open_boat_issues": open_issues,
                 "owners": sorted({r["owner"] for r in rows if r["owner"]}, key=str.lower)}
 

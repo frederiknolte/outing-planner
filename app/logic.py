@@ -400,8 +400,8 @@ def outing_payload(rules: Rules, o: dict, assignments: list[dict], subs: list[di
     if ineligible and committee and not o.get("cancelled"):
         warnings.append(f"{ineligible} ineligible athlete{'s' if ineligible > 1 else ''}")
     boat = boats.get(o["boat_id"]) if o["boat_id"] else None
-    if boat and boat["status"] != "available" and committee and not o.get("cancelled"):
-        warnings.append(f"{boat['name']} is marked '{boat['status']}'")
+    if boat and boat["condition"]["key"] != "available" and committee and not o.get("cancelled"):
+        warnings.append(f"{boat['name']}: {boat['condition']['label']}")
     spots = empty_rowers + (1 if cox_seat and not cox_seat["member"] else 0)
     if kind == "land":  # land sessions are open: anyone can take a free spot
         spots_text = "Full" if empty_rowers == 0 else f"{empty_rowers} spot{'' if empty_rowers == 1 else 's'} open"
@@ -414,7 +414,7 @@ def outing_payload(rules: Rules, o: dict, assignments: list[dict], subs: list[di
         "id": o["id"], "kind": kind, "date": o["date"], "time": o["time"], "end_time": o["end_time"],
         "location": o["location"], "maps_url": maps_url(rules.places.get((o["location"] or "").strip().lower())), "title": o["title"], "coach": o["coach"],
         "boat": ({"id": boat["id"], "name": boat["name"], "type": boat["boat_type"],
-                  "status": boat["status"]} if boat else None),
+                  "condition": boat["condition"]} if boat else None),
         "capacity": cap, "coxed": coxed, "published": bool(o["published"]),
         "notes": o["notes"], "seats": seats, "spots": spots, "spots_text": spots_text,
         "cox_check": cox_check, "warnings": warnings,

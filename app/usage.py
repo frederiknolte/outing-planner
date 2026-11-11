@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from . import db
 from .auth import require_committee, require_member
 from .common import optional_date
+from .boats import boats_by_id
 from .logic import Rules, season_start
 from .stats import term_start
 from . import timeutil
@@ -59,7 +60,7 @@ def boat_usage(period: str = "season", _: str = Depends(require_member)):
                  "30d": today - timedelta(days=30), "all": None}[period]
         interval = _interval(rules.settings)
 
-        boats = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM boats")}
+        boats = boats_by_id(conn)
         for b in boats.values():
             b.update(outings=0, minutes=0, assumed=0, last_used=None, first_used=None,
                      svc_outings=0, svc_minutes=0, upcoming=0, next_outing=None, recent=0)
@@ -98,19 +99,19 @@ def boat_usage(period: str = "season", _: str = Depends(require_member)):
             idle_days = (today - date.fromisoformat(b["last_used"])).days if b["last_used"] else None
             svc_hours = round(b["svc_minutes"] / 60, 1)
             out.append({
-                "id": b["id"], "name": b["name"], "boat_type": b["boat_type"], "status": b["status"],
+                "id": b["id"], "name": b["name"], "boat_type": b["boat_type"], "condition": b["condition"],
                 "outings": b["outings"], "hours": round(b["minutes"] / 60, 1), "assumed": b["assumed"],
                 "last_used": b["last_used"], "idle_days": idle_days, "recent": b["recent"],
                 "upcoming": b["upcoming"], "next_outing": b["next_outing"],
-                "idle": b["status"] == "available" and b["recent"] == 0 and not b["upcoming"],
+                "idle": b["condition"]["usable"] and b["recent"] == 0 and not b["upcoming"],
                 "last_serviced": b["last_serviced"] or None,
                 "since_service": {"outings": b["svc_outings"], "hours": svc_hours},
-                "service_due": bool(interval and svc_hours >= interval and b["status"] != "retired"),
+                "service_due": bool(interval and svc_hours >= interval and b["condition"]["key"] != "retired"),
                 "service_pct": round(min(svc_hours / interval, 9.99) * 100) if interval else None,
             })
-        out.sort(key=lambda x: (x["status"] == "retired", -x["hours"], -x["outings"], x["name"].lower()))
+        out.sort(key=lambda x: (x["condition"]["key"] == "retired", -x["hours"], -x["outings"], x["name"].lower()))
 
-        in_service = [b for b in out if b["status"] != "retired"]
+        in_service = [b for b in out if b["condition"]["key"] != "retired"]
         return {
             "period": period, "since": since.isoformat() if since else None, "today": today.isoformat(),
             "idle_after_days": IDLE_DAYS, "default_minutes": DEFAULT_MINUTES,
