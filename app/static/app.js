@@ -2533,7 +2533,7 @@ function committeeByMember(d) {
   d.holders.filter((h) => h.member_id).forEach((h) => (out[h.member_id] = out[h.member_id] || []).push(label[h.position]));
   return out;
 }
-const positionPlural = (label) => label.replace(/Captain$/, "Captains");
+const positionPlural = (label) => label.replace(/(Captain|Member)$/, "$1s");
 const committeeBadge = (titles) => `<span class="c-badge" title="Committee: ${esc(titles.join(", "))}" aria-label="Committee: ${esc(titles.join(", "))}">C</span>`;
 
 async function pageCommittee() {

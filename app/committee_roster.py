@@ -25,9 +25,11 @@ POSITIONS = [
     ("womens_captain", "Women's Captain", 2),
     ("treasurer", "Treasurer", 1),
     ("captain_of_coxes", "Captain of Coxes", 1),
-    ("senior_member", "Senior Member", 1),
+    ("senior_member", "Senior Member", 4),
     ("welfare", "Welfare Officer", 1),
     ("kit", "Kit Officer", 1),
+    ("social_sec", "Social Sec", 1),
+    ("secretary", "Secretary", 1),
 ]
 SLOTS = {k: n for k, _, n in POSITIONS}
 
