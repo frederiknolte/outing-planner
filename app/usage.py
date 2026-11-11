@@ -18,8 +18,9 @@ from pydantic import BaseModel
 
 from . import db
 from .auth import require_committee, require_member
-from .logic import Rules
-from .stats import _season_start, _term_start
+from .common import optional_date
+from .logic import Rules, season_start
+from .stats import term_start
 from . import timeutil
 from .timeutil import to_minutes
 
@@ -53,8 +54,8 @@ def boat_usage(period: str = "season", _: str = Depends(require_member)):
     with db.get_conn() as conn:
         rules = Rules(conn)
         today = rules.today
-        season = _season_start(rules)
-        since = {"season": season, "term": _term_start(rules, season),
+        season = season_start(rules.settings, rules.today)
+        since = {"season": season, "term": term_start(rules, season),
                  "30d": today - timedelta(days=30), "all": None}[period]
         interval = _interval(rules.settings)
 
@@ -133,12 +134,7 @@ class ServicedIn(BaseModel):
 
 @router.put("/api/committee/boats/{boat_id}/serviced")
 def boat_serviced(boat_id: int, b: ServicedIn, _: str = Depends(require_committee)):
-    d = b.date.strip()
-    if d:
-        try:
-            date.fromisoformat(d)
-        except ValueError:
-            raise HTTPException(400, "Bad date")
+    d = optional_date(b.date)
     with db.get_conn() as conn:
         if not conn.execute("SELECT 1 FROM boats WHERE id = ?", (boat_id,)).fetchone():
             raise HTTPException(404, "Unknown boat")

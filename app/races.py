@@ -24,7 +24,7 @@ but not two places in the same crew.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -33,7 +33,8 @@ from pydantic import BaseModel, Field
 
 from . import db, push
 from .auth import require_committee, require_member
-from .logic import BOAT_TYPES, TERMS, TZ, boat_seats, effective_today, seat_label, seat_name
+from .common import optional_date, parse_date, published_only, today as common_today
+from .logic import BOAT_TYPES, TERMS, TZ, boat_seats, seat_label, seat_name
 from .signup import SIDES, SQUADS
 
 router = APIRouter()
@@ -173,10 +174,7 @@ def _validate(b: RaceIn) -> dict:
     title = b.title.strip()
     if not title:
         raise HTTPException(400, "Give the race a title")
-    try:
-        d = date.fromisoformat(b.date).isoformat()
-    except ValueError:
-        raise HTTPException(400, "Pick a date for the race")
+    d = parse_date(b.date, "Pick a date for the race").isoformat()
     if b.term and b.term not in TERMS:
         raise HTTPException(400, "Unknown term")
     if b.entry not in ENTRY:
@@ -190,11 +188,8 @@ def _validate(b: RaceIn) -> dict:
     scratch = b.scratch_date.strip()
     if "T" in scratch:
         scratch = _dt(scratch, "the scratch deadline")
-    elif scratch:
-        try:
-            scratch = date.fromisoformat(scratch).isoformat()
-        except ValueError:
-            raise HTTPException(400, "Not a valid scratch date")
+    else:
+        scratch = optional_date(scratch, "Not a valid scratch date")
     links = [l for l in b.links if l.url.strip()]
     if len(links) > MAX_LINKS:
         raise HTTPException(400, f"At most {MAX_LINKS} links")
@@ -260,7 +255,7 @@ def _load_crews(conn, race_ids=None) -> dict[int, list[dict]]:
 def week_races(conn, start: str, end: str, committee: bool) -> list[dict]:
     """Races between start and end (inclusive) that have crews, for the schedule. Rowers only get published crews."""
     rows = conn.execute("SELECT id, title, date, city, time_slot, crews_published FROM races WHERE date BETWEEN ? AND ?"
-                        + ("" if committee else " AND crews_published = 1") + " ORDER BY date, id", (start, end)).fetchall()
+                        + published_only(committee, "crews_published") + " ORDER BY date, id", (start, end)).fetchall()
     crews = _load_crews(conn, [r["id"] for r in rows]) if rows else {}
     return [{"id": r["id"], "title": r["title"], "date": r["date"], "city": r["city"], "time_slot": r["time_slot"],
              "published": bool(r["crews_published"]), "crews": crews[r["id"]]} for r in rows if crews.get(r["id"])]
@@ -299,7 +294,7 @@ def member_races(conn, member_id: int, today: str) -> list[dict]:
 def races_list(me: Optional[int] = None, role: str = Depends(require_member)):
     committee = role == "committee"
     with db.get_conn() as conn:
-        today = effective_today(db.get_settings(conn)).isoformat()
+        today = common_today(conn).isoformat()
         races = [dict(r) for r in conn.execute("SELECT * FROM races ORDER BY date, id")]
         links, resp = {}, {}
         for r in conn.execute("SELECT * FROM race_links ORDER BY race_id, position"):
@@ -483,8 +478,7 @@ def _check_can_respond(conn, race_id: int, member_id: int, committee: bool):
     if not m or not m["active"]:
         raise HTTPException(404, "Member not found")
     if not committee:
-        today = effective_today(db.get_settings(conn)).isoformat()
-        if race["date"] < today:
+        if race["date"] < common_today(conn).isoformat():
             raise HTTPException(400, "This race has already happened")
         if not race["open"]:
             raise HTTPException(400, "Sign-up for this race is closed")

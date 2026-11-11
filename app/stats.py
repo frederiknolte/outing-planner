@@ -11,9 +11,9 @@ from itertools import combinations
 
 from fastapi import APIRouter, Depends
 
-from . import db, terms
+from . import db
 from .auth import require_member
-from .logic import CANCEL_REASONS, Rules, monday_of, outing_status
+from .logic import CANCEL_REASONS, Rules, monday_of, outing_status, season_start, to_date
 
 router = APIRouter()
 
@@ -23,20 +23,13 @@ MILESTONES = [1, 5, 10, 25, 50, 75, 100, 150, 200, 300]
 TOP_N = 5
 
 
-def _season_start(rules: Rules) -> date:
-    try:
-        return date.fromisoformat(rules.settings.get("season_start") or "")
-    except ValueError:
-        return date(terms.ay_start_of(rules.today), 10, 1)
-
-
-def _term_start(rules: Rules, season: date) -> date:
+def term_start(rules: Rules, season: date) -> date:
     """Start of "this term" for the attendance summary: two weeks before 1st week (pre-term training),
     but never before the season start."""
-    try:
-        t = date.fromisoformat(rules.settings.get("term_start") or "") - timedelta(days=14)
-    except ValueError:
+    first = to_date(rules.settings.get("term_start"))
+    if first is None:
         return season
+    t = first - timedelta(days=14)
     return max(t, season) if t <= rules.today else season
 
 
@@ -90,7 +83,7 @@ def _longest_week_streak(weeks: set[date], this_week: date) -> tuple[int, int]:
 def season_stats(role: str = Depends(require_member)):
     with db.get_conn() as conn:
         rules = Rules(conn)
-        start = _season_start(rules)
+        start = season_start(rules.settings, rules.today)
         today = rules.today
         this_week = monday_of(today)
         active = {mid: m for mid, m in rules.members.items() if m["active"]}
@@ -224,7 +217,7 @@ def season_stats(role: str = Depends(require_member)):
                                for (a, b), v in sorted(pairs.items(), key=lambda x: -x[1]) if mid in (a, b)), None),
             }
 
-        term_from = _term_start(rules, start)
+        term_from = term_start(rules, start)
         outcomes = {"term_name": rules.settings.get("current_term") or "Term",
                     "term": _outcomes(conn, rules, term_from),
                     "season": _outcomes(conn, rules, start)}

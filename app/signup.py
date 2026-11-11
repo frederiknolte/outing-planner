@@ -24,8 +24,9 @@ from pydantic import BaseModel, Field
 
 from . import db, privacy
 from .auth import require_committee, require_member
-from .logic import effective_today, maps_url, monday_of
-from .timeutil import normalize as norm_time, to_minutes
+from .common import monday_param, parse_times
+from .logic import effective_today, int_setting, maps_url, monday_of, places_by_name
+from .timeutil import normalize as norm_time
 
 router = APIRouter()
 
@@ -37,10 +38,7 @@ SLOT_KINDS = {"water": "Water", "erg": "Erg", "tank": "Tank"}
 
 
 def _monday(s: str) -> str:
-    try:
-        return monday_of(date.fromisoformat(s)).isoformat()
-    except ValueError:
-        raise HTTPException(400, "Bad date")
+    return monday_param(s).isoformat()
 
 
 def _week_row(conn, ws: str) -> dict:
@@ -109,14 +107,14 @@ def signup_forms(role: str = Depends(require_member)):
         s = db.get_settings(conn)
         today = effective_today(s)
         this_week = monday_of(today).isoformat()
-        places = {r["name"].lower(): dict(r) for r in conn.execute("SELECT * FROM places")}
+        places = places_by_name(conn)
         weeks = []
         for w in conn.execute("SELECT * FROM signup_weeks WHERE open = 1 AND week_start >= ? ORDER BY week_start",
                               (this_week,)):
             slots = [{**s, "maps_url": maps_url(places.get((s["location"] or "").strip().lower()))}
                      for s in _slots(conn, w["week_start"]) if s["date"] >= today.isoformat()]
             weeks.append({"week_start": w["week_start"], "note": w["note"], "slots": slots})
-        days = int(s.get("phone_retention_days") or 0)
+        days = int_setting(s, "phone_retention_days")
         return {"weeks": weeks, "colleges": COLLEGES, "roles": ROLES, "sides": SIDES, "squads": SQUADS, "slot_kinds": SLOT_KINDS,
                 "phone_mode": privacy.phone_mode(s), "phone_retention_days": days}
 
@@ -325,12 +323,7 @@ class SlotIn(BaseModel):
 def _slot_validate(b: SlotIn) -> str:
     if b.kind not in SLOT_KINDS:
         raise HTTPException(400, "Type must be water, erg or tank")
-    start, end = norm_time(b.time)
-    if b.end_time.strip():
-        end = norm_time(b.end_time)[0]
-    if end and (to_minutes(start) is None or to_minutes(end) is None or to_minutes(end) <= to_minutes(start)):
-        raise HTTPException(400, "The end time must be after the start time")
-    b.time, b.end_time = start, end
+    b.time, b.end_time = parse_times(b.time, b.end_time)
     return _monday(b.date)
 
 
@@ -340,10 +333,6 @@ def slot_create(b: SlotIn, _: str = Depends(require_committee)):
     b.date = dates[0]
     ws = _slot_validate(b)
     for d in dates:
-        try:
-            date.fromisoformat(d)
-        except ValueError:
-            raise HTTPException(400, "Bad date")
         if _monday(d) != ws:
             raise HTTPException(400, "All days must be in the same week")
     with db.get_conn() as conn:

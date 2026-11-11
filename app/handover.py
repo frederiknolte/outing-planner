@@ -35,7 +35,8 @@ from pydantic import BaseModel, Field
 from . import db, terms
 from .auth import require_committee, require_member
 from .committee_roster import POSITIONS, roster
-from .logic import Rules, add_months
+from .common import parse_date
+from .logic import Rules, add_months, to_date
 from .stats import season_stats
 from .usage import boat_usage
 
@@ -45,10 +46,8 @@ SETTINGS_ROLLED = ("academic_year", "current_term", "season_start", "term_start"
 
 
 def _plus_year(iso: str) -> str:
-    try:
-        return add_months(date.fromisoformat(iso), 12).isoformat()
-    except ValueError:
-        return ""
+    d = to_date(iso)
+    return add_months(d, 12).isoformat() if d else ""
 
 
 def _subs_summary(conn, settings: dict) -> dict:
@@ -83,13 +82,7 @@ def _novices(conn, rules: Rules, since: str) -> list[dict]:
 
 def _not_started(settings: dict, today: date) -> bool:
     """The current term (or season) hasn't begun yet, i.e. the rollover has just been done: don't do it twice."""
-    for k in ("term_start", "season_start"):
-        try:
-            if today < date.fromisoformat(settings.get(k) or ""):
-                return True
-        except ValueError:
-            pass
-    return False
+    return any((d := to_date(settings.get(k))) and today < d for k in ("term_start", "season_start"))
 
 
 def _next(s: dict) -> dict:
@@ -158,10 +151,7 @@ def _date(v: str, what: str, required: bool = False) -> Optional[date]:
         if required:
             raise HTTPException(400, f"{what} is required")
         return None
-    try:
-        return date.fromisoformat(v)
-    except ValueError:
-        raise HTTPException(400, f"Bad date for {what}")
+    return parse_date(v, f"Bad date for {what}")
 
 
 @router.post("/api/committee/handover")

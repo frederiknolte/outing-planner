@@ -55,12 +55,13 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
 from . import crewlog, db, push
 from .auth import require_committee
-from .logic import Rules, is_small_boat, monday_of, seat_label, seat_list
+from .common import monday_param
+from .logic import Rules, is_small_boat, seat_label, seat_list
 from .signup import availability_for_outing
 from .timeutil import interval
 
@@ -573,13 +574,6 @@ class Planner:
 
 
 # ------------------------------------------------------------ endpoints ----
-def _monday(s: str) -> date:
-    try:
-        return monday_of(date.fromisoformat(s))
-    except ValueError:
-        raise HTTPException(400, "Bad date")
-
-
 class AutofillIn(BaseModel):
     start: str
     include_published: bool = False
@@ -588,7 +582,7 @@ class AutofillIn(BaseModel):
 @router.post("/api/committee/week/autofill")
 def autofill_preview(b: AutofillIn, _: str = Depends(require_committee)):
     """Proposed crews for the week's empty seats. Nothing is saved."""
-    ws = _monday(b.start)
+    ws = monday_param(b.start)
     with db.get_conn() as conn:
         return Planner(conn, ws, b.include_published).run()
 
@@ -609,7 +603,7 @@ class ApplyIn(BaseModel):
 def autofill_apply(b: ApplyIn, request: Request, _: str = Depends(require_committee)):
     """Save the proposal the committee saw. Only seats that are still empty are filled, and only
     with people who aren't already in that outing; a bankrider is only set if the field is still empty."""
-    ws = _monday(b.start)
+    ws = monday_param(b.start)
     we = (ws + timedelta(days=6)).isoformat()
     added = coaches = skipped = created = 0
     with db.get_conn() as conn:

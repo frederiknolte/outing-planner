@@ -26,8 +26,8 @@ from pydantic import BaseModel, Field
 
 from . import db, push, terms
 from .auth import require_committee, require_member
+from .common import optional_date, today as _today
 from .issues import SEVERITIES, create_issue
-from .logic import effective_today
 from .timeutil import normalize as norm_time
 
 router = APIRouter()
@@ -85,14 +85,9 @@ def _clean(s: str) -> str:
 
 
 def _iso(d: str, what: str, required: bool = True) -> str:
-    if not d:
-        if required:
-            raise HTTPException(400, f"Add the {what}")
-        return ""
-    try:
-        return date.fromisoformat(d).isoformat()
-    except ValueError:
-        raise HTTPException(400, f"The {what} isn't a valid date")
+    if not (d or "").strip() and required:
+        raise HTTPException(400, f"Add the {what}")
+    return optional_date(d, f"The {what} isn't a valid date")
 
 
 def academic_year(d: str) -> str:
@@ -132,10 +127,6 @@ def _incident_or_404(conn, incident_id: int):
     if not r:
         raise HTTPException(404, "Incident not found")
     return r
-
-
-def _today(conn) -> date:
-    return effective_today(db.get_settings(conn))
 
 
 def _open_boat_issue(conn, incident: dict, title: str, severity: str, who: str) -> int:

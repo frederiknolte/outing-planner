@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from . import db, terms
 from .auth import require_committee
+from .common import optional_date
 from .logic import add_months, real_today
 from .issues import SEVERITIES, create_issue
 
@@ -62,12 +63,7 @@ def _validate(b: TaskIn) -> dict:
         raise HTTPException(400, "Give the task a title")
     if b.priority not in PRIORITIES:
         raise HTTPException(400, "Unknown priority")
-    due = ""
-    if b.due:
-        try:
-            due = date.fromisoformat(b.due).isoformat()
-        except ValueError:
-            raise HTTPException(400, "Due date isn't a valid date")
+    due = optional_date(b.due, "Due date isn't a valid date")
     if b.repeat not in REPEATS:
         raise HTTPException(400, "Unknown repeat")
     if b.repeat and not due:

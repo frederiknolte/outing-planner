@@ -19,7 +19,7 @@ from fastapi.responses import Response
 
 from . import db
 from .auth import require_member
-from .logic import CANCEL_REASONS, TZ, boat_seats, real_today, seat_label, seat_name
+from .logic import CANCEL_REASONS, TZ, boat_seats, places_by_name, real_today, seat_label, seat_name
 from .races import _load_crews
 from .timeutil import DEFAULT_MINUTES, parse_time
 
@@ -80,7 +80,7 @@ def build_feed(conn, member: dict, base_url: str) -> str:
     since = (real_today() - timedelta(days=HISTORY_DAYS)).isoformat()
     members = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM members")}
     boats = {r["id"]: r for r in conn.execute("SELECT id, name, boat_type FROM boats")}
-    places = {r["name"].lower(): dict(r) for r in conn.execute("SELECT * FROM places")}
+    places = places_by_name(conn)
 
     # outings they're seated in
     rows = conn.execute(

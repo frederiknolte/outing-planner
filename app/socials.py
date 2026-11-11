@@ -17,8 +17,8 @@ from pydantic import BaseModel, Field
 
 from . import db
 from .auth import require_committee, require_member
-from .logic import effective_today, maps_url
-from .timeutil import normalize, to_minutes
+from .common import parse_date, parse_times, published_only, today
+from .logic import maps_url, places_by_name
 
 router = APIRouter()
 
@@ -27,9 +27,9 @@ KINDS = ("social", "sport")
 
 def week_socials(conn, start: str, end: str, committee: bool) -> list[dict]:
     """Socials and sports activities between start and end (inclusive) for the schedule. Rowers only get published ones."""
-    rows = conn.execute("SELECT * FROM socials WHERE date BETWEEN ? AND ?" + ("" if committee else " AND published = 1")
+    rows = conn.execute("SELECT * FROM socials WHERE date BETWEEN ? AND ?" + published_only(committee)
                         + " ORDER BY date, time, id", (start, end)).fetchall()
-    places = {r["name"].lower(): dict(r) for r in conn.execute("SELECT * FROM places")} if rows else {}
+    places = places_by_name(conn) if rows else {}
     going: dict[int, list[dict]] = {}
     ids = [r["id"] for r in rows]
     if ids:
@@ -37,10 +37,10 @@ def week_socials(conn, start: str, end: str, committee: bool) -> list[dict]:
         for g in conn.execute(f"""SELECT s.social_id, m.id, m.name FROM social_signups s JOIN members m ON m.id = s.member_id
                                   WHERE s.social_id IN ({marks}) ORDER BY s.created_at, m.name""", ids):
             going.setdefault(g["social_id"], []).append({"id": g["id"], "name": g["name"]})
-    today = effective_today(db.get_settings(conn)).isoformat()
+    now = today(conn).isoformat()
     return [{"id": r["id"], "kind": r["kind"], "title": r["title"], "date": r["date"], "time": r["time"], "end_time": r["end_time"],
              "location": r["location"], "maps_url": maps_url(places.get(r["location"].strip().lower())),
-             "notes": r["notes"], "published": bool(r["published"]), "past": r["date"] < today,
+             "notes": r["notes"], "published": bool(r["published"]), "past": r["date"] < now,
              "going": going.get(r["id"], [])} for r in rows]
 
 
@@ -56,25 +56,13 @@ class SocialIn(BaseModel):
 
 
 def _fields(b: SocialIn) -> tuple:
-    from datetime import date
     if b.kind not in KINDS:
         raise HTTPException(400, "Unknown kind")
-    try:
-        date.fromisoformat(b.date)
-    except ValueError:
-        raise HTTPException(400, "Bad date")
+    parse_date(b.date)
     title = b.title.strip()
     if not title:
         raise HTTPException(400, "Give it a name")
-    start, end = normalize(b.time)
-    if b.end_time.strip():
-        end = normalize(b.end_time)[0]
-        if to_minutes(end) is None:
-            raise HTTPException(400, "End time not recognised. Use e.g. 22:00")
-    if to_minutes(start) is None:
-        end = ""
-    elif end and (to_minutes(end) is None or to_minutes(end) <= to_minutes(start)):
-        raise HTTPException(400, "The end time must be after the start time")
+    start, end = parse_times(b.time, b.end_time, "22:00")
     return b.kind, title, b.date, start, end, b.location.strip(), b.notes.strip()
 
 
@@ -111,10 +99,13 @@ class JoinIn(BaseModel):
     member_id: int
 
 
-def _open_event(conn, sid: int):
+def _open_event(conn, sid: int, role: str):
+    """An event the caller can see (drafts are committee-only) that hasn't happened yet."""
     r = conn.execute("SELECT * FROM socials WHERE id = ?", (sid,)).fetchone()
-    if not r:
+    if not r or (not r["published"] and role != "committee"):
         raise HTTPException(404, "Event not found")
+    if r["date"] < today(conn).isoformat():
+        raise HTTPException(400, "This event is in the past")
     return r
 
 
@@ -122,11 +113,7 @@ def _open_event(conn, sid: int):
 def activity_join(sid: int, b: JoinIn, role: str = Depends(require_member)):
     """A member signs themselves up to a published social or sports activity that hasn't happened yet."""
     with db.get_conn() as conn:
-        r = _open_event(conn, sid)
-        if not r["published"] and role != "committee":
-            raise HTTPException(404, "Event not found")
-        if r["date"] < effective_today(db.get_settings(conn)).isoformat():
-            raise HTTPException(400, "This event is in the past")
+        _open_event(conn, sid, role)
         if not conn.execute("SELECT 1 FROM members WHERE id = ?", (b.member_id,)).fetchone():
             raise HTTPException(400, "Unknown member")
         conn.execute("INSERT OR IGNORE INTO social_signups(social_id, member_id) VALUES (?, ?)", (sid, b.member_id))
@@ -136,8 +123,6 @@ def activity_join(sid: int, b: JoinIn, role: str = Depends(require_member)):
 @router.post("/api/socials/{sid}/leave")
 def activity_leave(sid: int, b: JoinIn, role: str = Depends(require_member)):
     with db.get_conn() as conn:
-        r = _open_event(conn, sid)
-        if r["date"] < effective_today(db.get_settings(conn)).isoformat():
-            raise HTTPException(400, "This event is in the past")
+        _open_event(conn, sid, role)
         conn.execute("DELETE FROM social_signups WHERE social_id = ? AND member_id = ?", (sid, b.member_id))
         return {"ok": True}

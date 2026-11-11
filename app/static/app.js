@@ -486,7 +486,7 @@ function joinLand(o) {
 }
 async function leaveLand(o) {
   if (!await confirmBox("Leave this session?", `Your spot in <b>${esc(o.title || "Land training")}</b> on ${fmtLong(o.date)} opens up for someone else.`, "Leave")) return;
-  try { await api(`/api/outings/${o.id}/leave`, { method: "POST", body: { member_id: S.me } }); toast("You've left the session"); rerender(); } catch (e) { fail(e); }
+  if (await apiDo(`/api/outings/${o.id}/leave`, { method: "POST", body: { member_id: S.me } }, "You've left the session")) { rerender(); }
 }
 
 // ------------------------------------------------------------ river rules --
@@ -677,7 +677,7 @@ function joinActivity(sc) {
 }
 async function leaveActivity(sc) {
   if (!await confirmBox("Take yourself off the list?", `You won't be down for <b>${esc(sc.title)}</b> on ${fmtLong(sc.date)} any more.`, "Can't go")) return;
-  try { await api(`/api/socials/${sc.id}/leave`, { method: "POST", body: { member_id: S.me } }); toast("You're off the list"); rerender(); } catch (e) { fail(e); }
+  if (await apiDo(`/api/socials/${sc.id}/leave`, { method: "POST", body: { member_id: S.me } }, "You're off the list")) { rerender(); }
 }
 
 async function editSocial(sc, defaults = {}) {
@@ -723,7 +723,7 @@ async function editSocial(sc, defaults = {}) {
       if (del) del.onclick = async () => {
         const n = (sc.going || []).length;
         if (!await confirmBox(`Delete this ${isSport(sc) ? "activity" : "social"}?`, `It is removed from the schedule and from everyone's calendar${n ? `, along with its ${n} sign-up${n > 1 ? "s" : ""}` : ""}.`, "Delete", true)) return;
-        try { await api(`/api/committee/socials/${sc.id}`, { method: "DELETE" }); close(); toast("Deleted"); pageSchedule(); } catch (e) { fail(e); }
+        if (await apiDo(`/api/committee/socials/${sc.id}`, { method: "DELETE" }, "Deleted")) { close(); pageSchedule(); }
       };
     },
   });
@@ -1411,7 +1411,7 @@ async function editOuting(o, defaults = {}) {
       const del = $("#oe-del", m);
       if (del) del.onclick = async () => {
         if (!await confirmBox("Delete this session?", "Crew assignments and sub requests for it will be removed. Outing counts update automatically.", "Delete", true)) return;
-        try { await api(`/api/committee/outings/${o.id}`, { method: "DELETE" }); toast("Session deleted"); pageSchedule(); } catch (e) { fail(e); }
+        if (await apiDo(`/api/committee/outings/${o.id}`, { method: "DELETE" }, "Session deleted")) { pageSchedule(); }
       };
       const markAs = async (st) => { try { await setOutingStatus(o, st); close(); } catch (e) { fail(e); } };
       $$("[data-undo]", m).forEach((b) => b.onclick = async () => {
@@ -1498,7 +1498,7 @@ function calendarModal() {
         $("#cal-reset", m).onclick = async (e) => {
           e.preventDefault();
           if (!await confirmBox("Get a new calendar link?", "Your old link stops working, so calendars subscribed with it will stop updating. You'll need to subscribe again with the new link.", "Get new link")) return;
-          try { await api(`/api/calendar/${mid}/reset`, { method: "POST" }); toast("New link created"); calendarModal(); } catch (err) { fail(err); }
+          if (await apiDo(`/api/calendar/${mid}/reset`, { method: "POST" }, "New link created")) { calendarModal(); }
         };
       },
     });
@@ -1646,8 +1646,7 @@ function requestSub(o) {
             if (!ctl.get()) return toast("Pick your sub first", true);
             body.sub_id = ctl.get();
           }
-          try { await api("/api/subs", { method: "POST", body }); close(); toast(mode === "found" ? "Seat handed over" : "Sub request posted"); refreshSubsCount(); rerender(); }
-          catch (e) { fail(e); }
+          if (await apiDo("/api/subs", { method: "POST", body }, mode === "found" ? "Seat handed over" : "Sub request posted")) { close(); refreshSubsCount(); rerender(); }
         };
         sync();
       },
@@ -1694,13 +1693,11 @@ async function fillSub(subId) {
         if (g) g.onclick = async () => {
           const who = picks ? ctl.get() : S.me;
           if (!who) return toast("Pick someone first", true);
-          try { await api(`/api/subs/${subId}/fill`, { method: "POST", body: { member_id: who, by: S.me } }); close(); toast(mine && !committee ? "Seat handed over" : "Seat taken — thanks!"); refreshSubsCount(); rerender(); }
-          catch (e) { fail(e); }
+          if (await apiDo(`/api/subs/${subId}/fill`, { method: "POST", body: { member_id: who, by: S.me } }, mine && !committee ? "Seat handed over" : "Seat taken — thanks!")) { close(); refreshSubsCount(); rerender(); }
         };
         const c = $("#fs-cancel", m);
         if (c) c.onclick = async () => {
-          try { await api(`/api/subs/${subId}/cancel`, { method: "POST", body: { member_id: S.me } }); close(); toast("Request cancelled"); refreshSubsCount(); rerender(); }
-          catch (e) { fail(e); }
+          if (await apiDo(`/api/subs/${subId}/cancel`, { method: "POST", body: { member_id: S.me } }, "Request cancelled")) { close(); refreshSubsCount(); rerender(); }
         };
       },
     });
@@ -1822,8 +1819,7 @@ async function profileModal() {
       if (del) del.onclick = () => { ph.value = ""; ph.placeholder = "Will be deleted when you save"; phone = ""; };
       $("#mp-save", el).onclick = async () => {
         const body = { side: $("#mp-side", el).value, squad: $("#mp-squad", el).value, college: $("#mp-college", el).value.trim(), phone };
-        try { await api(`/api/members/${S.me}/profile`, { method: "PUT", body }); close(); toast("Saved"); }
-        catch (e) { fail(e); }
+        if (await apiDo(`/api/members/${S.me}/profile`, { method: "PUT", body }, "Saved")) { close(); }
       };
     },
   });
@@ -2094,13 +2090,12 @@ function editMember(m, meta, preset = {}, after = () => pageRowers()) {
           active: $("#me-active", el).checked, notes: $("#me-notes", el).value,
           phone: phoneTouched ? $("#me-phone", el).value.trim() : (m ? null : ($("#me-phone", el).value.trim() || null)), college: $("#me-college", el).value.trim(), side: $("#me-side", el).value, squad: $("#me-squad", el).value, club_crew: $$(".me-crew", el).filter((x) => x.checked).map((x) => x.value).join(",") };
         if (!body.name) return toast("Name is required", true);
-        try { await api(m ? `/api/committee/members/${m.id}` : "/api/committee/members", { method: m ? "PUT" : "POST", body }); close(); toast("Saved"); await reboot(); after(); }
-        catch (e) { fail(e); }
+        if (await apiDo(m ? `/api/committee/members/${m.id}` : "/api/committee/members", { method: m ? "PUT" : "POST", body }, "Saved")) { close(); await reboot(); after(); }
       };
       const d = $("#me-del", el);
       if (d) d.onclick = async () => {
         if (!await confirmBox(`Delete ${esc(m.name)}?`, "They'll be removed from every session they're in. To keep their history, untick “Active member” instead.", "Delete", true)) return;
-        try { await api(`/api/committee/members/${m.id}`, { method: "DELETE" }); toast("Member deleted"); await reboot(); after(); } catch (e) { fail(e); }
+        if (await apiDo(`/api/committee/members/${m.id}`, { method: "DELETE" }, "Member deleted")) { await reboot(); after(); }
       };
     },
   });
@@ -2143,7 +2138,7 @@ function editReminderTemplate(d) {
       ta.oninput = prev; prev();
       $("#tpl-reset", m).onclick = () => { ta.value = d.default_template; prev(); };
       $("#tpl-save", m).onclick = async () => {
-        try { await api("/api/committee/subs-reminders/template", { method: "PUT", body: { template: ta.value } }); close(); toast("Reminder message saved"); pageSubsReminders(); } catch (e) { fail(e); }
+        if (await apiDo("/api/committee/subs-reminders/template", { method: "PUT", body: { template: ta.value } }, "Reminder message saved")) { close(); pageSubsReminders(); }
       };
     },
   });
@@ -2193,7 +2188,7 @@ async function pageSubsReminders() {
       : `<div class="card empty">${I.check}<h3>No one to remind</h3><p>${hideReminded && d.members.length ? "Everyone on the list has already been reminded." : "Every active member who needs subs has paid, or still has free novice outings left."}</p></div>`}`;
   setCount("reminders", d.members.length); wireReveal($("#main"));
   const byId = (id) => d.members.find((x) => x.id === +id);
-  const markReminded = async (id, on = true) => { try { await api(`/api/committee/members/${id}/reminded`, { method: "POST", body: { reminded: on } }); } catch (e) { fail(e); } };
+  const markReminded = async (id, on = true) => { await apiDo(`/api/committee/members/${id}/reminded`, { method: "POST", body: { reminded: on } }); };
   const copy = copyText;
   $("#rem-tpl").onclick = () => editReminderTemplate(d);
   $("#rem-hide").onchange = (e) => { S.remHide = e.target.checked; pageSubsReminders(); };
@@ -2220,7 +2215,7 @@ async function pageSubsReminders() {
           <button type="button" class="role-card" data-plan="Single term"><b>Single term</b><span>${esc(d.term)} ${esc(d.year)}</span></button>
           <button type="button" class="role-card" data-plan="Full year"><b>Full year</b><span>${esc(d.year)}</span></button></div>`,
       onMount: (m, close) => $$("[data-plan]", m).forEach((p) => p.onclick = async () => {
-        try { await api(`/api/committee/members/${x.id}/paid`, { method: "POST", body: { plan: p.dataset.plan } }); close(); toast(`${x.name}: ${p.dataset.plan} recorded`); pageSubsReminders(); } catch (e) { fail(e); }
+        if (await apiDo(`/api/committee/members/${x.id}/paid`, { method: "POST", body: { plan: p.dataset.plan } }, `${x.name}: ${p.dataset.plan} recorded`)) { close(); pageSubsReminders(); }
       }),
     });
   });
@@ -2279,12 +2274,12 @@ function editBoat(b, types) {
       $("#b-save", m).onclick = async () => {
         const body = { name: $("#b-name", m).value.trim(), boat_type: $("#b-type", m).value, seats: Math.max(1, Math.min(8, +$("#b-seats", m).value || 1)), coxed: $("#b-cox", m).checked, status: $("#b-status", m).value, rigging: $("#b-rig", m).value, notes: $("#b-notes", m).value };
         if (!body.name) return toast("Name is required", true);
-        try { await api(b ? `/api/committee/boats/${b.id}` : "/api/committee/boats", { method: b ? "PUT" : "POST", body }); close(); toast("Boat saved"); pageBoats(); } catch (e) { fail(e); }
+        if (await apiDo(b ? `/api/committee/boats/${b.id}` : "/api/committee/boats", { method: b ? "PUT" : "POST", body }, "Boat saved")) { close(); pageBoats(); }
       };
       const d = $("#b-del", m);
       if (d) d.onclick = async () => {
         if (!await confirmBox(`Delete ${esc(b.name)}?`, "Sessions using this boat keep their crews but lose the boat. Mark it “Retired” instead to keep history.", "Delete", true)) return;
-        try { await api(`/api/committee/boats/${b.id}`, { method: "DELETE" }); toast("Boat deleted"); pageBoats(); } catch (e) { fail(e); }
+        if (await apiDo(`/api/committee/boats/${b.id}`, { method: "DELETE" }, "Boat deleted")) { pageBoats(); }
       };
     },
   });
@@ -2339,7 +2334,7 @@ async function pageUsage() {
   if (!committee) return;
   $("#us-iv-save").onclick = async () => {
     const hours = Math.max(0, +$("#us-iv").value || 0);
-    try { await api("/api/committee/service-interval", { method: "PUT", body: { hours } }); toast(hours ? "Service interval saved" : "Service interval turned off"); pageUsage(); } catch (e) { fail(e); }
+    if (await apiDo("/api/committee/service-interval", { method: "PUT", body: { hours } }, hours ? "Service interval saved" : "Service interval turned off")) { pageUsage(); }
   };
   $$("[data-svc]").forEach((btn) => btn.onclick = () => markServiced(d.boats.find((b) => b.id === +btn.dataset.svc)));
 }
@@ -2352,7 +2347,7 @@ function markServiced(b) {
     foot: `${b.last_serviced ? `<button class="btn danger" id="sv-clear">Clear</button>` : ""}<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="sv-save">Save</button></div>`,
     onMount: (m, close) => {
       const save = async (date) => {
-        try { await api(`/api/committee/boats/${b.id}/serviced`, { method: "PUT", body: { date } }); close(); toast(date ? "Service recorded" : "Service date cleared"); pageUsage(); } catch (e) { fail(e); }
+        if (await apiDo(`/api/committee/boats/${b.id}/serviced`, { method: "PUT", body: { date } }, date ? "Service recorded" : "Service date cleared")) { close(); pageUsage(); }
       };
       $("#sv-save", m).onclick = () => { const v = $("#sv-date", m).value; if (!v) return toast("Pick a date", true); save(v); };
       const c = $("#sv-clear", m); if (c) c.onclick = () => save("");
@@ -2508,13 +2503,13 @@ async function openIssue(id, boats) {
       };
       $$("[data-del-photo]", m).forEach((b) => b.onclick = async () => {
         if (!await confirmBox("Delete this photo?", "It's removed from the server straight away.", "Delete", true)) return openIssue(id, boats);
-        try { await api(`/api/issues/photos/${b.dataset.delPhoto}`, { method: "DELETE" }); } catch (e) { fail(e); }
+        await apiDo(`/api/issues/photos/${b.dataset.delPhoto}`, { method: "DELETE" });
         openIssue(id, boats);
       });
       const d = $("#iu-del", m);
       if (d) d.onclick = async () => {
         if (!await confirmBox("Delete this issue?", "Its notes and photos are deleted too. To keep the history, set it to Fixed or Closed instead.", "Delete", true)) return openIssue(id, boats);
-        try { await api(`/api/issues/${id}`, { method: "DELETE" }); toast("Issue deleted"); rerender(); } catch (e) { fail(e); }
+        if (await apiDo(`/api/issues/${id}`, { method: "DELETE" }, "Issue deleted")) { rerender(); }
       };
       const ed = $("#iu-edit", m);
       if (ed) ed.onclick = () => editIssue(i, boats);
@@ -2538,7 +2533,7 @@ function editIssue(i, boats) {
       $("#ei-save", m).onclick = async () => {
         const body = { boat_id: +$("#ei-boat", m).value, title: $("#ei-title", m).value.trim(), severity: sev, description: $("#ei-desc", m).value };
         if (!body.title) return toast("Title is required", true);
-        try { await api(`/api/issues/${i.id}`, { method: "PUT", body }); await rerender(); openIssue(i.id, boats); } catch (e) { fail(e); }
+        if (await apiDo(`/api/issues/${i.id}`, { method: "PUT", body })) { await rerender(); openIssue(i.id, boats); }
       };
     },
   });
@@ -2720,7 +2715,7 @@ async function openIncident(id) {
       };
       $("#io-del", m).onclick = async () => {
         if (!await confirmBox("Delete this incident?", "It's removed from the log for good, including for the safety audit. To keep it on record, close it instead.", "Delete", true)) return openIncident(id);
-        try { await api(`/api/committee/incidents/${id}`, { method: "DELETE" }); toast("Incident deleted"); refreshCounts(); rerender(); } catch (e) { fail(e); }
+        if (await apiDo(`/api/committee/incidents/${id}`, { method: "DELETE" }, "Incident deleted")) { refreshCounts(); rerender(); }
       };
     },
   });
@@ -2790,7 +2785,7 @@ async function editCommittee(d) {
     onMount: (m, close) => {
       ed.mount(m);
       $("#cm-save", m).onclick = async () => {
-        try { await api("/api/committee/club-committee", { method: "PUT", body: { holders: ed.holders() } }); close(); toast("Committee saved"); rerender(); } catch (e) { fail(e); }
+        if (await apiDo("/api/committee/club-committee", { method: "PUT", body: { holders: ed.holders() } }, "Committee saved")) { close(); rerender(); }
       };
     },
   });
@@ -2859,7 +2854,7 @@ async function pageHandover() {
   ed.mount($("#ho-roster"));
   $("#ho-cm").onclick = async () => {
     if (!await confirmBox("Save the new committee?", "Committee members can manage the club; anyone removed loses the golden C.", "Save committee")) return;
-    try { await api("/api/committee/club-committee", { method: "PUT", body: { holders: ed.holders() } }); toast("Committee saved"); } catch (e) { fail(e); }
+    await apiDo("/api/committee/club-committee", { method: "PUT", body: { holders: ed.holders() } }, "Committee saved");
   };
   if (d.not_started) return;
   const novCount = () => { const n = $$("[data-nov]:checked").length; const el = $("#ho-nov-n"); if (el) el.textContent = `${n} of ${nov.length} ticked`; };
@@ -3019,7 +3014,7 @@ async function openTask(id, d) {
       $("#tu-move", m).onclick = () => moveTaskToBoat(t);
       $("#tu-del", m).onclick = async () => {
         if (!await confirmBox("Delete this task?", "Its updates are deleted too. To keep the history, mark it as done instead.", "Delete", true)) return openTask(id, d);
-        try { await api(`/api/committee/tasks/${id}`, { method: "DELETE" }); toast("Task deleted"); rerender(); } catch (e) { fail(e); }
+        if (await apiDo(`/api/committee/tasks/${id}`, { method: "DELETE" }, "Task deleted")) { rerender(); }
       };
     },
   });
@@ -3096,7 +3091,7 @@ async function pageHandbook() {
     foot: `<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="hb-save">Save</button></div>`,
     onMount: (m, close) => {
       $("#hb-save", m).onclick = async () => {
-        try { await api("/api/committee/handbook", { method: "PUT", body: { text: $("#hb-text", m).value } }); close(); toast("Handbook saved"); pageHandbook(); } catch (e) { fail(e); }
+        if (await apiDo("/api/committee/handbook", { method: "PUT", body: { text: $("#hb-text", m).value } }, "Handbook saved")) { close(); pageHandbook(); }
       };
     },
   });
@@ -3233,7 +3228,7 @@ async function pageSettings() {
   }).catch(() => {});
   $("#s-river-save").onclick = async () => {
     const body = { term_start: $("#s-term-start").value, peak_end: $("#s-peak-end").value, peak_crews_before_8: Math.max(1, Math.min(5, +$("#s-peak8").value || 1)) };
-    try { await api("/api/committee/river-settings", { method: "PUT", body }); toast("River settings saved"); } catch (e) { fail(e); }
+    await apiDo("/api/committee/river-settings", { method: "PUT", body }, "River settings saved");
   };
   $("#s-river-refresh").onclick = async () => { try { drawFlag(await api("/api/committee/river/refresh", { method: "POST" })); toast("Flag checked"); } catch (e) { fail(e); } };
   $("#s-river-rules").onclick = () => riverModal();
@@ -3257,7 +3252,7 @@ async function pageSettings() {
     const body = { club_name: $("#s-club").value.trim() || "Reuben Boat Club", academic_year: $("#s-ay").value.trim(), current_term: $("#s-term").value, subs_cutoff: $("#s-cut").value,
       novice_free_outings: +$("#s-free").value || 0, novice_land_free: $("#s-land").checked, season_start: $("#s-season").value, today_override: $("#s-today").value, swim_test_after: Math.max(0, +$("#s-swim").value || 0),
       swim_test_valid_months: Math.max(0, +$("#s-swimv").value || 0), cox_status_valid_months: Math.max(0, +$("#s-coxv").value || 0), capsize_drill_valid_months: Math.max(0, +$("#s-capv").value || 0), ...phoneFields() };
-    try { await api("/api/committee/settings", { method: "PUT", body }); toast("Settings saved"); await reboot(); shell("settings"); pageSettings(); } catch (e) { fail(e); }
+    if (await apiDo("/api/committee/settings", { method: "PUT", body }, "Settings saved")) { await reboot(); shell("settings"); pageSettings(); }
   };
   $("#s-mpw-save").onclick = async () => {
     const pw = $("#s-mpw").value;
@@ -3574,7 +3569,7 @@ async function pageSignupCommittee() {
       if (go === "add") { S.suTab = "sessions"; await pageSignupCommittee(); $("#sw-add")?.click(); return; }
       if (go !== "open") return;
     }
-    try { await api(`/api/committee/signup/${ws}`, { method: "PUT", body: { open: !d.week.open, note: d.week.note } }); toast(d.week.open ? "Sign-ups closed" : "Sign-ups are open"); pageSignupCommittee(); } catch (e) { fail(e); }
+    if (await apiDo(`/api/committee/signup/${ws}`, { method: "PUT", body: { open: !d.week.open, note: d.week.note } }, d.week.open ? "Sign-ups closed" : "Sign-ups are open")) { pageSignupCommittee(); }
   };
 }
 
@@ -3597,11 +3592,11 @@ function responseDetail(r, d, roleShort) {
       const dp = $("#rd-delphone", m);
       if (dp) dp.onclick = async () => {
         if (!await confirmBox(`Delete ${esc(r.name)}'s phone number?`, "It's removed from the club's records. They'll be asked for it again next time they sign up.", "Delete number", true)) return;
-        try { await api(`/api/committee/members/${r.member_id}/phone`, { method: "DELETE" }); toast("Phone number deleted"); pageSignupCommittee(); } catch (e) { fail(e); }
+        if (await apiDo(`/api/committee/members/${r.member_id}/phone`, { method: "DELETE" }, "Phone number deleted")) { pageSignupCommittee(); }
       };
       $("#rd-del", m).onclick = async () => {
         if (!await confirmBox("Delete this response?", `${esc(r.name)}'s sign-up for this week will be removed. Their member record stays.`, "Delete", true)) return;
-        try { await api(`/api/committee/signup/responses/${r.id}`, { method: "DELETE" }); toast("Response deleted"); pageSignupCommittee(); } catch (e) { fail(e); }
+        if (await apiDo(`/api/committee/signup/responses/${r.id}`, { method: "DELETE" }, "Response deleted")) { pageSignupCommittee(); }
       };
     },
   });
@@ -3647,7 +3642,7 @@ async function editSlot(sl, ws, tpl) {
       const del = $("#sl-del", m);
       if (del) del.onclick = async () => {
         if (!await confirmBox("Delete this session?", "Anyone who ticked it loses that availability.", "Delete", true)) return;
-        try { await api(`/api/committee/signup/slots/${sl.id}`, { method: "DELETE" }); toast("Session deleted"); pageSignupCommittee(); } catch (e) { fail(e); }
+        if (await apiDo(`/api/committee/signup/slots/${sl.id}`, { method: "DELETE" }, "Session deleted")) { pageSignupCommittee(); }
       };
     },
   });
@@ -3665,10 +3660,10 @@ function editPlace(p, after) {
       $("#pl-save", m).onclick = async () => {
         const body = { name: $("#pl-name", m).value.trim(), address: $("#pl-addr", m).value.trim(), coords: $("#pl-coords", m).value.trim() };
         if (!body.name) return toast("Give the place a name", true);
-        try { await api(p ? `/api/committee/places/${p.id}` : "/api/committee/places", { method: p ? "PUT" : "POST", body }); close(); toast("Place saved"); after && after(); } catch (e) { fail(e); }
+        if (await apiDo(p ? `/api/committee/places/${p.id}` : "/api/committee/places", { method: p ? "PUT" : "POST", body }, "Place saved")) { close(); after && after(); }
       };
       const d = $("#pl-del", m);
-      if (d) d.onclick = async () => { try { await api(`/api/committee/places/${p.id}`, { method: "DELETE" }); close(); toast("Place deleted"); after && after(); } catch (e) { fail(e); } };
+      if (d) d.onclick = async () => { if (await apiDo(`/api/committee/places/${p.id}`, { method: "DELETE" }, "Place deleted")) { close(); after && after(); } };
     },
   });
 }
@@ -3867,7 +3862,7 @@ function raceResultsModal(r) {
     onMount: (m, close) => {
       $("#rs-save", m).onclick = async () => {
         const results = $$(".race-res-row", m).map((row) => ({ crew_id: +row.dataset.id, ...Object.fromEntries($$("input", row).map((i) => [i.dataset.k, i.value])) }));
-        try { await api(`/api/committee/races/${r.id}/results`, { method: "PUT", body: { results } }); close(); toast("Results saved"); pageRaces(); } catch (e) { fail(e); }
+        if (await apiDo(`/api/committee/races/${r.id}/results`, { method: "PUT", body: { results } }, "Results saved")) { close(); pageRaces(); }
       };
     },
   });
@@ -4331,7 +4326,7 @@ function raceResponseModal(r, data, memberId, presetStatus) {
         catch (e) { if (e.status === 409 && e.detail?.problems) { st.problems = e.detail.problems; drawElig(); } else fail(e); }
       };
       const d = $("#rr-del", m);
-      if (d) d.onclick = async () => { try { await api(`/api/races/${r.id}/response/${memberId}`, { method: "DELETE" }); close(); pageRaces(); } catch (e) { fail(e); } };
+      if (d) d.onclick = async () => { if (await apiDo(`/api/races/${r.id}/response/${memberId}`, { method: "DELETE" })) { close(); pageRaces(); } };
     },
   });
 }
@@ -4372,12 +4367,12 @@ function editRace(r, data) {
           links: links.filter((l) => l.url.trim()) };
         if (!body.title) return toast("Title is required", true);
         if (!body.date) return toast("Pick a date", true);
-        try { await api(r ? `/api/committee/races/${r.id}` : "/api/committee/races", { method: r ? "PUT" : "POST", body }); close(); toast("Race saved"); pageRaces(); } catch (e) { fail(e); }
+        if (await apiDo(r ? `/api/committee/races/${r.id}` : "/api/committee/races", { method: r ? "PUT" : "POST", body }, "Race saved")) { close(); pageRaces(); }
       };
       const d = $("#r-del", m);
       if (d) d.onclick = async () => {
         if (!await confirmBox(`Delete ${esc(r.title)}?`, "This also removes everyone's responses for it.", "Delete", true)) return;
-        try { await api(`/api/committee/races/${r.id}`, { method: "DELETE" }); toast("Race deleted"); pageRaces(); } catch (e) { fail(e); }
+        if (await apiDo(`/api/committee/races/${r.id}`, { method: "DELETE" }, "Race deleted")) { pageRaces(); }
       };
     },
   });

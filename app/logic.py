@@ -26,8 +26,9 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from . import terms
 from .db import get_settings
-from .terms import TERMS  # noqa: F401  (Michaelmas, Hilary, Trinity; imported from here by main.py)
+from .terms import TERMS  # noqa: F401  (Michaelmas, Hilary, Trinity; imported from here by other modules)
 
 TZ = ZoneInfo(os.environ.get("TZ_NAME", os.environ.get("TZ", "Europe/London")) or "Europe/London")
 SUBS_PLANS = ["Unpaid", "Single term", "Full year"]
@@ -66,12 +67,35 @@ def add_months(d: date, months: int) -> date:
             continue
 
 
+def to_date(text) -> date | None:
+    """A YYYY-MM-DD date, or None if the text is empty or isn't one (for stored settings and optional values)."""
+    try:
+        return date.fromisoformat((text or "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def int_setting(settings: dict, key: str, default: int = 0) -> int:
+    """A whole-number setting (never negative); `default` if it's stored as something else."""
+    try:
+        return max(0, int(settings.get(key) or 0))
+    except ValueError:
+        return default
+
+
+def places_by_name(conn) -> dict:
+    """Saved places keyed by lower-case name, for looking up an outing's or event's location."""
+    return {r["name"].lower(): dict(r) for r in conn.execute("SELECT * FROM places")}
+
+
+def season_start(settings: dict, today: date) -> date:
+    """The season start setting, or 1 October of the current academic year if it isn't set."""
+    return to_date(settings.get("season_start")) or date(terms.ay_start_of(today), 10, 1)
+
+
 def expiry(since: str, months: int, today: date) -> dict:
     """{'date', 'expires', 'state'} for a dated qualification. state: '' (no date / never expires), ok, soon, expired."""
-    try:
-        d = date.fromisoformat(since) if since else None
-    except ValueError:
-        d = None
+    d = to_date(since)
     if not d or months <= 0:
         return {"date": since or "", "expires": "", "state": ""}
     exp = add_months(d, months)
@@ -87,13 +111,7 @@ def real_today() -> date:
 
 
 def effective_today(settings: dict) -> date:
-    ov = (settings.get("today_override") or "").strip()
-    if ov:
-        try:
-            return date.fromisoformat(ov)
-        except ValueError:
-            pass
-    return real_today()
+    return to_date(settings.get("today_override")) or real_today()
 
 
 def monday_of(d: date) -> date:
@@ -148,32 +166,15 @@ class Rules:
         self.conn = conn
         self.settings = get_settings(conn)
         self.today = effective_today(self.settings)
-        try:
-            self.free_n = max(0, int(self.settings.get("novice_free_outings") or 0))
-        except ValueError:
-            self.free_n = 4
-        try:
-            self.swim_after = max(0, int(self.settings.get("swim_test_after") or 0))
-        except ValueError:
-            self.swim_after = 4
-
-        def months(k):
-            try:
-                return max(0, int(self.settings.get(k) or 0))
-            except ValueError:
-                return 0
-        self.swim_months = months("swim_test_valid_months")
-        self.cox_months = months("cox_status_valid_months")
-        self.capsize_months = months("capsize_drill_valid_months")
+        self.free_n = int_setting(self.settings, "novice_free_outings", 4)
+        self.swim_after = int_setting(self.settings, "swim_test_after", 4)
+        self.swim_months = int_setting(self.settings, "swim_test_valid_months")
+        self.cox_months = int_setting(self.settings, "cox_status_valid_months")
+        self.capsize_months = int_setting(self.settings, "capsize_drill_valid_months")
         self.land_free = self.settings.get("novice_land_free") == "1"
-        self.cutoff = None
-        if self.settings.get("subs_cutoff"):
-            try:
-                self.cutoff = date.fromisoformat(self.settings["subs_cutoff"])
-            except ValueError:
-                pass
+        self.cutoff = to_date(self.settings.get("subs_cutoff"))
         self.members = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM members")}
-        self.places = {r["name"].lower(): dict(r) for r in conn.execute("SELECT * FROM places")}
+        self.places = places_by_name(conn)
         rows = conn.execute(
             """SELECT a.id, a.outing_id, a.seat, a.member_id, o.kind, o.date, o.time
                FROM assignments a JOIN outings o ON o.id = a.outing_id
@@ -284,24 +285,25 @@ class Rules:
             return {"date": "", "expires": "", "state": ""}
         return expiry(m.get("capsize_drill_date") or "", self.capsize_months, self.today)
 
+    @staticmethod
+    def _valid_on(held, exp: dict, d) -> bool:
+        """A qualification that is held and hasn't expired by day `d`."""
+        return bool(held) and (not exp["expires"] or exp["expires"] > (d.isoformat() if hasattr(d, "isoformat") else str(d)))
+
     def capsize_ok_on(self, m, d) -> bool:
-        if not m["capsize_drilled"]:
-            return False
-        exp = self.capsize_expiry(m)["expires"]
-        return not exp or exp > (d.isoformat() if hasattr(d, "isoformat") else str(d))
+        return self._valid_on(m["capsize_drilled"], self.capsize_expiry(m), d)
 
     def swim_ok_on(self, m, d) -> bool:
-        if not m["swim_test"]:
-            return False
-        exp = self.swim_expiry(m)["expires"]
-        return not exp or exp > (d.isoformat() if hasattr(d, "isoformat") else str(d))
+        return self._valid_on(m["swim_test"], self.swim_expiry(m), d)
+
+    def sorted_members(self, active_only: bool = False) -> list[dict]:
+        """Members in name order (only active ones, i.e. rowers, if asked)."""
+        return sorted((m for m in self.members.values() if m["active"] or not active_only), key=lambda m: m["name"].lower())
 
     def expiring(self) -> list[dict]:
         """Active members whose swim test, cox status or capsize drill has expired or expires soon (for the committee)."""
         out = []
-        for m in sorted(self.members.values(), key=lambda m: m["name"].lower()):
-            if not m["active"]:
-                continue
+        for m in self.sorted_members(active_only=True):
             for what, e in (("swim", self.swim_expiry(m)), ("cox", self.cox_expiry(m)), ("capsize", self.capsize_expiry(m))):
                 if e["state"] in ("soon", "expired"):
                     out.append({"id": m["id"], "name": m["name"], "what": what, **e})
@@ -315,6 +317,15 @@ class Rules:
         water = self.check(member_id, "water", self.today, key)
         land = self.check(member_id, "land", self.today, key)
         return {"subs_valid": self.subs_valid(m), "water": water, "land": land}
+
+    def status_fields(self, m: dict) -> dict:
+        """Whether a member may row now, with their qualifications, as the members list and profile show it."""
+        st = self.status_now(m["id"])
+        return {"subs_valid": st["subs_valid"], "water_ok": st["water"]["ok"], "land_ok": st["land"]["ok"],
+                "water_reasons": st["water"]["reasons"], "land_reasons": st["land"]["reasons"],
+                "swim_test": bool(m["swim_test"]), "swim": self.swim_expiry(m), "cox": self.cox_expiry(m),
+                "capsize_drilled": bool(m["capsize_drilled"]), "capsize": self.capsize_expiry(m),
+                "note": st["water"]["note"]}
 
 
 def maps_url(place) -> str:

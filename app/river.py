@@ -24,6 +24,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from . import timeutil
+from .logic import to_date
 from .timeutil import to_minutes
 
 REACH = "isis"
@@ -227,15 +228,12 @@ def day_info(d: date, tz: ZoneInfo) -> dict:
 def term_info(settings: dict, d: date) -> dict:
     """Week of term and whether `d` is in peak term, from the settings."""
     out = {"week": None, "peak": False}
-    try:
-        start = date.fromisoformat(settings.get("term_start") or "")
-    except ValueError:
+    start = to_date(settings.get("term_start"))
+    if start is None:
         return out
     out["week"] = (d - start).days // 7 + 1  # weeks run Sunday-Saturday; 1st week starts on term_start
-    try:
-        peak_end = date.fromisoformat(settings.get("peak_end") or "")
-    except ValueError:
-        peak_end = start + timedelta(weeks=8, days=-1)  # end of 8th week if the regatta date isn't set
+    # end of 8th week if the regatta date isn't set
+    peak_end = to_date(settings.get("peak_end")) or start + timedelta(weeks=8, days=-1)
     out["peak"] = start - timedelta(days=3) <= d <= peak_end
     return out
 

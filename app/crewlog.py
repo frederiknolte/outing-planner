@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from . import db, push
 from .auth import require_committee, role_of
+from .common import resolve_sub, settle_open_subs
 from .logic import seat_label, seat_list
 
 router = APIRouter()
@@ -167,7 +168,6 @@ def describe(e: dict, cap: int, kind: str) -> str:
     m = e["member_name"] or "A deleted member"
     n = e["other_name"] or "a deleted member"
     st = _seat_text(e["seat"], cap, kind)
-    at = f" {st}" if st else ""
     a = e["action"]
     if a == "join":
         return f"{m} took {st}" if st else f"{m} joined"
@@ -219,10 +219,7 @@ def for_outings(conn, outings: list[dict]) -> dict[int, list[dict]]:
 # ------------------------------------------------------------------ undo ----
 def _cleanup_subs(conn, oid: int) -> None:
     """Open sub requests whose requester is no longer in that seat are closed (as when the committee edits a crew)."""
-    seats = _seats(conn, oid)
-    for sr in conn.execute("SELECT * FROM sub_requests WHERE outing_id = ? AND status = 'open'", (oid,)).fetchall():
-        if seats.get(sr["seat"]) != sr["requester_id"]:
-            conn.execute("UPDATE sub_requests SET status = 'cancelled', resolved_at = datetime('now') WHERE id = ?", (sr["id"],))
+    settle_open_subs(conn, oid, _seats(conn, oid), fill=False)
 
 
 @router.post("/api/committee/crew-log/{entry_id}/undo")
@@ -311,7 +308,7 @@ def undo(entry_id: int, request: Request, _: str = Depends(require_committee)):
             sr = conn.execute("SELECT * FROM sub_requests WHERE id = ?", (e["sub_request_id"],)).fetchone()
             if not sr or sr["status"] != "open":
                 raise HTTPException(409, "This sub request isn't open any more. If someone took the seat, undo that change instead")
-            conn.execute("UPDATE sub_requests SET status = 'cancelled', resolved_at = datetime('now') WHERE id = ?", (sr["id"],))
+            resolve_sub(conn, sr["id"])
             add(conn, oid, {"action": "sub_cancel", "member_id": sr["requester_id"], "seat": sr["seat"]}, who, "undo", sr["id"])
         elif a == "sub_cancel":
             sr = conn.execute("SELECT * FROM sub_requests WHERE id = ?", (e["sub_request_id"],)).fetchone()
