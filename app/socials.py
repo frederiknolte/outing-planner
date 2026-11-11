@@ -1,11 +1,12 @@
 """Socials: club events (a pub trip, a formal, a bar night) listed on the schedule and in the calendar feeds.
 
-A social is only a date, time, place and note. Unlike an outing it has no seats, and it doesn't count towards
-anyone's totals. Published socials show for every member; drafts only for the committee.
+A social is a date, time, place and note. Unlike an outing it has no seats, and it doesn't count towards
+anyone's totals. Published socials show for every member; drafts only for the committee. Members can sign
+themselves up (and off again) from the schedule; it's a plain list with no limit.
 
 A social can also be a sports activity (kind "sport": a run, a hike, a swim). The note says what it is and where
-and when to meet, and members sign themselves up (and off again) from the schedule. It's a plain list with no
-limit. Like socials, activities don't count as outings.
+and when to meet. It works the same way, except that it only goes in the calendar of members who signed up,
+whereas every published social goes in everyone's calendar. Like socials, activities don't count as outings.
 """
 from __future__ import annotations
 
@@ -30,11 +31,11 @@ def week_socials(conn, start: str, end: str, committee: bool) -> list[dict]:
                         + " ORDER BY date, time, id", (start, end)).fetchall()
     places = {r["name"].lower(): dict(r) for r in conn.execute("SELECT * FROM places")} if rows else {}
     going: dict[int, list[dict]] = {}
-    sport_ids = [r["id"] for r in rows if r["kind"] == "sport"]
-    if sport_ids:
-        marks = ",".join("?" * len(sport_ids))
+    ids = [r["id"] for r in rows]
+    if ids:
+        marks = ",".join("?" * len(ids))
         for g in conn.execute(f"""SELECT s.social_id, m.id, m.name FROM social_signups s JOIN members m ON m.id = s.member_id
-                                  WHERE s.social_id IN ({marks}) ORDER BY s.created_at, m.name""", sport_ids):
+                                  WHERE s.social_id IN ({marks}) ORDER BY s.created_at, m.name""", ids):
             going.setdefault(g["social_id"], []).append({"id": g["id"], "name": g["name"]})
     today = effective_today(db.get_settings(conn)).isoformat()
     return [{"id": r["id"], "kind": r["kind"], "title": r["title"], "date": r["date"], "time": r["time"], "end_time": r["end_time"],
@@ -94,8 +95,6 @@ def social_update(sid: int, b: SocialIn, _: str = Depends(require_committee)):
             raise HTTPException(404, "Not found")
         conn.execute("UPDATE socials SET kind=?, title=?, date=?, time=?, end_time=?, location=?, notes=? WHERE id=?",
                      (kind, title, d, start, end, loc, notes, sid))
-        if kind != "sport":
-            conn.execute("DELETE FROM social_signups WHERE social_id = ?", (sid,))
         if b.published is not None:
             conn.execute("UPDATE socials SET published=? WHERE id=?", (int(b.published), sid))
         return {"id": sid}
@@ -112,22 +111,22 @@ class JoinIn(BaseModel):
     member_id: int
 
 
-def _open_activity(conn, sid: int):
+def _open_event(conn, sid: int):
     r = conn.execute("SELECT * FROM socials WHERE id = ?", (sid,)).fetchone()
-    if not r or r["kind"] != "sport":
-        raise HTTPException(404, "Sports activity not found")
+    if not r:
+        raise HTTPException(404, "Event not found")
     return r
 
 
 @router.post("/api/socials/{sid}/join")
 def activity_join(sid: int, b: JoinIn, role: str = Depends(require_member)):
-    """A member signs themselves up to a published sports activity that hasn't happened yet."""
+    """A member signs themselves up to a published social or sports activity that hasn't happened yet."""
     with db.get_conn() as conn:
-        r = _open_activity(conn, sid)
+        r = _open_event(conn, sid)
         if not r["published"] and role != "committee":
-            raise HTTPException(404, "Sports activity not found")
+            raise HTTPException(404, "Event not found")
         if r["date"] < effective_today(db.get_settings(conn)).isoformat():
-            raise HTTPException(400, "This activity is in the past")
+            raise HTTPException(400, "This event is in the past")
         if not conn.execute("SELECT 1 FROM members WHERE id = ?", (b.member_id,)).fetchone():
             raise HTTPException(400, "Unknown member")
         conn.execute("INSERT OR IGNORE INTO social_signups(social_id, member_id) VALUES (?, ?)", (sid, b.member_id))
@@ -137,8 +136,8 @@ def activity_join(sid: int, b: JoinIn, role: str = Depends(require_member)):
 @router.post("/api/socials/{sid}/leave")
 def activity_leave(sid: int, b: JoinIn, role: str = Depends(require_member)):
     with db.get_conn() as conn:
-        r = _open_activity(conn, sid)
+        r = _open_event(conn, sid)
         if r["date"] < effective_today(db.get_settings(conn)).isoformat():
-            raise HTTPException(400, "This activity is in the past")
+            raise HTTPException(400, "This event is in the past")
         conn.execute("DELETE FROM social_signups WHERE social_id = ? AND member_id = ?", (sid, b.member_id))
         return {"ok": True}

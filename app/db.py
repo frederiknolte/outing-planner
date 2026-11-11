@@ -63,11 +63,11 @@ CREATE TABLE IF NOT EXISTS socials (
     location TEXT NOT NULL DEFAULT '',
     notes TEXT NOT NULL DEFAULT '',
     published INTEGER NOT NULL DEFAULT 0,
-    kind TEXT NOT NULL DEFAULT 'social'            -- social | sport (a sports activity such as a run: members sign themselves up)
+    kind TEXT NOT NULL DEFAULT 'social'            -- social | sport (a sports activity such as a run; only in the calendars of those who signed up)
 );
 CREATE INDEX IF NOT EXISTS idx_socials_date ON socials(date);
 
--- Who has signed up to a sports activity (socials.kind = 'sport'). Plain list: no seats or limit.
+-- Who has signed up to a social or sports activity. Plain list: no seats or limit.
 CREATE TABLE IF NOT EXISTS social_signups (
     social_id INTEGER NOT NULL REFERENCES socials(id) ON DELETE CASCADE,
     member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,

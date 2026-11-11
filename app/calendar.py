@@ -213,7 +213,7 @@ def _race_events(conn, member: dict, club: str, since: str, base_url: str, host:
 
 
 def _social_events(conn, member: dict, club: str, since: str, base_url: str, host: str, now: str, places: dict) -> list[str]:
-    """Every published social, for every member, plus the sports activities this member signed up to.
+    """Every published social, for every member, plus the sports activities this member signed up to (whether or not they signed up to a social).
     Timed if it has a start time, else all day."""
     lines = []
     rows = conn.execute("""SELECT * FROM socials WHERE published = 1 AND date >= ?1 AND (kind != 'sport' OR id IN

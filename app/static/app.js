@@ -643,8 +643,8 @@ function raceScheduleCard(rc) {
   </article>`;
 }
 
-/* A social (date, time, place and note, no sign-up) or a sports activity (same, plus a list of members who signed themselves up).
-   The committee taps the card to edit it; anyone can join or leave an activity with the button. */
+/* A social or a sports activity: date, time, place and note, plus a list of members who signed themselves up.
+   The committee taps the card to edit it; anyone can sign up or off with the button. */
 const isSport = (sc) => sc.kind === "sport";
 function socialScheduleCard(sc) {
   const committee = isCommittee();
@@ -657,11 +657,11 @@ function socialScheduleCard(sc) {
       <div class="o-tags"><span class="chip ${sport ? "accent" : "ok"}">${sport ? I.run : I.users}${sport ? "Sports activity" : "Social"}</span>${committee && !sc.published ? `<span class="chip">Draft</span>` : ""}</div></div>
     ${sc.location ? `<div class="o-sub">${sc.maps_url ? `<a href="${esc(sc.maps_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open in maps">${I.pin}${esc(sc.location)}</a>` : `<span>${I.pin}${esc(sc.location)}</span>`}</div>` : ""}
     ${sc.notes ? `<div class="small muted act-notes">${esc(sc.notes)}</div>` : ""}
-    ${sport ? `<div class="act-going">${going.length ? `<span class="faint small">${going.length} going</span>
+    <div class="act-going">${going.length ? `<span class="faint small">${going.length} going</span>
         <div class="act-names">${going.map((g) => `<span class="chip ${g.id === S.me ? "ok" : ""}">${esc(g.name)}</span>`).join("")}</div>` : `<span class="faint small">${open ? "No one yet. Be the first!" : "No sign-ups"}</span>`}</div>
-      ${open ? `<div class="o-foot land-open"><span></span>${mine
-        ? `<button class="btn sm" data-act="act-leave" title="Take yourself off the list">${I.x}Can't go</button>`
-        : `<button class="btn sm primary" data-act="act-join" title="Put your name down">${I.plus}Sign up</button>`}</div>` : ""}` : ""}
+    ${open ? `<div class="o-foot land-open"><span></span>${mine
+      ? `<button class="btn sm" data-act="act-leave" title="Take yourself off the list">${I.x}Can't go</button>`
+      : `<button class="btn sm primary" data-act="act-join" title="Put your name down">${I.plus}Sign up</button>`}</div>` : ""}
   </article>`;
 }
 
@@ -707,7 +707,7 @@ async function editSocial(sc, defaults = {}) {
       $("#so-notes", m).placeholder = sport ? "Describe it: what, where to meet, pace or distance, what to bring… Visible to everyone." : "Optional — visible to everyone";
       $("#so-hint", m).textContent = sport
         ? "Members sign themselves up from the schedule, and see who else is going. Activities don't count as outings. Once published they show in the calendar of everyone who signs up."
-        : "Socials have no sign-up. Once published they show on the schedule and in everyone's subscribed calendar.";
+        : "Members can sign up from the schedule and see who else is going. Once published it shows on the schedule and in everyone's subscribed calendar, whether or not they sign up.";
       const save = async (published) => {
         const body = { kind, title: $("#so-title", m).value, date: $("#so-date", m).value, time: $("#so-time", m).value.trim(), end_time: $("#so-end", m).value.trim(),
           location: $("#so-loc", m).value, notes: $("#so-notes", m).value, published };
@@ -745,8 +745,8 @@ async function pageSchedule() {
   const inRace = (rc) => S.me != null && racePlaces(rc, S.me).length > 0;
   const raceSubs = (rc) => rc.crews.some((c) => c.seats.some((x) => x.member_id == null));
   const races = (data.races || []).filter((rc) => S.filter === "all" || (S.filter === "mine" && inRace(rc)) || (S.filter === "subs" && raceSubs(rc)) || S.filter === "water");
-  const inActivity = (sc) => isSport(sc) && S.me != null && (sc.going || []).some((g) => g.id === S.me);
-  // Socials are for everyone, so only on the full schedule. Sports activities also show under "Mine" when you're signed up.
+  const inActivity = (sc) => S.me != null && (sc.going || []).some((g) => g.id === S.me);
+  // Socials are for everyone, so on the full schedule. Under "Mine" you only see the socials and activities you signed up to.
   const socials = S.filter === "all" ? data.socials || [] : S.filter === "mine" ? (data.socials || []).filter(inActivity) : [];
   const myCount = data.outings.filter((o) => o.seats.some((s) => s.member && s.member.id === S.me)).length + (data.races || []).filter(inRace).length + (data.socials || []).filter(inActivity).length;
   main.innerHTML = `
