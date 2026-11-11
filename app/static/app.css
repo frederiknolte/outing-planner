@@ -1048,3 +1048,18 @@ button.race-person:hover { border-color: var(--accent); }
   .mo-day.today .mo-dw { color: var(--accent); font-weight: 700; }
   .mo-item { font-size: 13px; padding: 4px 8px; }
 }
+
+/* Members filters: dropdowns in a row; on phones the search box takes the full width and the dropdowns share the next rows */
+.filters .rw-f { width: auto; }
+@media (max-width: 640px) {
+  .filters #rw-q { max-width: none !important; flex: 1 1 100%; }
+  .filters .rw-f { flex: 1 1 calc(50% - 4px); min-width: 0; }
+}
+
+/* Schedule filters: two dropdowns side by side (full width on phones) */
+.filters-left { display: flex; gap: 8px; flex-wrap: wrap; }
+.filters .flt { width: auto; }
+@media (max-width: 640px) {
+  .filters-left { flex: 1 1 100%; }
+  .filters .flt { flex: 1 1 calc(50% - 4px); min-width: 0; }
+}

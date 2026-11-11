@@ -91,7 +91,7 @@ const I = {
 };
 
 const S = {
-  role: null, boot: null, week: null, weekData: null, filter: "all",
+  role: null, boot: null, week: null, weekData: null, filter: "all", focus: "all",
   me: (() => { try { return Number(localStorage.getItem("op_me")) || null; } catch { return null; } })(),
   openSubs: 0,
   realRole: null, // the signed-in role; S.role is the one the site currently renders as
@@ -407,7 +407,7 @@ function renderRaceBanner() {
     </div>
     <div class="flag-actions">${list.length ? `<a class="btn sm" href="#/races">Races</a>` : ""}${exp.length ? `<a class="btn sm" href="#/rowers" id="rb-exp">Members</a>` : ""}<button class="btn ghost sm" id="rb-x">Dismiss</button></div></div>`;
   $("#rb-x").onclick = () => { S.raceBanner = false; renderRaceBanner(); };
-  const rbe = $("#rb-exp"); if (rbe) rbe.onclick = () => { rowerCat = "expiring"; };
+  const rbe = $("#rb-exp"); if (rbe) rbe.onclick = () => { rowerCat = rowerSquad = "all"; rowerStatus = "expiring"; };
 }
 
 let hiddenAt = 0;
@@ -824,13 +824,15 @@ async function pageSchedule() {
     ? `<span class="status-pill" style="background:var(--ok-soft);color:var(--ok)"><span class="dot"></span>Published</span>`
     : data.published === 0 ? `<span class="status-pill" style="background:var(--surface-3);color:var(--text-2)"><span class="dot"></span>Draft — not visible to rowers</span>`
     : `<span class="status-pill" style="background:var(--warn-soft);color:var(--warn)"><span class="dot"></span>${data.published}/${data.total} published</span>`;
-  const outs = data.outings.filter((o) => S.filter === "all" || (S.filter === "mine" ? o.seats.some((s) => s.member && s.member.id === S.me) : S.filter === "subs" ? o.open_subs > 0 : S.filter === "open" ? (o.kind === "land" && o.spots > 0 && !o.past && !o.cancelled) : o.kind === S.filter));
+  // Two independent filters: the type of thing (S.filter) and what to focus on (S.focus: mine / open spots / needs a sub)
+  const typeOk = (t) => S.filter === "all" || S.filter === t;
   const inRace = (rc) => S.me != null && racePlaces(rc, S.me).length > 0;
   const raceSubs = (rc) => rc.crews.some((c) => c.seats.some((x) => x.member_id == null));
-  const races = (data.races || []).filter((rc) => S.filter === "all" || (S.filter === "mine" && inRace(rc)) || (S.filter === "subs" && raceSubs(rc)) || S.filter === "water");
   const inActivity = (sc) => S.me != null && (sc.going || []).some((g) => g.id === S.me);
-  // Socials are for everyone, so on the full schedule. Under "Mine" you only see the socials and activities you signed up to.
-  const socials = S.filter === "all" ? data.socials || [] : S.filter === "mine" ? (data.socials || []).filter(inActivity) : [];
+  const outs = data.outings.filter((o) => typeOk(o.kind) && (S.focus === "all" || (S.focus === "mine" ? o.seats.some((s) => s.member && s.member.id === S.me) : S.focus === "subs" ? o.open_subs > 0 : (o.kind === "land" && o.spots > 0 && !o.past && !o.cancelled))));
+  const races = (data.races || []).filter((rc) => typeOk("race") && (S.focus === "all" || (S.focus === "mine" && inRace(rc)) || (S.focus === "subs" && raceSubs(rc))));
+  // Socials and sports activities: signing up is open to everyone, so only "Mine" narrows them (the rest of the focus options don't apply)
+  const socials = (data.socials || []).filter((sc) => typeOk(isSport(sc) ? "sport" : "social") && (S.focus === "all" || (S.focus === "mine" && inActivity(sc))));
   const myCount = data.outings.filter((o) => o.seats.some((s) => s.member && s.member.id === S.me)).length + (data.races || []).filter(inRace).length + (data.socials || []).filter(inActivity).length;
   main.innerHTML = `
     <div class="page-head">
@@ -849,11 +851,12 @@ async function pageSchedule() {
       </div>
     </div>
     <div class="filters">
-      <div class="seg" id="flt">
-        ${[["all", "All"], ["water", "Water"], ["land", "Land"], ["open", "Open spots"], ["mine", `Mine${S.me ? ` (${myCount})` : ""}`], ["subs", "Needs sub"]].map(([k, l]) => `<button data-f="${k}" class="${S.filter === k ? "on" : ""}">${l}</button>`).join("")}
+      <div class="filters-left">
+        <select class="input flt" id="flt-type" aria-label="Show type">${[["all", "All types"], ["water", "Water outings"], ["land", "Land sessions"], ["race", "Races"], ["social", "Socials"], ["sport", "Sports activities"]].map(([k, l]) => `<option value="${k}" ${S.filter === k ? "selected" : ""}>${l}</option>`).join("")}</select>
+        <select class="input flt" id="flt-focus" aria-label="Narrow down">${[["all", "Everything"], ["mine", `Mine${S.me ? ` (${myCount})` : ""}`], ["open", "Open spots"], ["subs", "Needs sub"]].map(([k, l]) => `<option value="${k}" ${S.focus === k ? "selected" : ""}>${l}</option>`).join("")}</select>
       </div>
       <div class="filters-right">
-        ${committee ? `<div class="toolbar"><button class="btn" id="wk-new-social">${I.plus}Social</button><button class="btn" id="wk-new-sport">${I.plus}Sports activity</button><button class="btn" data-new="land">${I.plus}Land session</button><button class="btn primary" data-new="water">${I.plus}Water outing</button></div>` : ""}
+        ${committee ? `<div class="toolbar"><button class="btn primary" data-new="water">${I.plus}Water outing</button><button class="btn" data-new="land">${I.plus}Land session</button><button class="btn" id="wk-new-sport">${I.plus}Sports activity</button><button class="btn" id="wk-new-social">${I.plus}Social</button></div>` : ""}
         ${flagPill(data.river && data.river.flag)}
       </div>
     </div>
@@ -879,10 +882,12 @@ async function pageSchedule() {
   $("#wk-today").onclick = () => { S.week = S.boot.this_week; pageSchedule(); };
   $("#wk-cal").onclick = () => calendarModal();
   const fr = $("#flag-rules"); if (fr) fr.onclick = () => riverModal();
-  $$("#flt button").forEach((b) => b.onclick = () => {
-    if (b.dataset.f === "mine" && !S.me) return pickIdentity(() => { S.filter = "mine"; route(); });
-    S.filter = b.dataset.f; pageSchedule();
-  });
+  $("#flt-type").onchange = (e) => { S.filter = e.target.value; pageSchedule(); };
+  $("#flt-focus").onchange = (e) => {
+    const v = e.target.value;
+    if (v === "mine" && !S.me) { e.target.value = S.focus; return pickIdentity(() => { S.focus = "mine"; route(); }); }
+    S.focus = v; pageSchedule();
+  };
   if (committee) {
     $$("[data-new]").forEach((b) => b.onclick = () => editOuting(null, { kind: b.dataset.new, date: b.dataset.date || data.days.find((d) => d >= data.today) || data.start }));
     const firstDay = data.days.find((d) => d >= data.today) || data.start;
@@ -1925,7 +1930,7 @@ async function pageStats() {
 }
 
 // ----------------------------------------------------------------- rowers --
-let rowerSort = { k: "name", dir: 1 }, rowerQ = "", rowerCat = "all", rowerCrew = "";
+let rowerSort = { k: "name", dir: 1 }, rowerQ = "", rowerCat = "all", rowerSquad = "all", rowerStatus = "all", rowerCrew = "";
 
 async function pageRowers() {
   const committee = isCommittee();
@@ -1939,9 +1944,16 @@ async function pageRowers() {
     else rows = await api("/api/rowers");
   } catch (e) { return fail(e); }
   const draw = () => {
-    let list = rows.filter((r) => (!rowerQ || fold(r.name).includes(rowerQ)) && (rowerCat === "all" || (rowerCat === "inactive" ? !r.active && r.category !== "Coach" : rowerCat === "issues" ? (r.active !== false && (!r.water_ok || !r.land_ok)) : rowerCat === "expiring" ? (r.active && [r.swim?.state, r.cox?.state, r.capsize?.state].some((x) => x === "soon" || x === "expired")) : rowerCat === "open" || rowerCat === "women" ? (r.active !== false && r.squad === rowerCat) : rowerCat === "nosquad" ? (r.active !== false && !r.squad) : r.category === rowerCat && (r.active !== false || rowerCat === "Coach"))));
+    const active = (r) => r.active !== false;
+    const statusOk = (r) => rowerStatus === "all" || (rowerStatus === "inactive" ? !r.active && r.category !== "Coach"
+      : rowerStatus === "issues" ? active(r) && (!r.water_ok || !r.land_ok)
+      : active(r) && [r.swim?.state, r.cox?.state, r.capsize?.state].some((x) => x === "soon" || x === "expired"));
+    const squadOk = (r) => rowerSquad === "all" || (rowerSquad === "nosquad" ? !r.squad : r.squad === rowerSquad);
+    // inactive members only show up when nothing is filtered, or when asked for (coaches don't have an active state)
+    const filtered = rowerCat !== "all" || rowerSquad !== "all" || rowerStatus !== "all";
+    const hideInactive = filtered && rowerStatus !== "inactive" && rowerCat !== "Coach";
+    let list = rows.filter((r) => (!rowerQ || fold(r.name).includes(rowerQ)) && (rowerCat === "all" || r.category === rowerCat) && squadOk(r) && statusOk(r) && (!hideInactive || active(r)));
     if (committee && rowerCrew) list = list.filter((r) => rowerCrew === "none" ? !r.club_crew : (r.club_crew || "").split(",").includes(rowerCrew));
-    if (rowerCat !== "inactive" && rowerCat !== "Coach" && committee) list = list.filter((r) => rowerCat === "all" || r.active);
     const k = rowerSort.k;
     list.sort((a, b) => (typeof a[k] === "string" ? a[k].localeCompare(b[k]) : (a[k] ?? -1) - (b[k] ?? -1)) * rowerSort.dir || a.name.localeCompare(b.name));
     const max = Math.max(1, ...rows.map((r) => r.total));
@@ -1981,14 +1993,21 @@ async function pageRowers() {
     </div>
     <div class="filters">
       <input class="input" id="rw-q" placeholder="Search names…" style="max-width:260px" value="${esc(rowerQ)}">
-      <div class="seg" id="rw-cat">${[["all", "All"], ["Novice", "Novice"], ["Senior", "Senior"], ["Coach", "Coach"], ["open", "Open"], ["women", "Women's"], ...(committee ? [["nosquad", "No squad"]] : []), ...(committee ? [["issues", "Can't row"], ["expiring", "Expiring"], ["inactive", "Inactive"]] : [])].map(([k, l]) => `<button data-c="${k}" class="${rowerCat === k ? "on" : ""}">${l}</button>`).join("")}</div>
-      ${committee ? `<select class="input" id="rw-crew" style="width:auto" aria-label="Crew"><option value="">Any crew</option>${(meta.crews || []).map((c) => `<option value="${esc(c)}" ${rowerCrew === c ? "selected" : ""}>${esc(c)}</option>`).join("")}<option value="none" ${rowerCrew === "none" ? "selected" : ""}>No crew</option></select>` : ""}
+      ${(() => {
+        const sel = (id, label, cur, opts) => `<select class="input rw-f" id="${id}" aria-label="${label}">${opts.map(([k, l]) => `<option value="${k}" ${cur === k ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+        return sel("rw-cat", "Category", rowerCat, [["all", "All categories"], ["Novice", "Novice"], ["Senior", "Senior"], ["Coach", "Coach"]])
+          + sel("rw-squad", "Squad", rowerSquad, [["all", "Any squad"], ["open", "Open"], ["women", "Women's"], ...(committee ? [["nosquad", "No squad"]] : [])])
+          + (committee ? sel("rw-status", "Status", rowerStatus, [["all", "Any status"], ["issues", "Can't row"], ["expiring", "Expiring"], ["inactive", "Inactive"]]) : "");
+      })()}
+      ${committee ? `<select class="input rw-f" id="rw-crew" aria-label="Crew"><option value="">Any crew</option>${(meta.crews || []).map((c) => `<option value="${esc(c)}" ${rowerCrew === c ? "selected" : ""}>${esc(c)}</option>`).join("")}<option value="none" ${rowerCrew === "none" ? "selected" : ""}>No crew</option></select>` : ""}
       <span class="faint small" id="rw-count" style="margin-left:auto"></span>
     </div>
     <div class="card table-wrap" id="rw-table"></div>`;
   $("#rw-q").oninput = (e) => { rowerQ = fold(e.target.value.trim()); draw(); };
   if (committee) $("#rw-crew").onchange = (e) => { rowerCrew = e.target.value; draw(); };
-  $$("#rw-cat button").forEach((b) => b.onclick = () => { rowerCat = b.dataset.c; $$("#rw-cat button").forEach((x) => x.classList.toggle("on", x === b)); draw(); });
+  $("#rw-cat").onchange = (e) => { rowerCat = e.target.value; draw(); };
+  $("#rw-squad").onchange = (e) => { rowerSquad = e.target.value; draw(); };
+  if (committee) $("#rw-status").onchange = (e) => { rowerStatus = e.target.value; draw(); };
   if (committee) { $("#rw-add").onclick = () => editMember(null, meta); $("#rw-export").onclick = () => exportModal("/api/committee/members.csv", "all members"); }
   draw();
 }
