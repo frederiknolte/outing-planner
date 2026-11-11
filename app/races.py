@@ -134,10 +134,17 @@ def race_problems(race, category: str, squad: str, role: str, status: str) -> li
     return out
 
 
+# Colleges whose members row as full members, not associates. The college field is free text, so match
+# on a normalised prefix (apostrophes/punctuation dropped, so "St Stephen's House" == "st stephens house").
+HOME_COLLEGES = ("reuben", "blackfriars", "st stephens house", "saint stephens house")
+
+
 def is_associate(college: Optional[str]) -> bool:
-    """Someone from a college other than Reuben (races can cap associate rowers). Unknown college isn't flagged."""
-    c = (college or "").strip().casefold()
-    return bool(c) and not c.startswith("reuben")
+    """Someone from a college other than Reuben, Blackfriars or St Stephen's House (races can cap associate rowers).
+    Unknown college isn't flagged."""
+    c = re.sub(r"[^a-z0-9 ]", "", (college or "").casefold().replace("'", "").replace("’", ""))
+    c = " ".join(c.split())
+    return bool(c) and not c.startswith(HOME_COLLEGES)
 
 
 def _clean_url(u: str) -> str:
