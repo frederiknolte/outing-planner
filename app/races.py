@@ -237,9 +237,9 @@ def _load_crews(conn, race_ids=None) -> dict[int, list[dict]]:
         by_id[c["id"]] = crew
     if by_id:
         for s in conn.execute(
-                f"""SELECT s.crew_id, s.seat, s.member_id, m.name, m.college FROM race_crew_seats s JOIN members m ON m.id = s.member_id
+                f"""SELECT s.crew_id, s.seat, s.member_id, m.name, m.college, m.cox_status FROM race_crew_seats s JOIN members m ON m.id = s.member_id
                     WHERE s.crew_id IN ({','.join('?' * len(by_id))})""", list(by_id)):
-            by_id[s["crew_id"]]["seats"][s["seat"]] = (s["member_id"], s["name"], is_associate(s["college"]))
+            by_id[s["crew_id"]]["seats"][s["seat"]] = (s["member_id"], s["name"], is_associate(s["college"]), s["cox_status"])
         for s in conn.execute(
                 f"""SELECT s.crew_id, s.member_id, m.name, m.college FROM race_crew_reserves s JOIN members m ON m.id = s.member_id
                     WHERE s.crew_id IN ({','.join('?' * len(by_id))}) ORDER BY s.position""", list(by_id)):
@@ -249,8 +249,9 @@ def _load_crews(conn, race_ids=None) -> dict[int, list[dict]]:
             rowers, seats = boat_seats(crew["boat_type"])
             taken = crew["seats"]
             crew["seats"] = [{"seat": n, "label": seat_label(n, rowers, "water"),
-                              "member_id": taken.get(n, (None, "", False))[0], "name": taken.get(n, (None, "", False))[1],
-                              "associate": taken.get(n, (None, "", False))[2]} for n in seats]
+                              "member_id": taken.get(n, (None, "", False, ""))[0], "name": taken.get(n, (None, "", False, ""))[1],
+                              "associate": taken.get(n, (None, "", False, ""))[2],
+                              "cox_status": taken.get(n, (None, "", False, ""))[3]} for n in seats]
             crew["associates"] = sum(1 for x in crew["seats"] if x["associate"])
             crew["bankrider_ids"] = _bankrider_ids(crew["bankrider"], ids)
     return crews
@@ -305,7 +306,7 @@ def races_list(me: Optional[int] = None, role: str = Depends(require_member)):
             links.setdefault(r["race_id"], []).append({"label": r["label"], "url": r["url"]})
         for r in conn.execute(
                 """SELECT rr.race_id, rr.member_id, rr.status, rr.squad, rr.role, rr.side, rr.comment, rr.updated_at,
-                          m.name, m.category, m.college
+                          m.name, m.category, m.college, m.cox_status
                    FROM race_responses rr JOIN members m ON m.id = rr.member_id
                    ORDER BY m.name COLLATE NOCASE"""):
             resp.setdefault(r["race_id"], []).append(r)
@@ -327,6 +328,7 @@ def races_list(me: Optional[int] = None, role: str = Depends(require_member)):
             race["responses"] = [
                 {"member_id": x["member_id"], "name": x["name"], "category": x["category"], "status": x["status"],
                  "squad": x["squad"], "role": x["role"], "side": x["side"], "associate": is_associate(x["college"]),
+                 "cox_status": x["cox_status"],
                  # committee: why this response breaks the entry rules (it was saved with an override)
                  **({"problems": race_problems(race, x["category"], x["squad"], x["role"], x["status"])} if committee else {}),
                  **({"comment": x["comment"], "updated_at": x["updated_at"]} if committee or x["member_id"] == me else {})}
@@ -419,6 +421,14 @@ def race_crews_save(race_id: int, b: CrewsIn, _: str = Depends(require_committee
             ok = {r["id"] for r in conn.execute(f"SELECT id FROM members WHERE id IN ({','.join('?' * len(everyone))})", list(everyone))}
             if len(ok) != len(everyone):
                 raise HTTPException(400, "Unknown member in a crew")
+        # only members registered as coxes (they have a cox status) can sit in the cox seat
+        cox_ids = {mid for c in clean for seat, mid in c[3].items() if seat == 0}
+        if cox_ids:
+            bad = [r["name"] for r in conn.execute(
+                f"SELECT name FROM members WHERE id IN ({','.join('?' * len(cox_ids))}) AND cox_status = '' ORDER BY name", list(cox_ids))]
+            if bad:
+                raise HTTPException(400, f"{', '.join(bad)} {'is' if len(bad) == 1 else 'are'} not registered as a cox. "
+                                         "Give them a coxing status on the Members page first")
         before = _assignments((c["name"], c["boat_type"], {x["seat"]: x["member_id"] for x in c["seats"] if x["member_id"]},
                                c["bankrider_ids"], [x["member_id"] for x in c["reserves"]])
                               for c in _load_crews(conn, [race_id]).get(race_id, [])) if race["crews_published"] else {}

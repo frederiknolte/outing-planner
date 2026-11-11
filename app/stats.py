@@ -105,7 +105,8 @@ def season_stats(role: str = Depends(require_member)):
                WHERE s.status = 'filled' AND s.sub_id IS NOT NULL AND o.cancelled = 0 AND o.date >= ?""",
             (start.isoformat(),)).fetchall()
 
-        c = {k: Counter() for k in ("water", "land", "total", "early", "late", "weekend", "cox", "subs")}
+        c = {k: Counter() for k in ("water", "land", "total", "early", "late", "weekend", "cox", "subs",
+                                    "bank", "bank_water", "bank_land")}
         boats_used: dict[int, set] = defaultdict(set)
         weeks: dict[int, set] = defaultdict(set)
         crews: dict[int, list] = defaultdict(list)     # water outing -> rowers/cox
@@ -142,6 +143,18 @@ def season_stats(role: str = Depends(require_member)):
             if s["sub_id"] in active:
                 c["subs"][s["sub_id"]] += 1
 
+        # Bankriding / coaching: a member named in an outing's coach field (matched by name, as in the
+        # calendar feed and autofill). Water outings and land sessions both count, once per session.
+        names = {mid: m["name"].strip().lower() for mid, m in active.items() if m["name"].strip()}
+        for o in conn.execute(
+                """SELECT kind, coach FROM outings WHERE published = 1 AND cancelled = 0 AND coach != ''
+                   AND date >= ? AND date < ?""", (start.isoformat(), today.isoformat())):
+            coach = o["coach"].lower()
+            for mid, nm in names.items():
+                if nm in coach:
+                    c["bank"][mid] += 1
+                    c["bank_" + o["kind"]][mid] += 1
+
         pairs = Counter()
         for crew in crews.values():
             for a, b in combinations(sorted(set(crew)), 2):
@@ -173,6 +186,8 @@ def season_stats(role: str = Depends(require_member)):
             ("weekend", "Weekend warrior", "Most Saturday & Sunday sessions", "sessions", c["weekend"]),
             ("cox", "Voice of the boat", "Most outings coxed", "outings", c["cox"]),
             ("subs", "Super sub", "Most seats filled for others", "subs", c["subs"]),
+            ("bank", "Bank patrol", "Most bankriding / coaching sessions (water and land)", "sessions", c["bank"]),
+            ("bank_land", "Land coach", "Most land sessions coached", "sessions", c["bank_land"]),
             ("streak", "Iron streak", "Longest run of weeks in a row with a session", "weeks",
              {mid: s[0] for mid, s in streaks.items()}),
             ("boats", "Boat collector", "Rowed in the most different boats", "boats",
@@ -200,6 +215,7 @@ def season_stats(role: str = Depends(require_member)):
                 "season_total": c["total"][mid], "all_time": total_all,
                 "streak": streaks.get(mid, (0, 0))[0], "current_streak": streaks.get(mid, (0, 0))[1],
                 "early": c["early"][mid], "subs": c["subs"][mid], "cox": c["cox"][mid],
+                "bank": c["bank"][mid], "bank_water": c["bank_water"][mid], "bank_land": c["bank_land"][mid],
                 "boats": len(boats_used[mid]),
                 "badges": badges,
                 "milestone": {"reached": max([x for x in MILESTONES if x <= total_all], default=0),

@@ -1758,7 +1758,7 @@ async function profileModal() {
 }
 
 // ------------------------------------------------------------ leaderboard --
-const BOARD_ICON = { water: "🚣", land: "🏋️", total: "⭐", early: "🌅", late: "🌙", weekend: "📅", cox: "📣", subs: "🦸", streak: "🔥", boats: "🛶" };
+const BOARD_ICON = { water: "🚣", land: "🏋️", total: "⭐", early: "🌅", late: "🌙", weekend: "📅", cox: "📣", subs: "🦸", bank: "🛟", bank_land: "📋", streak: "🔥", boats: "🛶" };
 const MEDAL = ["🥇", "🥈", "🥉"];
 const plural = (n, unit) => `${n} ${n === 1 ? unit.replace(/s$/, "") : unit}`;
 
@@ -1801,6 +1801,7 @@ function meStatsCard(p, boards, archived) {
         : `<div><div class="k">Current streak</div><div class="v">${p.current_streak ? "🔥 " : ""}${plural(p.current_streak, "weeks")}</div><div class="s">best ${plural(p.streak, "weeks")}</div></div>`}
       <div><div class="k">Early starts</div><div class="v">${p.early}</div><div class="s">before 08:00</div></div>
       <div><div class="k">Subs filled</div><div class="v">${p.subs}</div><div class="s">seats saved</div></div>
+      ${p.bank ? `<div><div class="k">Bankriding / coaching</div><div class="v">${p.bank}</div><div class="s">${p.bank_water || 0} on the water · ${p.bank_land || 0} land</div></div>` : ""}
       <div><div class="k">Boat buddy</div><div class="v lb-small">${p.buddy ? esc(p.buddy.name) : "–"}</div><div class="s">${p.buddy ? `${plural(p.buddy.value, "outings")} together` : "row more to find one"}</div></div>
     </div>
     ${p.badges.length || ranks.length ? `<div class="lb-badges">${p.badges.map((b) => `<span class="chip ok">🏆 ${esc(b)}</span>`).join("")}${ranks.filter((x) => !p.badges.includes(x.b.title)).map((x) => `<span class="chip accent">#${x.r.rank} ${esc(x.b.title)}</span>`).join("")}</div>` : ""}
@@ -3793,9 +3794,9 @@ function raceCrewsModal(r, data) {
   const crews = r.crews.map((c) => ({ id: c.id, name: c.name, boat_type: c.boat_type, notes: c.notes, seats: Object.fromEntries(c.seats.filter((x) => x.member_id != null).map((x) => [x.seat, x.member_id])), bankrider: c.bankrider, reserves: c.reserves.map((x) => x.member_id) }));
   if (!crews.length) crews.push(newCrew("Crew 1", "8+"));
   const people = new Map(S.boot.members.map((mm) => [mm.id, mm]));
-  r.crews.forEach((c) => c.seats.forEach((x) => { if (x.member_id != null && !people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: "", cox_status: "", associate: x.associate }); }));
+  r.crews.forEach((c) => c.seats.forEach((x) => { if (x.member_id != null && !people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: "", cox_status: x.cox_status || "", associate: x.associate }); }));
   r.crews.forEach((c) => c.reserves.forEach((x) => { if (!people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: "", cox_status: "", associate: x.associate }); }));
-  r.responses.forEach((x) => { if (!people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: x.category, cox_status: "", associate: x.associate }); });
+  r.responses.forEach((x) => { if (!people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: x.category, cox_status: x.cox_status || "", associate: x.associate }); });
   const resp = new Map(r.responses.map((x) => [x.member_id, x]));
   let active = 0, target = null, pubArmed = false, coaches = [];   // target: [crew index, seat or RESERVE] picked by clicking a seat label
   const RESERVE = -1;   // stands in for the seat number when working out what someone is doing in a crew
@@ -3830,6 +3831,8 @@ function raceCrewsModal(r, data) {
     return inCrew.length ? `${people.get(inCrew[0]).name} is also in this crew` : "";
   };
   const isAssoc = (mid) => !!people.get(mid)?.associate;
+  const canCox = (mid) => !!people.get(mid)?.cox_status;   // only registered coxes (a coxing status on the Members page) can take the cox seat
+  const notCoxMsg = (mid) => `${people.get(mid)?.name || "They"} isn't registered as a cox. Give them a coxing status on the Members page first.`;
   const crewName = (i) => crews[i].name.trim() || `Crew ${i + 1}`;
   // Everything someone does in the crews other than `skip` (e.g. "W1 · Stroke, W2 · Cox").
   const otherPlaces = (mid, skip = -1) => [
@@ -3847,7 +3850,7 @@ function raceCrewsModal(r, data) {
       const p = (x.problems || []).filter((q) => st !== 0 || !q.includes("could still cox"));
       if (p.length) out.push(["bad", "Not eligible: " + p.join(". ")]);
     }
-    if (st === 0 && mm && !mm.cox_status) out.push(["warn", "Not marked as a cox"]);
+    if (st === 0 && mm && !mm.cox_status) out.push(["bad", "Not registered as a cox"]);
     if (mm?.associate && st !== RESERVE) out.push(["warn", "Associate (different college)"]);
     return out;
   };
@@ -3882,6 +3885,7 @@ function raceCrewsModal(r, data) {
         const c = crews[ci], seats = seatsOf(c);
         if (intent === "cox") {
           if (!seats.includes(0)) return `${crewName(ci)} has no cox seat`;
+          if (!canCox(mid)) return notCoxMsg(mid);
           if (c.seats[0] != null) return "The cox seat is taken. Click “Cox” first to replace them.";
           return 0;
         }
@@ -3898,10 +3902,10 @@ function raceCrewsModal(r, data) {
         const okFor = (x, cox) => !(x.problems || []).some((q) => !cox || !q.includes("could still cox"));
         const free = r.responses.filter((x) => (x.status === "yes" || (maybes && x.status === "maybe")) && !placed(x.member_id))
           .sort((a, b) => (a.status === "yes" ? 0 : 1) - (b.status === "yes" ? 0 : 1) || a.name.localeCompare(b.name));
-        const coxPool = free.filter((x) => x.role === "cox" && okFor(x, true));
+        const coxPool = free.filter((x) => x.role === "cox" && okFor(x, true) && canCox(x.member_id));
         const groups = {};
         for (const x of free) {
-          if (x.role === "cox" || !okFor(x, false)) { if (x.role === "both" && okFor(x, true)) coxPool.push(x); continue; }
+          if (x.role === "cox" || !okFor(x, false)) { if (x.role === "both" && okFor(x, true) && canCox(x.member_id)) coxPool.push(x); continue; }
           const g = split || r.squad !== "any" ? (x.squad === "open" || x.squad === "women" ? x.squad : "unset") : "all";
           (groups[g] = groups[g] || { only: [], both: [] })[x.role === "both" ? "both" : "only"].push(x);
         }
@@ -3913,7 +3917,7 @@ function raceCrewsModal(r, data) {
           const { only, both } = groups[g];
           const k = Math.ceil((only.length || both.length) / n);
           const rows = [...only, ...both].slice(0, k * n);
-          coxPool.push(...both.filter((x) => !rows.includes(x)));
+          coxPool.push(...both.filter((x) => !rows.includes(x) && canCox(x.member_id)));
           const prefix = g === "open" ? "Open" : g === "women" ? "Women's" : g === "unset" ? "Squad not set" : r.squad !== "any" ? data.squads[r.squad] : "Crew";
           let num = crews.filter((c) => c.name.startsWith(prefix + " ")).length;
           for (let i = 0; i < k; i++) {
@@ -3951,13 +3955,14 @@ function raceCrewsModal(r, data) {
           dest = pickSeat(ci, mid, intent);
           if (typeof dest === "string") return toast(dest, true);
         }
+        if (dest === 0 && !canCox(mid)) return toast(notCoxMsg(mid), true);
         unseat(ci, mid);
         dropReserve(ci, mid);
         setSeat(ci, dest, mid);
         active = ci; target = null;
         draw();
       };
-      const items = (ci, st) => () => [...people.values()].map((mm) => {
+      const items = (ci, st) => () => [...people.values()].filter((mm) => st !== 0 || mm.cox_status || crews[ci].seats[0] === mm.id).map((mm) => {
         const x = resp.get(mm.id), w = seatIn(ci, mm.id), elsewhere = !!(w && w[1] !== st);   // elsewhere: another seat in this crew
         const s0 = x ? x.status : "";
         const fit = x && x.status !== "no" && (st === 0 ? x.role !== "rower" : x.role !== "cox");
@@ -4062,10 +4067,11 @@ function raceCrewsModal(r, data) {
           const here = !!crews[active] && (!!seatIn(active, x.member_id) || isReserve(active, x.member_id)), places = [
             ...seatsOfMember(x.member_id).map((w) => `${crewName(w[0])} · ${seatShort(lbl(crews[w[0]], w[1]))}`),
             ...crews.flatMap((c, i) => c.reserves.includes(x.member_id) ? [`${crewName(i)} · Reserve`] : [])];
-          const bad = x.problems?.length && (intent !== "cox" || x.problems.some((q) => !q.includes("could still cox")));
+          const notCox = intent === "cox" && !canCox(x.member_id);
+          const bad = notCox || (x.problems?.length && (intent !== "cox" || x.problems.some((q) => !q.includes("could still cox"))));
           return `<button type="button" class="pool-item ${places.length ? "in" : ""} ${bad ? "bad" : ""}" data-pick="${x.member_id}" data-intent="${intent}" title="${here ? "Click to take out of the highlighted crew" : "Click to put in the highlighted crew"}">
             <span class="pi-main"><span class="pi-name">${esc(x.name)}</span>
-              <span class="pi-meta">${catChip(x.category)}${x.associate ? ASSOC_CHIP : ""}${intent !== "cox" && x.side ? sideChip(x.side) : ""}${intent === "cox" && people.get(x.member_id)?.cox_status ? `<span class="chip violet">Cox ${esc(people.get(x.member_id).cox_status)}</span>` : ""}${x.role === "both" ? `<span class="chip accent">Row/cox</span>` : ""}${bad ? `<span class="chip bad" title="${esc(x.problems.join(". "))}">Not eligible</span>` : ""}</span></span>
+              <span class="pi-meta">${catChip(x.category)}${x.associate ? ASSOC_CHIP : ""}${intent !== "cox" && x.side ? sideChip(x.side) : ""}${intent === "cox" && people.get(x.member_id)?.cox_status ? `<span class="chip violet">Cox ${esc(people.get(x.member_id).cox_status)}</span>` : ""}${x.role === "both" ? `<span class="chip accent">Row/cox</span>` : ""}${notCox ? `<span class="chip bad" title="Give them a coxing status on the Members page to put them in a cox seat">Not a registered cox</span>` : bad ? `<span class="chip bad" title="${esc(x.problems.join(". "))}">Not eligible</span>` : ""}</span></span>
             <span class="pi-state">${places.length ? places.map((t) => `<span class="pi-seat">${esc(t)}</span>`).join("") : I.plus}</span></button>`;
         };
         const group = (title, list, intent, hint = "") => list.length ? `<div class="pool-group"><div class="pool-h">${esc(title)} <span class="faint">${list.length}</span>${hint ? `<span class="pool-hint">${hint}</span>` : ""}</div>${list.map((x) => item(x, intent)).join("")}</div>` : "";
