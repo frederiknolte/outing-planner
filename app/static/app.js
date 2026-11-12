@@ -1935,25 +1935,21 @@ async function pageRowers() {
   } catch (e) { return fail(e); }
   const draw = () => {
     const active = (r) => r.active !== false;
-    const statusOk = (r) => rowerStatus === "all" || (rowerStatus === "inactive" ? !r.active && r.category !== "Coach"
-      : rowerStatus === "issues" ? active(r) && (!r.water_ok || !r.land_ok)
+    const statusOk = (r) => rowerStatus === "all" || (rowerStatus === "issues" ? active(r) && (!r.water_ok || !r.land_ok)
       : active(r) && [r.swim?.state, r.cox?.state, r.capsize?.state].some((x) => x === "soon" || x === "expired"));
     const squadOk = (r) => rowerSquad === "all" || (rowerSquad === "nosquad" ? !r.squad : r.squad === rowerSquad);
-    // inactive members only show up when nothing is filtered, or when asked for (coaches don't have an active state)
-    const filtered = rowerCat !== "all" || rowerSquad !== "all" || rowerStatus !== "all";
-    const hideInactive = filtered && rowerStatus !== "inactive" && rowerCat !== "Coach";
-    let list = rows.filter((r) => (!rowerQ || fold(r.name).includes(rowerQ)) && (rowerCat === "all" || r.category === rowerCat) && squadOk(r) && statusOk(r) && (!hideInactive || active(r)));
+    let list = rows.filter((r) => (!rowerQ || fold(r.name).includes(rowerQ)) && (rowerCat === "all" || r.category === rowerCat) && squadOk(r) && statusOk(r));
     if (committee && rowerCrew) list = list.filter((r) => rowerCrew === "none" ? !r.club_crew : (r.club_crew || "").split(",").includes(rowerCrew));
     const k = rowerSort.k;
     list.sort((a, b) => (typeof a[k] === "string" ? a[k].localeCompare(b[k]) : (a[k] ?? -1) - (b[k] ?? -1)) * rowerSort.dir || a.name.localeCompare(b.name));
     const max = Math.max(1, ...rows.map((r) => r.total));
     const th = (key, l, cls = "") => `<th class="sort ${cls}" data-k="${key}">${l}${rowerSort.k === key ? (rowerSort.dir > 0 ? " ↑" : " ↓") : ""}</th>`;
     const cell = (r, f) => (r.category === "Coach" ? `<td><span class="faint">—</span></td>` : f());   // coaches have none of the rower info
-    $("#rw-table").innerHTML = `<table class="t"><thead><tr>${th("name", "Name")}${th("category", "Category")}${th("squad", "Squad")}${committee ? th("club_crew", "Crew") : ""}
+    const table = (rs, empty) => `<table class="t"><thead><tr>${th("name", "Name")}${th("category", "Category")}${th("squad", "Squad")}${committee ? th("club_crew", "Crew") : ""}
       ${committee ? `<th>Swim</th><th title="Capsize drill (needed for boats of two or fewer)">Capsize</th><th>Subs</th>${th("cox_status", "Cox")}<th title="At their next new outing, counting everything already scheduled">May row next</th>` : `${th("cox_status", "Cox")}`}
       ${th("water", "Water", "num")}${th("land", "Land", "num")}${th("total", "Total", "num")}<th style="width:120px"></th>${committee ? th("novice_free_left", "Free left", "num") : ""}</tr></thead>
-      <tbody>${list.map((r) => `<tr class="${committee ? "clickable" : ""}" data-id="${r.id}">
-        <td><b>${esc(r.name)}</b>${cttee[r.id] ? ` ${committeeBadge(cttee[r.id])}` : ""}${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${committee && !r.active && r.category !== "Coach" ? ` <span class="chip">inactive</span>` : ""}${committee && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
+      <tbody>${rs.map((r) => `<tr class="${committee ? "clickable" : ""}" data-id="${r.id}">
+        <td><b>${esc(r.name)}</b>${cttee[r.id] ? ` ${committeeBadge(cttee[r.id])}` : ""}${r.id === S.me ? ` <span class="chip accent">you</span>` : ""}${committee && r.needs_review ? ` <span class="chip warn" title="Added through the sign-up form — check their details">New</span>` : ""}</td>
         <td>${catChip(r.category)}</td>
         ${cell(r, () => `<td>${r.squad ? squadChip(r.squad) : `<span class="faint">—</span>`}</td>`)}${committee ? cell(r, () => `<td>${r.club_crew ? r.club_crew.split(",").map((c) => `<span class="chip ${c[0] === "W" ? "violet" : "accent"}">${esc(c)}</span>`).join(" ") : `<span class="faint">—</span>`}</td>`) : ""}
         ${committee ? `${cell(r, () => `<td>${!r.swim_test ? `<span class="chip warn">No</span>` : r.swim.state === "expired" || r.swim.state === "soon" ? expiryChip(r.swim, "Swim test") : `<span class="chip ok" title="${r.swim.expires ? `Valid until ${esc(fmtYear(r.swim.expires))}` : "Date not recorded"}">${I.check}Yes</span>`}</td>`)}
@@ -1964,9 +1960,13 @@ async function pageRowers() {
           : cell(r, () => `<td>${r.cox_status ? `<span class="chip violet">${esc(r.cox_status)}</span>` : ""}</td>`)}
         <td class="num">${r.water}</td><td class="num">${r.land}</td><td class="num"><b>${r.total}</b></td>
         <td><div class="bar"><i style="width:${(r.total / max) * 100}%"></i></div></td>
-        ${committee ? `<td class="num">${r.novice_free_left ?? ""}</td>` : ""}</tr>`).join("") || `<tr><td colspan="14" class="faint" style="text-align:center;padding:30px">No one matches.</td></tr>`}</tbody></table>`;
-    $$("#rw-table th.sort").forEach((t) => t.onclick = () => { rowerSort = { k: t.dataset.k, dir: rowerSort.k === t.dataset.k ? -rowerSort.dir : (t.dataset.k === "name" || t.dataset.k === "category" || t.dataset.k === "squad" || t.dataset.k === "club_crew" ? 1 : -1) }; draw(); });
-    if (committee) $$("#rw-table tr[data-id]").forEach((tr) => tr.onclick = () => editMember(rows.find((r) => r.id === +tr.dataset.id), meta));
+        ${committee ? `<td class="num">${r.novice_free_left ?? ""}</td>` : ""}</tr>`).join("") || `<tr><td colspan="14" class="faint" style="text-align:center;padding:30px">${empty}</td></tr>`}</tbody></table>`;
+    // coaches are stored as inactive but aren't "inactive members", so they stay in the main list
+    const inactive = list.filter((r) => r.active === false && r.category !== "Coach");
+    $("#rw-table").innerHTML = table(list.filter((r) => !inactive.includes(r)), "No one matches.");
+    $("#rw-inactive").innerHTML = inactive.length ? `<div class="section-title">Inactive members · ${inactive.length}</div><div class="card table-wrap">${table(inactive)}</div>` : "";
+    $$("#rw-table th.sort, #rw-inactive th.sort").forEach((t) => t.onclick = () => { rowerSort = { k: t.dataset.k, dir: rowerSort.k === t.dataset.k ? -rowerSort.dir : (t.dataset.k === "name" || t.dataset.k === "category" || t.dataset.k === "squad" || t.dataset.k === "club_crew" ? 1 : -1) }; draw(); });
+    if (committee) $$("#rw-table tr[data-id], #rw-inactive tr[data-id]").forEach((tr) => tr.onclick = () => editMember(rows.find((r) => r.id === +tr.dataset.id), meta));
     $("#rw-count").textContent = `${list.length} shown`;
   };
   const novices = rows.filter((r) => r.category === "Novice" && r.active !== false).length;
@@ -1987,12 +1987,13 @@ async function pageRowers() {
         const sel = (id, label, cur, opts) => `<select class="input rw-f" id="${id}" aria-label="${label}">${opts.map(([k, l]) => `<option value="${k}" ${cur === k ? "selected" : ""}>${l}</option>`).join("")}</select>`;
         return sel("rw-cat", "Category", rowerCat, [["all", "All categories"], ["Novice", "Novice"], ["Senior", "Senior"], ["Coach", "Coach"]])
           + sel("rw-squad", "Squad", rowerSquad, [["all", "Any squad"], ["open", "Open"], ["women", "Women's"], ...(committee ? [["nosquad", "No squad"]] : [])])
-          + (committee ? sel("rw-status", "Status", rowerStatus, [["all", "Any status"], ["issues", "Can't row"], ["expiring", "Expiring"], ["inactive", "Inactive"]]) : "");
+          + (committee ? sel("rw-status", "Status", rowerStatus, [["all", "Any status"], ["issues", "Can't row"], ["expiring", "Expiring"]]) : "");
       })()}
       ${committee ? `<select class="input rw-f" id="rw-crew" aria-label="Crew"><option value="">Any crew</option>${(meta.crews || []).map((c) => `<option value="${esc(c)}" ${rowerCrew === c ? "selected" : ""}>${esc(c)}</option>`).join("")}<option value="none" ${rowerCrew === "none" ? "selected" : ""}>No crew</option></select>` : ""}
       <span class="faint small" id="rw-count" style="margin-left:auto"></span>
     </div>
-    <div class="card table-wrap" id="rw-table"></div>`;
+    <div class="card table-wrap" id="rw-table"></div>
+    <div id="rw-inactive"></div>`;
   $("#rw-q").oninput = (e) => { rowerQ = fold(e.target.value.trim()); draw(); };
   if (committee) $("#rw-crew").onchange = (e) => { rowerCrew = e.target.value; draw(); };
   $("#rw-cat").onchange = (e) => { rowerCat = e.target.value; draw(); };
