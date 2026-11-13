@@ -172,8 +172,9 @@ function confirmBox(title, text, okLabel = "Confirm", danger = false) {
 }
 
 // --------------------------------------------------------------- combobox --
-/* items: [{id, label, sub, cls, rank}] — returns controller */
-function combo(container, { items, value, placeholder = "Search…", onChange, renderWhy }) {
+/* items: [{id, label, sub, cls, rank}] — returns controller. create: {label(text), why, make(text)} adds a last row that
+   makes a new item from what was typed (label returns "" when the text can't make one; make returns the new item's id). */
+function combo(container, { items, value, placeholder = "Search…", onChange, renderWhy, create }) {
   container.classList.add("combo");
   container.innerHTML = `<input class="input" autocomplete="off" placeholder="${esc(placeholder)}"><button type="button" class="clear" tabindex="-1" aria-label="Clear">×</button>`;
   const inp = $("input", container), clr = $(".clear", container);
@@ -193,14 +194,16 @@ function combo(container, { items, value, placeholder = "Search…", onChange, r
     const query = q && q !== curLabel ? q : "";
     shown = items().filter((i) => !query || fold(i.label).includes(query))
       .sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0) || a.label.localeCompare(b.label)).slice(0, 80);
+    const made = query && create?.label(inp.value.trim());
+    if (made && !shown.some((i) => fold(i.label) === query)) shown.push({ create: true, label: made, text: inp.value.trim() });
     hl = Math.min(hl, Math.max(0, shown.length - 1));
     if (!list) { list = document.createElement("div"); list.className = "combo-list"; container.appendChild(list); }
-    list.innerHTML = shown.length ? shown.map((i, k) => `<div class="combo-item ${k === hl ? "hl" : ""} ${i.dim ? "dim" : ""}" data-k="${k}"><span class="nm">${esc(i.label)}</span><span class="why">${renderWhy ? renderWhy(i) : ""}</span></div>`).join("")
+    list.innerHTML = shown.length ? shown.map((i, k) => `<div class="combo-item ${k === hl ? "hl" : ""} ${i.dim ? "dim" : ""}" data-k="${k}"><span class="nm">${esc(i.label)}</span><span class="why">${i.create ? esc(create.why) : renderWhy ? renderWhy(i) : ""}</span></div>`).join("")
       : `<div class="combo-empty">No matches</div>`;
     $$(".combo-item", list).forEach((el) => el.addEventListener("mousedown", (e) => { e.preventDefault(); pick(shown[+el.dataset.k]); }));
     const h = $(".hl", list); h && h.scrollIntoView({ block: "nearest" });
   };
-  const pick = (it) => { cur = it ? it.id : null; sync(); close(); onChange && onChange(cur); inp.blur(); };
+  const pick = (it) => { cur = it ? (it.create ? create.make(it.text) : it.id) : null; sync(); close(); onChange && onChange(cur); inp.blur(); };
   inp.addEventListener("focus", () => { inp.select(); hl = 0; draw(); });
   inp.addEventListener("input", () => { hl = 0; draw(); });
   inp.addEventListener("blur", () => setTimeout(() => { close(); sync(); }, 120));
@@ -3882,6 +3885,12 @@ function raceCrewsModal(r, data) {
     people.set(--lastExternal, { id: lastExternal, name, college, category: "", cox_status: "", associate: false, external: true });
     return lastExternal;
   };
+  // Typing "Name, College" in a seat or reserve box offers to add an external; the college is optional.
+  const newExternal = {
+    label: (text) => { const name = text.split(",")[0].trim(); return name ? `Add ${name} as an external` : ""; },
+    why: "Type “Name, College” to add their college",
+    make: (text) => { const [name, ...college] = text.split(","); return externalId(name.trim(), college.join(",").trim()); },
+  };
   // The id someone in a seat or reserve is known by here, or null for an empty seat.
   const who = (x) => {
     if (x.external) return externalId(x.name, x.college);
@@ -3963,13 +3972,10 @@ function raceCrewsModal(r, data) {
             <label class="check small"><input type="checkbox" id="rcb-a-maybe"> Include maybes</label>
             <button type="button" class="btn sm primary" id="rcb-auto">${I.wand}Make crews</button></div>
             <span class="hint">Puts everyone available who isn't in a crew yet into as many boats as needed, on their side, with coxes. Empty seats are left as <b>Sub needed</b>. Then adjust by hand.</span></div>
-          <p class="oe-hint">Click a name on the right to put them in the highlighted crew (rowers go on their side); click it again to take them out of that crew. Someone can be in several crews, e.g. row in one and cox in another. To choose the seat yourself, click the seat's name first. Empty seats show as <b>Sub needed</b> until you fill them. Each crew can also have a bankrider and reserves; click <b>Reserve</b> first to add a name from the right as a reserve.</p>
+          <p class="oe-hint">Click a name on the right to put them in the highlighted crew (rowers go on their side); click it again to take them out of that crew. Someone can be in several crews, e.g. row in one and cox in another. To choose the seat yourself, click the seat's name first. Empty seats show as <b>Sub needed</b> until you fill them. Each crew can also have a bankrider and reserves; click <b>Reserve</b> first to add a name from the right as a reserve. For someone who isn't a member, type their name in a seat or reserve box and choose <b>Add … as an external</b>; type <b>Name, College</b> to include their college.</p>
           <div id="rcb-crews"></div>
           <button type="button" class="btn sm" id="rcb-add" style="align-self:flex-start">${I.plus}Add crew</button></div>
-        <aside class="oe-pool"><div class="pool-list" id="rcb-pool"></div>
-          <div class="pool-group rcb-ext"><div class="pool-h">Not a member <span class="pool-hint">→ tagged External</span></div>
-            <div class="rcb-ext-row"><input class="input" id="rcb-x-name" placeholder="Name" maxlength="80" autocomplete="off" aria-label="Name of someone who isn't a member"><input class="input" id="rcb-x-college" placeholder="College (optional)" maxlength="80" autocomplete="off" aria-label="Their college"><button type="button" class="btn sm" id="rcb-x-add">${I.plus}Add</button></div>
-            <span class="hint">Goes in the highlighted crew (or the seat you clicked first). Click their name again to take them out.</span></div></aside>
+        <aside class="oe-pool"><div class="pool-list" id="rcb-pool"></div></aside>
       </div>
       <div id="rcb-sum"></div>`,
     foot: `<div class="r"><button class="btn" data-close>Close</button>
@@ -4141,7 +4147,7 @@ function raceCrewsModal(r, data) {
           $$(".sl-btn", sec).forEach((b) => b.onclick = () => { const st = +b.dataset.target; target = target && target[0] === ci && target[1] === st ? null : [ci, st]; active = ci; draw(); });
           $$("[data-seat]", sec).forEach((el) => {
             const st = +el.dataset.seat;
-            combo(el, { items: items(ci, st), value: c.seats[st] ?? null, placeholder: st === 0 ? "Sub needed · pick cox…" : "Sub needed · pick rower…", renderWhy: why(st),
+            combo(el, { items: items(ci, st), value: c.seats[st] ?? null, placeholder: st === 0 ? "Sub needed · pick cox…" : "Sub needed · pick rower…", renderWhy: why(st), create: newExternal,
               onChange: (v) => { if (v != null) { unseat(ci, v); dropReserve(ci, v); } setSeat(ci, st, v); active = ci; draw(); } });
           });
           nameSuggest($('input[data-k="bankrider"]', sec), { entries: bankriderEntries(ci), why: bankriderWhy, multi: true,
@@ -4149,7 +4155,7 @@ function raceCrewsModal(r, data) {
           $$("[data-reserve]", sec).forEach((el) => {
             const ri = +el.dataset.reserve, cur = c.reserves[ri] ?? null;
             const list = items(ci, RESERVE);   // everyone except this crew's other reserves
-            combo(el, { items: () => list().filter((i) => i.id === cur || !c.reserves.includes(i.id)), value: cur, placeholder: "Add reserve…", renderWhy: why(RESERVE),
+            combo(el, { items: () => list().filter((i) => i.id === cur || !c.reserves.includes(i.id)), value: cur, placeholder: "Add reserve…", renderWhy: why(RESERVE), create: newExternal,
               onChange: (v) => {
                 if (cur != null) dropReserve(ci, cur);
                 if (v != null) addReserve(ci, v);
@@ -4171,16 +4177,14 @@ function raceCrewsModal(r, data) {
           const bad = notCox || (x.problems?.length && (intent !== "cox" || x.problems.some((q) => !q.includes("could still cox"))));
           return `<button type="button" class="pool-item ${places.length ? "in" : ""} ${bad ? "bad" : ""}" data-pick="${x.member_id}" data-intent="${intent}" title="${here ? "Click to take out of the highlighted crew" : "Click to put in the highlighted crew"}">
             <span class="pi-main"><span class="pi-name">${esc(x.name)}</span>
-              <span class="pi-meta">${x.external ? `${EXTERNAL_CHIP}${x.college ? `<span class="faint">${esc(x.college)}</span>` : ""}` : catChip(x.category)}${x.associate ? ASSOC_CHIP : ""}${intent !== "cox" && x.side ? sideChip(x.side) : ""}${intent === "cox" && people.get(x.member_id)?.cox_status ? `<span class="chip violet">Cox ${esc(people.get(x.member_id).cox_status)}</span>` : ""}${x.role === "both" ? `<span class="chip accent">Row/cox</span>` : ""}${notCox ? `<span class="chip bad" title="Give them a coxing status on the Members page to put them in a cox seat">Not a registered cox</span>` : bad ? `<span class="chip bad" title="${esc(x.problems.join(". "))}">Not eligible</span>` : ""}</span></span>
+              <span class="pi-meta">${catChip(x.category)}${x.associate ? ASSOC_CHIP : ""}${intent !== "cox" && x.side ? sideChip(x.side) : ""}${intent === "cox" && people.get(x.member_id)?.cox_status ? `<span class="chip violet">Cox ${esc(people.get(x.member_id).cox_status)}</span>` : ""}${x.role === "both" ? `<span class="chip accent">Row/cox</span>` : ""}${notCox ? `<span class="chip bad" title="Give them a coxing status on the Members page to put them in a cox seat">Not a registered cox</span>` : bad ? `<span class="chip bad" title="${esc(x.problems.join(". "))}">Not eligible</span>` : ""}</span></span>
             <span class="pi-state">${places.length ? places.map((t) => `<span class="pi-seat">${esc(t)}</span>`).join("") : I.plus}</span></button>`;
         };
         const group = (title, list, intent, hint = "") => list.length ? `<div class="pool-group"><div class="pool-h">${esc(title)} <span class="faint">${list.length}</span>${hint ? `<span class="pool-hint">${hint}</span>` : ""}</div>${list.map((x) => item(x, intent)).join("")}</div>` : "";
         const c = raceCrew(yes), cm = raceCrew(maybe);
-        const externals = [...people.values()].filter((p) => p.external).map((p) => ({ ...p, member_id: p.id }));
         let html = `<div class="pool-head"><b>Available</b><span class="faint small">${yes.length} ${yes.length === 1 ? "person" : "people"}</span></div>`;
         if (!yes.length) html += `<div class="faint small" style="padding:6px 2px">Nobody has said they're available yet. You can still pick anyone from the seat boxes.</div>`;
         html += group("Coxes", c.cox, "cox", "→ cox seat") + group("Open rowers", c.open, "row", "placed on their side") + group("Women's rowers", c.women, "row", "placed on their side") + group("Rowers, squad not set", c.unset, "row");
-        html += group("Externals", externals, "row");
         if (maybe.length) html += `<details class="pool-group pool-more"><summary class="pool-h">Maybe <span class="faint">${maybe.length}</span></summary>${group("Coxes", cm.cox, "cox")}${group("Rowers", [...cm.open, ...cm.women, ...cm.unset], "row")}</details>`;
         const det = pool.querySelector("details");
         if (det) maybeOpen = det.open;   // keep it open (the default) or collapsed as the committee left it
@@ -4222,16 +4226,6 @@ function raceCrewsModal(r, data) {
           pageRaces();
         } catch (e) { fail(e); }
       };
-      const addExternal = () => {
-        const nameEl = $("#rcb-x-name", m), collegeEl = $("#rcb-x-college", m), name = nameEl.value.trim();
-        if (!name) { nameEl.focus(); return toast("Type their name first", true); }
-        const id = externalId(name, collegeEl.value.trim());
-        place(id, "row");
-        draw();   // also tidies the new external away if there was no room for them
-        if (placed(id)) { nameEl.value = ""; collegeEl.value = ""; nameEl.focus(); }
-      };
-      $("#rcb-x-add", m).onclick = addExternal;
-      $$("#rcb-x-name, #rcb-x-college", m).forEach((el) => el.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); addExternal(); } });
       $("#rcb-auto", m).onclick = autoCrews;
       $("#rcb-draft", m).onclick = () => save(false);
       $("#rcb-pub", m).onclick = () => save(true);
