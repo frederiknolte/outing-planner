@@ -821,7 +821,7 @@ async function pageSchedule() {
   // Two independent filters: the type of thing (S.filter) and what to focus on (S.focus: mine / open spots / needs a sub)
   const typeOk = (t) => S.filter === "all" || S.filter === t;
   const inRace = (rc) => S.me != null && racePlaces(rc, S.me).length > 0;
-  const raceSubs = (rc) => rc.crews.some((c) => c.seats.some((x) => x.member_id == null));
+  const raceSubs = (rc) => rc.crews.some((c) => c.seats.some(seatOpen));
   const inActivity = (sc) => S.me != null && (sc.going || []).some((g) => g.id === S.me);
   const outs = data.outings.filter((o) => typeOk(o.kind) && (S.focus === "all" || (S.focus === "mine" ? o.seats.some((s) => s.member && s.member.id === S.me) : S.focus === "subs" ? o.open_subs > 0 : (o.kind === "land" && o.spots > 0 && !o.past && !o.cancelled))));
   const races = (data.races || []).filter((rc) => typeOk("race") && (S.focus === "all" || (S.focus === "mine" && inRace(rc)) || (S.focus === "subs" && raceSubs(rc))));
@@ -3758,18 +3758,22 @@ const racePlaces = (r, mid) => r.crews.flatMap((c) => {
 /* A crew's bankrider and reserves (if any), under its seats. Also used on the schedule. */
 const raceCrewExtras = (c) => c.bankrider || c.reserves.length ? `<div class="race-extras">
     ${c.bankrider ? `<div><b>Bankrider:</b> <span class="${c.bankrider_ids.includes(S.me) ? "me" : ""}">${esc(c.bankrider)}</span></div>` : ""}
-    ${c.reserves.length ? `<div><b>Reserve${c.reserves.length === 1 ? "" : "s"}:</b> ${c.reserves.map((x) => `<span class="${x.member_id === S.me ? "me" : ""}">${esc(x.name)}${x.associate ? " (assoc.)" : ""}</span>`).join(", ")}</div>` : ""}</div>` : "";
+    ${c.reserves.length ? `<div><b>Reserve${c.reserves.length === 1 ? "" : "s"}:</b> ${c.reserves.map((x) => `<span class="${x.member_id === S.me ? "me" : ""}">${esc(x.name)}${x.external ? ` (External${x.college ? `, ${esc(x.college)}` : ""})` : x.associate ? " (assoc.)" : ""}</span>`).join(", ")}</div>` : ""}</div>` : "";
+/* Someone who isn't a member (named by the committee, with their college). */
+const EXTERNAL_TAG = `<span class="tag violet" title="Not a member of the club">External</span>`;
+const EXTERNAL_CHIP = `<span class="chip violet" title="Not a member of the club">External</span>`;
+const seatOpen = (x) => x.member_id == null && !x.external;   // nobody in it: needs a sub
 /* Someone from a college other than Reuben. Races sometimes cap how many associates a crew may have. */
 const ASSOC_TAG = `<span class="tag violet" title="Associate: from a different college">Associate</span>`;
 const ASSOC_CHIP = `<span class="chip violet" title="Associate: from a different college">Associate</span>`;
 /* A crew seat row, also used on the schedule. Empty seats need a sub (the committee fills them). */
-const raceSeatRow = (x) => x.member_id == null
+const raceSeatRow = (x) => seatOpen(x)
   ? `<div class="seat open subneed"><span class="sl">${esc(seatShort(x.label))}</span><span class="sn">Sub needed</span></div>`
-  : `<div class="seat ${x.member_id === S.me ? "me" : ""}"><span class="sl">${esc(seatShort(x.label))}</span><span class="sn">${esc(x.name)}</span>${x.associate ? ASSOC_TAG : ""}</div>`;
+  : `<div class="seat ${x.member_id === S.me ? "me" : ""}"><span class="sl">${esc(seatShort(x.label))}</span><span class="sn">${esc(x.name)}${x.college ? ` <span class="faint">· ${esc(x.college)}</span>` : ""}</span>${x.external ? EXTERNAL_TAG : x.associate ? ASSOC_TAG : ""}</div>`;
 
 /* One crew, laid out like a boat on the schedule. */
 function raceCrewBlock(c) {
-  const subs = c.seats.filter((x) => x.member_id == null).length;
+  const subs = c.seats.filter(seatOpen).length;
   return `<div class="race-boat">
     <div class="rb-top"><b>${esc(c.name)}</b><span class="faint small">${esc(c.boat_type)}</span>${subs ? `<span class="chip warn">${subs} sub${subs === 1 ? "" : "s"} needed</span>` : ""}${c.associates ? `<span class="chip violet" title="Rowers and coxes from a different college">${c.associates} associate${c.associates === 1 ? "" : "s"}</span>` : ""}</div>
     <div class="seats">${c.seats.map(raceSeatRow).join("")}</div>
@@ -3868,11 +3872,24 @@ function raceResultsModal(r) {
 function raceCrewsModal(r, data) {
   const BT = data.boat_types, MAX_RESERVES = 10;
   const newCrew = (name, boat_type) => ({ name, boat_type, notes: "", seats: {}, bankrider: "", reserves: [] });
-  const crews = r.crews.map((c) => ({ id: c.id, name: c.name, boat_type: c.boat_type, notes: c.notes, seats: Object.fromEntries(c.seats.filter((x) => x.member_id != null).map((x) => [x.seat, x.member_id])), bankrider: c.bankrider, reserves: c.reserves.map((x) => x.member_id) }));
-  if (!crews.length) crews.push(newCrew("Crew 1", "8+"));
   const people = new Map(S.boot.members.map((mm) => [mm.id, mm]));
-  r.crews.forEach((c) => c.seats.forEach((x) => { if (x.member_id != null && !people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: "", cox_status: x.cox_status || "", associate: x.associate }); }));
-  r.crews.forEach((c) => c.reserves.forEach((x) => { if (!people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: "", cox_status: "", associate: x.associate }); }));
+  // Externals aren't members, so here they get negative ids of their own (the same name and college is the same person).
+  // The server gets them back as names.
+  let lastExternal = 0;
+  const externalId = (name, college) => {
+    const same = [...people.values()].find((p) => p.external && fold(p.name) === fold(name) && fold(p.college) === fold(college));
+    if (same) return same.id;
+    people.set(--lastExternal, { id: lastExternal, name, college, category: "", cox_status: "", associate: false, external: true });
+    return lastExternal;
+  };
+  // The id someone in a seat or reserve is known by here, or null for an empty seat.
+  const who = (x) => {
+    if (x.external) return externalId(x.name, x.college);
+    if (x.member_id != null && !people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: "", cox_status: x.cox_status || "", associate: x.associate });
+    return x.member_id;
+  };
+  const crews = r.crews.map((c) => ({ id: c.id, name: c.name, boat_type: c.boat_type, notes: c.notes, seats: Object.fromEntries(c.seats.filter((x) => !seatOpen(x)).map((x) => [x.seat, who(x)])), bankrider: c.bankrider, reserves: c.reserves.map(who) }));
+  if (!crews.length) crews.push(newCrew("Crew 1", "8+"));
   r.responses.forEach((x) => { if (!people.has(x.member_id)) people.set(x.member_id, { id: x.member_id, name: x.name, category: x.category, cox_status: x.cox_status || "", associate: x.associate }); });
   const resp = new Map(r.responses.map((x) => [x.member_id, x]));
   let active = 0, target = null, pubArmed = false, coaches = [];   // target: [crew index, seat or RESERVE] picked by clicking a seat label
@@ -3908,7 +3925,7 @@ function raceCrewsModal(r, data) {
     return inCrew.length ? `${people.get(inCrew[0]).name} is also in this crew` : "";
   };
   const isAssoc = (mid) => !!people.get(mid)?.associate;
-  const canCox = (mid) => !!people.get(mid)?.cox_status;   // only registered coxes (a coxing status on the Members page) can take the cox seat
+  const canCox = (mid) => !!people.get(mid)?.cox_status || !!people.get(mid)?.external;   // members need a coxing status (on the Members page) to take the cox seat
   const notCoxMsg = (mid) => `${people.get(mid)?.name || "They"} isn't registered as a cox. Give them a coxing status on the Members page first.`;
   const crewName = (i) => crews[i].name.trim() || `Crew ${i + 1}`;
   // Everything someone does in the crews other than `skip` (e.g. "W1 · Stroke, W2 · Cox").
@@ -3918,6 +3935,7 @@ function raceCrewsModal(r, data) {
   ];
   const issues = (mid, st) => {
     const x = resp.get(mid), mm = people.get(mid), out = [];
+    if (mm?.external) return [["warn", `External${mm.college ? ` · ${mm.college}` : ""}`]];   // no sign-up or eligibility to check
     if (!x) out.push(["warn", "Hasn't responded"]);
     else if (x.status === "no") out.push(["bad", "Said not available"]);
     else if (x.status === "maybe") out.push(["warn", "Said maybe"]);
@@ -3948,7 +3966,10 @@ function raceCrewsModal(r, data) {
           <p class="oe-hint">Click a name on the right to put them in the highlighted crew (rowers go on their side); click it again to take them out of that crew. Someone can be in several crews, e.g. row in one and cox in another. To choose the seat yourself, click the seat's name first. Empty seats show as <b>Sub needed</b> until you fill them. Each crew can also have a bankrider and reserves; click <b>Reserve</b> first to add a name from the right as a reserve.</p>
           <div id="rcb-crews"></div>
           <button type="button" class="btn sm" id="rcb-add" style="align-self:flex-start">${I.plus}Add crew</button></div>
-        <aside class="oe-pool" id="rcb-pool"></aside>
+        <aside class="oe-pool"><div class="pool-list" id="rcb-pool"></div>
+          <div class="pool-group rcb-ext"><div class="pool-h">Not a member <span class="pool-hint">→ tagged External</span></div>
+            <div class="rcb-ext-row"><input class="input" id="rcb-x-name" placeholder="Name" maxlength="80" autocomplete="off" aria-label="Name of someone who isn't a member"><input class="input" id="rcb-x-college" placeholder="College (optional)" maxlength="80" autocomplete="off" aria-label="Their college"><button type="button" class="btn sm" id="rcb-x-add">${I.plus}Add</button></div>
+            <span class="hint">Goes in the highlighted crew (or the seat you clicked first). Click their name again to take them out.</span></div></aside>
       </div>
       <div id="rcb-sum"></div>`,
     foot: `<div class="r"><button class="btn" data-close>Close</button>
@@ -4039,7 +4060,7 @@ function raceCrewsModal(r, data) {
         active = ci; target = null;
         draw();
       };
-      const items = (ci, st) => () => [...people.values()].filter((mm) => st !== 0 || mm.cox_status || crews[ci].seats[0] === mm.id).map((mm) => {
+      const items = (ci, st) => () => [...people.values()].filter((mm) => st !== 0 || canCox(mm.id) || crews[ci].seats[0] === mm.id).map((mm) => {
         const x = resp.get(mm.id), w = seatIn(ci, mm.id), elsewhere = !!(w && w[1] !== st);   // elsewhere: another seat in this crew
         const s0 = x ? x.status : "";
         const fit = x && x.status !== "no" && (st === 0 ? x.role !== "rower" : x.role !== "cox");
@@ -4050,7 +4071,7 @@ function raceCrewsModal(r, data) {
       const bankriderEntries = (ci) => () => {
         const byName = new Map();
         coaches.forEach((co) => byName.set(fold(co.name), { name: co.name, coach: true }));
-        people.forEach((mm) => { const k = fold(mm.name); byName.set(k, { ...(byName.get(k) || { name: mm.name }), mid: mm.id }); });
+        people.forEach((mm) => { if (mm.external) return; const k = fold(mm.name); byName.set(k, { ...(byName.get(k) || { name: mm.name }), mid: mm.id }); });
         return [...byName.values()].map((e) => {
           const also = e.mid != null ? otherPlaces(e.mid, ci) : [], inCrew = e.mid != null && (!!seatIn(ci, e.mid) || isReserve(ci, e.mid));
           return { ...e, also, inCrew, x: resp.get(e.mid), dim: inCrew, rank: inCrew ? 3 : also.length ? 2 : e.coach ? 0 : 1 };
@@ -4062,7 +4083,8 @@ function raceCrewsModal(r, data) {
       ].join(" ");
       const why = (st) => (i) => {
         if (i.elsewhere) return `<span class="faint">in this crew · ${esc(lbl(crews[i.w[0]], i.w[1]))}</span>`;
-        const bits = [statusChip(i.x)];
+        const bits = [i.mm.external ? EXTERNAL_CHIP : statusChip(i.x)];
+        if (i.mm.college) bits.push(`<span class="faint">${esc(i.mm.college)}</span>`);
         if (i.also.length) bits.push(`<span class="faint">also ${esc(i.also.join(", "))}</span>`);
         if (i.x && i.x.status !== "no") {
           if (i.x.role === "both") bits.push(`<span class="chip accent">Row/cox</span>`);
@@ -4075,6 +4097,7 @@ function raceCrewsModal(r, data) {
         return bits.join(" ");
       };
       const draw = () => {
+        people.forEach((p, id) => { if (p.external && !placed(id)) people.delete(id); });   // taken out of every crew: gone
         if (active >= crews.length) active = Math.max(0, crews.length - 1);
         box.innerHTML = crews.map((c, ci) => {
           const seats = seatsOf(c), filled = seats.filter((q) => c.seats[q] != null).length;
@@ -4148,14 +4171,16 @@ function raceCrewsModal(r, data) {
           const bad = notCox || (x.problems?.length && (intent !== "cox" || x.problems.some((q) => !q.includes("could still cox"))));
           return `<button type="button" class="pool-item ${places.length ? "in" : ""} ${bad ? "bad" : ""}" data-pick="${x.member_id}" data-intent="${intent}" title="${here ? "Click to take out of the highlighted crew" : "Click to put in the highlighted crew"}">
             <span class="pi-main"><span class="pi-name">${esc(x.name)}</span>
-              <span class="pi-meta">${catChip(x.category)}${x.associate ? ASSOC_CHIP : ""}${intent !== "cox" && x.side ? sideChip(x.side) : ""}${intent === "cox" && people.get(x.member_id)?.cox_status ? `<span class="chip violet">Cox ${esc(people.get(x.member_id).cox_status)}</span>` : ""}${x.role === "both" ? `<span class="chip accent">Row/cox</span>` : ""}${notCox ? `<span class="chip bad" title="Give them a coxing status on the Members page to put them in a cox seat">Not a registered cox</span>` : bad ? `<span class="chip bad" title="${esc(x.problems.join(". "))}">Not eligible</span>` : ""}</span></span>
+              <span class="pi-meta">${x.external ? `${EXTERNAL_CHIP}${x.college ? `<span class="faint">${esc(x.college)}</span>` : ""}` : catChip(x.category)}${x.associate ? ASSOC_CHIP : ""}${intent !== "cox" && x.side ? sideChip(x.side) : ""}${intent === "cox" && people.get(x.member_id)?.cox_status ? `<span class="chip violet">Cox ${esc(people.get(x.member_id).cox_status)}</span>` : ""}${x.role === "both" ? `<span class="chip accent">Row/cox</span>` : ""}${notCox ? `<span class="chip bad" title="Give them a coxing status on the Members page to put them in a cox seat">Not a registered cox</span>` : bad ? `<span class="chip bad" title="${esc(x.problems.join(". "))}">Not eligible</span>` : ""}</span></span>
             <span class="pi-state">${places.length ? places.map((t) => `<span class="pi-seat">${esc(t)}</span>`).join("") : I.plus}</span></button>`;
         };
         const group = (title, list, intent, hint = "") => list.length ? `<div class="pool-group"><div class="pool-h">${esc(title)} <span class="faint">${list.length}</span>${hint ? `<span class="pool-hint">${hint}</span>` : ""}</div>${list.map((x) => item(x, intent)).join("")}</div>` : "";
         const c = raceCrew(yes), cm = raceCrew(maybe);
+        const externals = [...people.values()].filter((p) => p.external).map((p) => ({ ...p, member_id: p.id }));
         let html = `<div class="pool-head"><b>Available</b><span class="faint small">${yes.length} ${yes.length === 1 ? "person" : "people"}</span></div>`;
         if (!yes.length) html += `<div class="faint small" style="padding:6px 2px">Nobody has said they're available yet. You can still pick anyone from the seat boxes.</div>`;
         html += group("Coxes", c.cox, "cox", "→ cox seat") + group("Open rowers", c.open, "row", "placed on their side") + group("Women's rowers", c.women, "row", "placed on their side") + group("Rowers, squad not set", c.unset, "row");
+        html += group("Externals", externals, "row");
         if (maybe.length) html += `<details class="pool-group pool-more"><summary class="pool-h">Maybe <span class="faint">${maybe.length}</span></summary>${group("Coxes", cm.cox, "cox")}${group("Rowers", [...cm.open, ...cm.women, ...cm.unset], "row")}</details>`;
         const det = pool.querySelector("details");
         if (det) maybeOpen = det.open;   // keep it open (the default) or collapsed as the committee left it
@@ -4187,7 +4212,9 @@ function raceCrewsModal(r, data) {
             return;
           }
         }
-        const body = { publish, crews: crews.map((c, i) => ({ id: c.id ?? null, name: c.name.trim() || `Crew ${i + 1}`, boat_type: c.boat_type, notes: c.notes, seats: c.seats, bankrider: c.bankrider.trim(), reserves: c.reserves })) };
+        const ext = (seat, mid) => ({ seat, name: people.get(mid).name, college: people.get(mid).college || "" });
+        const externalsOf = (c) => [...Object.entries(c.seats).filter(([, mid]) => mid < 0).map(([st, mid]) => ext(+st, mid)), ...c.reserves.filter((mid) => mid < 0).map((mid) => ext(null, mid))];
+        const body = { publish, crews: crews.map((c, i) => ({ id: c.id ?? null, name: c.name.trim() || `Crew ${i + 1}`, boat_type: c.boat_type, notes: c.notes, seats: Object.fromEntries(Object.entries(c.seats).filter(([, mid]) => mid > 0)), bankrider: c.bankrider.trim(), reserves: c.reserves.filter((mid) => mid > 0), externals: externalsOf(c) })) };
         try {
           const res = await api(`/api/committee/races/${r.id}/crews`, { method: "PUT", body });
           close();
@@ -4195,6 +4222,16 @@ function raceCrewsModal(r, data) {
           pageRaces();
         } catch (e) { fail(e); }
       };
+      const addExternal = () => {
+        const nameEl = $("#rcb-x-name", m), collegeEl = $("#rcb-x-college", m), name = nameEl.value.trim();
+        if (!name) { nameEl.focus(); return toast("Type their name first", true); }
+        const id = externalId(name, collegeEl.value.trim());
+        place(id, "row");
+        draw();   // also tidies the new external away if there was no room for them
+        if (placed(id)) { nameEl.value = ""; collegeEl.value = ""; nameEl.focus(); }
+      };
+      $("#rcb-x-add", m).onclick = addExternal;
+      $$("#rcb-x-name, #rcb-x-college", m).forEach((el) => el.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); addExternal(); } });
       $("#rcb-auto", m).onclick = autoCrews;
       $("#rcb-draft", m).onclick = () => save(false);
       $("#rcb-pub", m).onclick = () => save(true);

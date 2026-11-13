@@ -324,6 +324,17 @@ CREATE TABLE IF NOT EXISTS race_crew_reserves (
 );
 CREATE INDEX IF NOT EXISTS idx_race_crew_reserves_member ON race_crew_reserves(member_id);
 
+-- People in a race crew who aren't members (e.g. a rower borrowed from another club); see races.py
+CREATE TABLE IF NOT EXISTS race_crew_externals (
+    id INTEGER PRIMARY KEY,
+    crew_id INTEGER NOT NULL REFERENCES race_crews(id) ON DELETE CASCADE,
+    seat INTEGER,                                  -- as race_crew_seats.seat; NULL = a reserve
+    position INTEGER NOT NULL DEFAULT 0,           -- order among the reserves
+    name TEXT NOT NULL,
+    college TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_race_crew_externals_crew ON race_crew_externals(crew_id);
+
 -- Year-end handover: a snapshot of each finished season (see handover.py)
 CREATE TABLE IF NOT EXISTS season_archives (
     id INTEGER PRIMARY KEY,

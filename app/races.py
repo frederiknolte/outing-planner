@@ -20,6 +20,10 @@ Like an outing's coach, the bankrider is free text, because it's often a coach w
 member. Names that match a member count as that member (bankrider_ids). One person can
 hold a place in several crews, e.g. row in one and cox, bankride or be a reserve for another,
 but not two places in the same crew.
+
+A seat or reserve place can also go to an external: someone who isn't a member (a rower from another
+club, say), given by name and college. Externals are tagged "External" on the page, aren't checked for
+eligibility or a cox status, and get no notifications.
 """
 from __future__ import annotations
 
@@ -81,6 +85,12 @@ class ResponseIn(BaseModel):
     override: bool = False     # committee only: save even if the member isn't eligible
 
 
+class ExternalIn(BaseModel):
+    seat: Optional[int] = None          # None = a reserve
+    name: str = Field(..., max_length=80)
+    college: str = Field("", max_length=80)
+
+
 class CrewIn(BaseModel):
     id: Optional[int] = None            # an existing crew of this race: keeps its result when crews are re-saved
     name: str = Field("", max_length=60)
@@ -89,6 +99,7 @@ class CrewIn(BaseModel):
     seats: dict[int, int] = {}          # seat (0 = cox) -> member id
     bankrider: str = Field("", max_length=120)
     reserves: list[int] = []            # member ids, in order
+    externals: list[ExternalIn] = []    # people who aren't members, in a seat or as a reserve
 
 
 class ResultIn(BaseModel):
@@ -223,7 +234,8 @@ def _member_ids(conn) -> dict[str, int]:
 
 def _load_crews(conn, race_ids=None) -> dict[int, list[dict]]:
     """race id -> crews. Each crew lists every seat of its boat (cox first, then stroke down to bow);
-    empty seats have member_id None (they need a sub). Also its bankrider and reserves."""
+    empty seats have member_id None and no name (they need a sub). Externals have a name but no member_id.
+    Also its bankrider and reserves."""
     where = f"WHERE race_id IN ({','.join('?' * len(race_ids))})" if race_ids is not None else ""
     crews, by_id = {}, {}
     for c in conn.execute(f"SELECT * FROM race_crews {where} ORDER BY race_id, position, id", list(race_ids or [])):
@@ -233,22 +245,29 @@ def _load_crews(conn, race_ids=None) -> dict[int, list[dict]]:
         crews.setdefault(c["race_id"], []).append(crew)
         by_id[c["id"]] = crew
     if by_id:
+        marks = ",".join("?" * len(by_id))
         for s in conn.execute(
                 f"""SELECT s.crew_id, s.seat, s.member_id, m.name, m.college, m.cox_status FROM race_crew_seats s JOIN members m ON m.id = s.member_id
-                    WHERE s.crew_id IN ({','.join('?' * len(by_id))})""", list(by_id)):
-            by_id[s["crew_id"]]["seats"][s["seat"]] = (s["member_id"], s["name"], is_associate(s["college"]), s["cox_status"])
+                    WHERE s.crew_id IN ({marks})""", list(by_id)):
+            by_id[s["crew_id"]]["seats"][s["seat"]] = {"member_id": s["member_id"], "name": s["name"], "associate": is_associate(s["college"]),
+                                                       "cox_status": s["cox_status"], "external": False, "college": ""}
         for s in conn.execute(
                 f"""SELECT s.crew_id, s.member_id, m.name, m.college FROM race_crew_reserves s JOIN members m ON m.id = s.member_id
-                    WHERE s.crew_id IN ({','.join('?' * len(by_id))}) ORDER BY s.position""", list(by_id)):
-            by_id[s["crew_id"]]["reserves"].append({"member_id": s["member_id"], "name": s["name"], "associate": is_associate(s["college"])})
+                    WHERE s.crew_id IN ({marks}) ORDER BY s.position""", list(by_id)):
+            by_id[s["crew_id"]]["reserves"].append({"member_id": s["member_id"], "name": s["name"], "associate": is_associate(s["college"]),
+                                                    "external": False, "college": ""})
+        for s in conn.execute(f"SELECT * FROM race_crew_externals WHERE crew_id IN ({marks}) ORDER BY position, id", list(by_id)):
+            who = {"member_id": None, "name": s["name"], "associate": False, "cox_status": "", "external": True, "college": s["college"]}
+            if s["seat"] is None:
+                by_id[s["crew_id"]]["reserves"].append(who)
+            else:
+                by_id[s["crew_id"]]["seats"][s["seat"]] = who
         ids = _member_ids(conn)
+        nobody = {"member_id": None, "name": "", "associate": False, "cox_status": "", "external": False, "college": ""}
         for crew in by_id.values():
             rowers, seats = boat_seats(crew["boat_type"])
             taken = crew["seats"]
-            crew["seats"] = [{"seat": n, "label": seat_label(n, rowers, "water"),
-                              "member_id": taken.get(n, (None, "", False, ""))[0], "name": taken.get(n, (None, "", False, ""))[1],
-                              "associate": taken.get(n, (None, "", False, ""))[2],
-                              "cox_status": taken.get(n, (None, "", False, ""))[3]} for n in seats]
+            crew["seats"] = [{"seat": n, "label": seat_label(n, rowers, "water"), **taken.get(n, nobody)} for n in seats]
             crew["associates"] = sum(1 for x in crew["seats"] if x["associate"])
             crew["bankrider_ids"] = _bankrider_ids(crew["bankrider"], ids)
     return crews
@@ -406,7 +425,20 @@ def race_crews_save(race_id: int, b: CrewsIn, _: str = Depends(require_committee
             raise HTTPException(400, f"{name}: at most {MAX_RESERVES} reserves")
         if set(reserves) & set(seats.values()):
             raise HTTPException(400, f"{name}: someone is both in a seat and a reserve")
-        clean.append((name, c.boat_type, c.notes.strip(), seats, c.bankrider.strip(), reserves, c.id))
+        externals = []
+        for x in c.externals:
+            who = x.name.strip()
+            if not who:
+                raise HTTPException(400, f"{name}: give each external a name")
+            if x.seat is None:
+                if len(reserves) + sum(1 for e in externals if e[0] is None) >= MAX_RESERVES:
+                    raise HTTPException(400, f"{name}: at most {MAX_RESERVES} reserves")
+            elif x.seat not in valid:
+                continue                  # seat no longer in the boat
+            elif x.seat in seats or any(e[0] == x.seat for e in externals):
+                raise HTTPException(400, f"{name}: two people in one seat")
+            externals.append((x.seat, who, x.college.strip()))
+        clean.append((name, c.boat_type, c.notes.strip(), seats, c.bankrider.strip(), reserves, c.id, externals))
     with db.get_conn() as conn:
         race = conn.execute("SELECT id, title, date, crews_published FROM races WHERE id = ?", (race_id,)).fetchone()
         if not race:
@@ -427,10 +459,10 @@ def race_crews_save(race_id: int, b: CrewsIn, _: str = Depends(require_committee
                 raise HTTPException(400, f"{', '.join(bad)} {'is' if len(bad) == 1 else 'are'} not registered as a cox. "
                                          "Give them a coxing status on the Members page first")
         before = _assignments((c["name"], c["boat_type"], {x["seat"]: x["member_id"] for x in c["seats"] if x["member_id"]},
-                               c["bankrider_ids"], [x["member_id"] for x in c["reserves"]])
+                               c["bankrider_ids"], [x["member_id"] for x in c["reserves"] if x["member_id"]])
                               for c in _load_crews(conn, [race_id]).get(race_id, [])) if race["crews_published"] else {}
         conn.execute("DELETE FROM race_crews WHERE race_id = ?", (race_id,))
-        for pos, (name, boat_type, notes, seats, bankrider, reserves, old_id) in enumerate(clean):
+        for pos, (name, boat_type, notes, seats, bankrider, reserves, old_id, externals) in enumerate(clean):
             res = old_results.get(old_id, ("", "", ""))
             cid = conn.execute("""INSERT INTO race_crews(race_id, position, name, boat_type, notes, bankrider, result, result_time, result_notes)
                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -439,10 +471,13 @@ def race_crews_save(race_id: int, b: CrewsIn, _: str = Depends(require_committee
                 conn.execute("INSERT INTO race_crew_reserves(crew_id, member_id, position) VALUES (?, ?, ?)", (cid, mid, i))
             for seat, mid in seats.items():
                 conn.execute("INSERT INTO race_crew_seats(crew_id, seat, member_id) VALUES (?, ?, ?)", (cid, seat, mid))
+            for i, (seat, who, college) in enumerate(externals):
+                conn.execute("INSERT INTO race_crew_externals(crew_id, seat, position, name, college) VALUES (?, ?, ?, ?, ?)",
+                             (cid, seat, i, who, college))
         conn.execute("UPDATE races SET crews_published = ? WHERE id = ?", (int(b.publish), race_id))
         ids = _member_ids(conn)
         after = _assignments((name, bt, seats, _bankrider_ids(bankrider, ids), reserves)
-                             for name, bt, _, seats, bankrider, reserves, _id in clean)
+                             for name, bt, _, seats, bankrider, reserves, *_ in clean)
     msgs = []
     if b.publish:
         # Tell people about a new or changed place (and, once published, about being taken out).
