@@ -75,6 +75,12 @@ def mask(stored: str) -> str:
     return "••••• ••" + "".join(digits[-3:]) if len(digits) >= 3 else "•••••"
 
 
+def fields(m) -> dict:
+    """Whether each of a member's numbers is on file, and a masked form of it: what clients get instead of the numbers."""
+    return {"has_phone": bool(m.get("phone")), "phone_masked": mask(m.get("phone", "")),
+            "has_phone2": bool(m.get("phone2")), "phone2_masked": mask(m.get("phone2", ""))}
+
+
 def phone_mode(settings: dict) -> str:
     """Effective mode for the sign-up form: required | optional | off."""
     if not enabled():
@@ -83,26 +89,32 @@ def phone_mode(settings: dict) -> str:
     return m if m in ("required", "optional", "off") else "required"
 
 
+def _rekey(stored: str) -> Optional[str]:
+    """The value to store instead (encrypted, or moved to the current key), or None to leave it as it is."""
+    if not stored.startswith(PREFIX):
+        return encrypt(stored)
+    if _OLD:
+        try:
+            return PREFIX + _MF.rotate(stored[len(PREFIX):].encode()).decode()
+        except InvalidToken:
+            pass
+    return None
+
+
 def migrate(conn) -> dict:
     """Encrypt legacy plaintext numbers / rotate to the current key; stamp missing dates."""
-    conn.execute("UPDATE members SET phone_updated_at = datetime('now') WHERE phone != '' AND phone_updated_at = ''")
+    conn.execute("UPDATE members SET phone_updated_at = datetime('now') WHERE (phone != '' OR phone2 != '') AND phone_updated_at = ''")
     if not _MF:
-        n = conn.execute("SELECT COUNT(*) FROM members WHERE phone != '' AND phone NOT LIKE 'enc:v1:%'").fetchone()[0]
+        n = conn.execute("""SELECT COUNT(*) FROM members WHERE (phone != '' AND phone NOT LIKE 'enc:v1:%')
+                            OR (phone2 != '' AND phone2 NOT LIKE 'enc:v1:%')""").fetchone()[0]
         return {"plaintext_left": n, "encrypted": 0}
     done = 0
-    for r in conn.execute("SELECT id, phone FROM members WHERE phone != ''").fetchall():
-        p = r["phone"]
-        if not p.startswith(PREFIX):
-            new = encrypt(p)
-        elif _OLD:
-            try:
-                new = PREFIX + _MF.rotate(p[len(PREFIX):].encode()).decode()
-            except InvalidToken:
-                continue
-        else:
-            continue
-        conn.execute("UPDATE members SET phone = ? WHERE id = ?", (new, r["id"]))
-        done += 1
+    for r in conn.execute("SELECT id, phone, phone2 FROM members WHERE phone != '' OR phone2 != ''").fetchall():
+        new = {c: _rekey(r[c]) for c in ("phone", "phone2") if r[c]}
+        new = {c: v for c, v in new.items() if v is not None}
+        if new:
+            conn.execute(f"UPDATE members SET {', '.join(c + ' = ?' for c in new)} WHERE id = ?", (*new.values(), r["id"]))
+            done += len(new)
     return {"plaintext_left": 0, "encrypted": done}
 
 
@@ -111,8 +123,8 @@ def purge_expired(conn, days: int) -> int:
     if days <= 0:
         return 0
     cur = conn.execute(
-        """UPDATE members SET phone = '', phone_updated_at = ''
-           WHERE phone != '' AND max(
+        """UPDATE members SET phone = '', phone2 = '', phone_updated_at = ''
+           WHERE (phone != '' OR phone2 != '') AND max(
                phone_updated_at,
                COALESCE((SELECT MAX(updated_at) FROM signups s WHERE s.member_id = members.id), '')
            ) < datetime('now', ?)""", (f"-{int(days)} days",))

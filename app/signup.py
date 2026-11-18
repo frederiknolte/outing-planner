@@ -4,7 +4,8 @@ The committee defines the bookable slots for a week (water, erg or tank sessions
 open the form. Rowers say who they are (an existing member, or a new name which
 creates a member flagged for committee review), plus phone, college, role, how many
 outings they want, side preference, squad (Open or Women's, for rowers), weekly
-maximum, which slots they're free for, and whether they can bankride. The
+maximum, which slots they're free for, and whether they can bankride. Each submission needs a tick to
+say that finding a sub when they can't make a session is their responsibility. The
 committee's view counts each session's rowers per squad, so it's clear whether
 there are enough people for an Open or a Women's crew.
 
@@ -164,6 +165,18 @@ class SignupIn(BaseModel):
     can_bankride: bool = False
     slot_ids: list[int] = []
     comments: str = Field("", max_length=500)
+    finds_sub: bool = False   # the tick for "it's my responsibility to find a sub"; never pre-ticked
+
+
+def _withdraw(ws: str, member_id: Optional[int], role: str) -> dict:
+    """Unticking every session and saving means "not free this week": the sign-up is removed."""
+    with db.get_conn() as conn:
+        if not _week_row(conn, ws)["open"] and role != "committee":
+            raise HTTPException(400, "Sign-ups for this week are closed")
+        if not member_id or not conn.execute(
+                "DELETE FROM signups WHERE week_start = ? AND member_id = ?", (ws, member_id)).rowcount:
+            raise HTTPException(400, "Tick at least one session you're free for")
+        return {"ok": True, "member_id": member_id, "withdrawn": True}
 
 
 @router.post("/api/signup")
@@ -171,6 +184,10 @@ def signup_submit(b: SignupIn, role: str = Depends(require_member)):
     ws = _monday(b.week_start)
     if b.role not in ROLES:
         raise HTTPException(400, "Pick what you're signing up as")
+    if not b.slot_ids and b.role != "bankrider":
+        return _withdraw(ws, b.member_id, role)
+    if not b.finds_sub:
+        raise HTTPException(400, "Tick the box to confirm it's your responsibility to find a sub when you can't make a session")
     college = b.college.strip()
     if not college:
         raise HTTPException(400, "Pick your college")
@@ -200,8 +217,6 @@ def signup_submit(b: SignupIn, role: str = Depends(require_member)):
         slot_ids = sorted(set(b.slot_ids))
         if any(s not in valid_slots for s in slot_ids):
             raise HTTPException(400, "Some of those sessions no longer exist — refresh and try again")
-        if not slot_ids and b.role != "bankrider":
-            raise HTTPException(400, "Tick at least one session you're free for")
 
         # who is this?
         created = False
@@ -268,7 +283,7 @@ def signup_committee(week_start: str, _: str = Depends(require_committee)):
             m = members.get(r["member_id"], {})
             responses.append({
                 **dict(r), "can_bankride": bool(r["can_bankride"]),
-                "name": m.get("name"), "has_phone": bool(m.get("phone")), "phone_masked": privacy.mask(m.get("phone", "")),
+                "name": m.get("name"), **privacy.fields(m),
                 "category": m.get("category"),
                 # squad from this sign-up, or from their profile for sign-ups made before the question existed
                 "squad": r["squad"] or (m.get("squad") if r["role"] in ("rower", "both") else ""),
@@ -390,15 +405,16 @@ def responses_csv(week_start: str, include_phone: bool = False, _: str = Depends
     phones = {}
     if include_phone:
         with db.get_conn() as conn:
-            phones = {r["id"]: privacy.decrypt(r["phone"]) or "" for r in conn.execute("SELECT id, phone FROM members")}
+            phones = {r["id"]: [privacy.decrypt(r[k]) or "" for k in ("phone", "phone2")]
+                      for r in conn.execute("SELECT id, phone, phone2 FROM members")}
     slots = data["slots"]
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["Name"] + (["Phone"] if include_phone else []) + ["College", "Signing up as", "Max water outings", "Coxing outings wanted",
+    w.writerow(["Name"] + (["Phone", "Second phone"] if include_phone else []) + ["College", "Signing up as", "Max water outings", "Coxing outings wanted",
                 "Squad", "Side", "Max land outings", "Can bankride", "Comments", "Submitted"]
                + [f"{SLOT_KINDS[s['kind']]} {s['date']} {s['time']}".strip() for s in slots])
     for r in data["responses"]:
-        w.writerow([r["name"]] + ([phones.get(r["member_id"], "")] if include_phone else []) + [r["college"], ROLES.get(r["role"], r["role"]), r["want_row"] or "",
+        w.writerow([r["name"]] + (phones.get(r["member_id"], ["", ""]) if include_phone else []) + [r["college"], ROLES.get(r["role"], r["role"]), r["want_row"] or "",
                     r["want_cox"] or "", SQUADS.get(r["squad"], ""), r["side"], r["max_land"] if r["role"] != "bankrider" else "", "Yes" if r["can_bankride"] else "No",
                     r["comments"], r["updated_at"]]
                    + ["Yes" if s["id"] in r["slot_ids"] else "" for s in slots])

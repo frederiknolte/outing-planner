@@ -637,6 +637,7 @@ function outingCard(o) {
     ${o.notes ? `<div class="small muted" style="margin-top:6px">${esc(o.notes)}</div>` : ""}
     ${committee && o.warnings.length ? `<div class="warnings">${o.warnings.map((w) => `<div>${I.alert}<span>${esc(w)}</span></div>`).join("")}</div>` : ""}
     ${riverList((o.river || []).filter((r) => !o.past && (committee || r.level === "stop")))}
+    ${committee && !o.published ? `<div class="o-foot"><button class="btn sm ghost danger" data-act="delete" title="Delete this draft session">Delete</button></div>` : ""}
   </article>`;
 }
 
@@ -916,6 +917,13 @@ function outingAct(t, o) {
   if (t.dataset.act === "join") return joinLand(o);
   if (t.dataset.act === "leave") return leaveLand(o);
   if (t.dataset.act === "cancel") return cancelOuting(o);
+  if (t.dataset.act === "delete") return deleteOuting(o);
+}
+
+/* Ask first, then delete a session (and with it its crew and sub requests) and redraw the schedule. */
+async function deleteOuting(o) {
+  if (!await confirmBox("Delete this session?", "Crew assignments and sub requests for it will be removed. Outing counts update automatically.", "Delete", true)) return;
+  if (await apiDo(`/api/committee/outings/${o.id}`, { method: "DELETE" }, "Session deleted")) pageSchedule();
 }
 
 /* Rowers' read-only view of an outing: full names, who's subbing for whom, and the same seat actions as the card. */
@@ -1406,10 +1414,7 @@ async function editOuting(o, defaults = {}) {
       $("#oe-save", m).onclick = () => save(true);
       const d = $("#oe-save-draft", m); if (d) d.onclick = () => save(false);
       const del = $("#oe-del", m);
-      if (del) del.onclick = async () => {
-        if (!await confirmBox("Delete this session?", "Crew assignments and sub requests for it will be removed. Outing counts update automatically.", "Delete", true)) return;
-        if (await apiDo(`/api/committee/outings/${o.id}`, { method: "DELETE" }, "Session deleted")) { pageSchedule(); }
-      };
+      if (del) del.onclick = () => deleteOuting(o);
       const markAs = async (st) => { try { await setOutingStatus(o, st); close(); } catch (e) { fail(e); } };
       $$("[data-undo]", m).forEach((b) => b.onclick = async () => {
         const e = (o.log || []).find((x) => x.id === +b.dataset.undo);
@@ -1443,10 +1448,29 @@ function wireReveal(root) {
   $$("[data-reveal]", root).forEach((b) => b.onclick = async (e) => {
     e.stopPropagation();
     try {
-      const { phone } = await api(`/api/committee/members/${b.dataset.reveal}/phone`);
-      b.closest("[data-phone]").innerHTML = phone ? `<a class="tnum" href="${telHref(phone)}" onclick="event.stopPropagation()">${esc(phone)}</a>` : "—";
+      const nums = Object.values(await api(`/api/committee/members/${b.dataset.reveal}/phone`)).filter(Boolean);
+      b.closest("[data-phone]").innerHTML = nums.map((p) => `<a class="tnum" href="${telHref(p)}" onclick="event.stopPropagation()">${esc(p)}</a>`).join(", ") || "—";
     } catch (err) { fail(err); }
   });
+}
+/* The two phone inputs of a form (rowers' own details, the committee's member editor). Each number is only sent when
+   it was changed: null keeps the stored, encrypted one, "" deletes it. Clearing a revealed number by hand keeps it: use Delete. */
+const PHONE_KEYS = [["phone", "Phone"], ["phone2", "Second phone (optional)"]];
+function phoneFields(p, hint, reveal = false) {
+  return PHONE_KEYS.map(([k, label]) => `<label class="field"><span>${label}</span>
+    <div class="row"><input class="input tnum" id="ph-${k}" type="tel" placeholder="${p["has_" + k] ? esc(p[k + "_masked"]) : "Not on file"}">
+    ${p["has_" + k] ? `${reveal ? `<button type="button" class="btn sm" data-ph-show title="Show the full numbers">Show</button>` : ""}<button type="button" class="btn sm danger" data-ph-del="${k}" title="Delete this number">Delete</button>` : ""}</div>
+    ${k === "phone" ? `<span class="hint">${hint}</span>` : ""}</label>`).join("");
+}
+function wirePhones(el, memberId) {
+  const gone = new Set();
+  $$("[data-ph-del]", el).forEach((b) => b.onclick = () => {
+    const i = $(`#ph-${b.dataset.phDel}`, el); i.value = ""; i.placeholder = "Will be deleted when you save"; gone.add(b.dataset.phDel);
+  });
+  $$("[data-ph-show]", el).forEach((b) => b.onclick = async () => {
+    try { const r = await api(`/api/committee/members/${memberId}/phone`); PHONE_KEYS.forEach(([k]) => { if (!gone.has(k)) $(`#ph-${k}`, el).value = r[k]; }); } catch (e) { fail(e); }
+  });
+  return () => Object.fromEntries(PHONE_KEYS.map(([k]) => [k, gone.has(k) ? "" : ($(`#ph-${k}`, el).value.trim() || null)]));
 }
 /* CSV export: phone numbers are left out unless explicitly ticked. */
 function exportModal(url, what) {
@@ -1791,7 +1815,7 @@ function myRaceCard(r) {
     <div class="race-crews">${r.crews.map((c) => `<div>${raceCrewBlock(c)}<div class="small my-race-role">You: <b>${esc(c.places.map((x) => (/^\d+$/.test(x) ? "seat " + x : x)).join(" and "))}</b></div></div>`).join("")}</div></article>`;
 }
 
-// Rowers edit their own side, college, phone and squad.
+// Rowers edit their own side, college, phone numbers and squad.
 async function profileModal() {
   let p;
   try { p = await api(`/api/members/${S.me}/profile`); } catch (e) { return fail(e); }
@@ -1802,20 +1826,13 @@ async function profileModal() {
         <label class="field"><span>Side preference</span><select class="input" id="mp-side">${["", ...Object.keys(SIDE_SHORT)].map((x) => `<option value="${esc(x)}" ${(p.side || "") === x ? "selected" : ""}>${x || "—"}</option>`).join("")}</select></label>
         <label class="field"><span>Squad</span><select class="input" id="mp-squad">${[["", "—"], ["open", "Open"], ["women", "Women's"]].map(([k, l]) => `<option value="${k}" ${p.squad === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
         <label class="field"><span>College</span><input class="input" id="mp-college" list="mp-colleges" value="${esc(p.college || "")}"><datalist id="mp-colleges"><option value="Reuben"><option value="Blackfriars"><option value="St Stephen's House"></datalist></label>
-        <label class="field"><span>Phone</span>
-          <div class="row"><input class="input tnum" id="mp-phone" type="tel" placeholder="${p.has_phone ? esc(p.phone_masked) : "Not on file"}">
-          ${p.has_phone ? `<button type="button" class="btn sm danger" id="mp-phone-del" title="Delete my number">Delete</button>` : ""}</div>
-          <span class="hint">Only the committee can see it. Stored encrypted. Leave blank to keep it.</span></label>
+        ${phoneFields(p, "Only the committee can see them. Stored encrypted. Leave blank to keep a number.")}
       </div>`,
     foot: `<div class="r"><button class="btn" data-close>Cancel</button><button class="btn primary" id="mp-save">Save</button></div>`,
     onMount: (el, close) => {
-      let phone = null;   // null = keep the stored number
-      const ph = $("#mp-phone", el);
-      ph.oninput = () => { phone = ph.value.trim() || null; };
-      const del = $("#mp-phone-del", el);
-      if (del) del.onclick = () => { ph.value = ""; ph.placeholder = "Will be deleted when you save"; phone = ""; };
+      const phones = wirePhones(el);
       $("#mp-save", el).onclick = async () => {
-        const body = { side: $("#mp-side", el).value, squad: $("#mp-squad", el).value, college: $("#mp-college", el).value.trim(), phone };
+        const body = { side: $("#mp-side", el).value, squad: $("#mp-squad", el).value, college: $("#mp-college", el).value.trim(), ...phones() };
         if (await apiDo(`/api/members/${S.me}/profile`, { method: "PUT", body }, "Saved")) { close(); }
       };
     },
@@ -2015,10 +2032,7 @@ function editMember(m, meta, preset = {}, after = () => pageRowers()) {
       <div class="grid-2">
         <label class="field"><span>Full name</span><input class="input" id="me-name" value="${esc(v.name)}" required></label>
         <label class="field"><span>Category</span><select class="input" id="me-cat"><option ${v.category === "Novice" ? "selected" : ""}>Novice</option><option ${v.category === "Senior" ? "selected" : ""}>Senior</option><option ${v.category === "Coach" ? "selected" : ""}>Coach</option></select><span class="hint">Coach is instead of Novice or Senior: it shows on the Coaches page and in the coach / bankrider suggestions. Coaches are kept apart from the rowers (no crew seats, subs reminders or stats).</span></label>
-        <label class="field"><span>Phone</span>
-          <div class="row"><input class="input tnum" id="me-phone" type="tel" placeholder="${m && m.has_phone ? esc(m.phone_masked) : "Not on file"}">
-          ${m && m.has_phone ? `<button type="button" class="btn sm" id="me-phone-show" title="Show the full number">Show</button><button type="button" class="btn sm danger" id="me-phone-del" title="Delete this number">Delete</button>` : ""}</div>
-          <span class="hint">Committee only. Stored encrypted.</span></label>
+        ${phoneFields(m || {}, "Committee only. Stored encrypted.", true)}
         <label class="field coach-hide"><span>College</span><input class="input" id="me-college" list="me-colleges" value="${esc(v.college || "")}"><datalist id="me-colleges"><option value="Reuben"><option value="Blackfriars"><option value="St Stephen's House"></datalist></label>
         <label class="field coach-hide"><span>Side preference</span><select class="input" id="me-side">${["", ...Object.keys(SIDE_SHORT)].map((x) => `<option value="${esc(x)}" ${(v.side || "") === x ? "selected" : ""}>${x || "—"}</option>`).join("")}</select></label>
         <label class="field coach-hide"><span>Squad</span><select class="input" id="me-squad">${[["", "—"], ["open", "Open"], ["women", "Women's"]].map(([k, l]) => `<option value="${k}" ${(v.squad || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
@@ -2072,13 +2086,7 @@ function editMember(m, meta, preset = {}, after = () => pageRowers()) {
       // Coaches are always inactive and have no subs, squad, cox / swim / capsize info etc., so those fields are hidden for them.
       const syncCoach = () => { const c = $("#me-cat", el).value === "Coach"; $$(".coach-hide", el).forEach((x) => x.classList.toggle("hidden", c)); $("#me-active-wrap", el).classList.toggle("hidden", c); };
       $("#me-cat", el).onchange = syncCoach; syncCoach();
-      // Phone: only sent when changed (null = keep the stored, encrypted number).
-      let phoneTouched = false;
-      const ph = $("#me-phone", el);
-      ph.oninput = () => { phoneTouched = true; };
-      const show = $("#me-phone-show", el), delp = $("#me-phone-del", el);
-      if (show) show.onclick = async () => { try { ph.value = (await api(`/api/committee/members/${m.id}/phone`)).phone; phoneTouched = false; } catch (e) { fail(e); } };
-      if (delp) delp.onclick = () => { ph.value = ""; ph.placeholder = "Will be deleted when you save"; phoneTouched = true; };
+      const phones = wirePhones(el, m?.id);
       $("#me-save", el).onclick = async () => {
         const body = { name: $("#me-name", el).value.trim(), category: $("#me-cat", el).value, subs_plan: $("#me-plan", el).value,
           subs_term: $("#me-plan", el).value === "Single term" ? $("#me-term", el).value : "", subs_year: $("#me-plan", el).value === "Unpaid" ? "" : $("#me-year", el).value.trim(),
@@ -2086,7 +2094,7 @@ function editMember(m, meta, preset = {}, after = () => pageRowers()) {
           swim_test_date: $("#me-swimd", el).value, cox_status_date: $("#me-coxd", el).value,
           capsize_drilled: $("#me-cap", el).checked, capsize_drill_date: $("#me-capd", el).value, past_water: +$("#me-pw", el).value || 0, past_land: +$("#me-pl", el).value || 0,
           active: $("#me-active", el).checked, notes: $("#me-notes", el).value,
-          phone: phoneTouched ? $("#me-phone", el).value.trim() : (m ? null : ($("#me-phone", el).value.trim() || null)), college: $("#me-college", el).value.trim(), side: $("#me-side", el).value, squad: $("#me-squad", el).value, club_crew: $$(".me-crew", el).filter((x) => x.checked).map((x) => x.value).join(",") };
+          ...phones(), college: $("#me-college", el).value.trim(), side: $("#me-side", el).value, squad: $("#me-squad", el).value, club_crew: $$(".me-crew", el).filter((x) => x.checked).map((x) => x.value).join(",") };
         if (!body.name) return toast("Name is required", true);
         if (await apiDo(m ? `/api/committee/members/${m.id}` : "/api/committee/members", { method: m ? "PUT" : "POST", body }, "Saved")) { close(); await reboot(); after(); }
       };
@@ -3277,7 +3285,7 @@ async function pageSignup() {
   if (!S.suFormWeek || !meta.weeks.some((w) => w.week_start === S.suFormWeek)) S.suFormWeek = meta.weeks[0].week_start;
   const wk = meta.weeks.find((w) => w.week_start === S.suFormWeek);
   const st = { member_id: S.me && meName() ? S.me : null, new_name: "", phone: "", has_phone: false, college: "", college_other: "",
-    role: "rower", want_row: 2, want_cox: 1, side: "", squad: "", max_land: 1, can_bankride: true, slot_ids: new Set(), comments: "", existing: false };
+    role: "rower", want_row: 2, want_cox: 1, side: "", squad: "", max_land: 1, can_bankride: true, slot_ids: new Set(), comments: "", finds_sub: false, existing: false };
 
   const prefill = async () => {
     if (!st.member_id) return;
@@ -3335,7 +3343,7 @@ async function pageSignup() {
 
       <section class="card card-pad su-sec"><div class="su-num">3</div><div class="su-body">
         <h3>When are you free?</h3>
-        <p class="muted small" style="margin:-4px 0 4px">Tick every session you could make. You won't be put in all of them.</p>
+        <p class="muted small" style="margin:-4px 0 4px">Tick every session you could make. You won't be put in all of them.${st.existing && st.role !== "bankrider" ? " Untick them all and update to say you're not free." : ""}</p>
         ${wk.slots.length ? Object.entries(byDay).map(([d, list]) => `<div class="su-day"><div class="su-day-h"><b>${DAYL[dow(d)]}</b> <span class="faint">${fmtShort(d)}</span></div>
           <div class="slot-grid">${list.map((sl) => `<button type="button" class="slot ${sl.kind} ${st.slot_ids.has(sl.id) ? "on" : ""}" data-slot="${sl.id}">
             <span class="slot-check">${I.check}</span><span class="slot-time tnum">${esc(tRange(sl) || "Time TBC")}</span>${slotChip(sl.kind)}
@@ -3343,6 +3351,8 @@ async function pageSignup() {
           : `<div class="faint">No sessions have been listed for this week yet.</div>`}
         <label class="field" style="margin-top:6px"><span>Anything else? (optional)</span><textarea class="input" id="su-comments" rows="2" maxlength="500" placeholder="e.g. Need to leave by 8:15 on Tuesday">${esc(st.comments)}</textarea></label>
       </div></section>
+
+      <label class="check su-agree"><input type="checkbox" id="su-agree" ${st.finds_sub ? "checked" : ""}> <span>I understand that it is my responsibility to find a sub when I am not available.</span></label>
 
       <div class="su-submit"><span class="faint small" id="su-count"></span><button class="btn primary" type="submit" id="su-go">${I.send}${st.existing ? "Update my sign-up" : "Submit sign-up"}</button></div>
     </form>`;
@@ -3361,6 +3371,7 @@ async function pageSignup() {
     $$(".stepper").forEach((sp) => $$("button", sp).forEach((b) => b.onclick = () => { const i = $("input", sp); i.value = Math.max(0, Math.min(21, (+i.value || 0) + +b.dataset.d)); }));
     $$(".slot").forEach((b) => b.onclick = () => { const id = +b.dataset.slot; st.slot_ids.has(id) ? st.slot_ids.delete(id) : st.slot_ids.add(id); b.classList.toggle("on"); count(); });
     const w = $("#su-weeks"); if (w) $$("button", w).forEach((b) => b.onclick = () => { S.suFormWeek = b.dataset.w; pageSignup(); });
+    $("#su-agree").onchange = (e) => { st.finds_sub = e.target.checked; };
     count();
     $("#su-form").onsubmit = submit;
   };
@@ -3374,9 +3385,17 @@ async function pageSignup() {
     if (v("#su-max") != null) st.max_land = +v("#su-max") || 0;
     if (v("#su-comments") != null) st.comments = v("#su-comments");
   };
+  // saving with every session unticked removes the sign-up (the server does it)
+  const withdraw = async () => {
+    if (!await confirmBox("Not free this week?", "Your sign-up will be removed, so the coaches won't plan on you. You can sign up again while the form is open.", "Remove my sign-up", true)) return;
+    const body = { week_start: wk.week_start, member_id: st.member_id, college: st.college, role: st.role, slot_ids: [] };
+    if (await apiDo("/api/signup", { method: "POST", body }, "Sign-up removed")) { st.existing = false; draw(); }
+  };
   const submit = async (e) => {
     e.preventDefault(); capture();
     if (!st.member_id && !st.new_name.trim()) return toast("Pick or type your name first", true);
+    if (st.existing && !st.slot_ids.size && st.role !== "bankrider") return withdraw();
+    if (!st.finds_sub) return toast("Tick the box to confirm it's your responsibility to find a sub", true);
     if (!st.college) return toast("Pick your college", true);
     if (st.college === "Other" && !st.college_other.trim()) return toast("Type the name of your college", true);
     if (!st.role) return toast("Choose what you're signing up as", true);
@@ -3384,7 +3403,7 @@ async function pageSignup() {
     const body = { week_start: wk.week_start, member_id: st.member_id, new_name: st.member_id ? "" : st.new_name, phone: st.phone,
       college: st.college === "Other" ? st.college_other.trim() : st.college, role: st.role, want_row: st.want_row, want_cox: st.want_cox,
       side: st.side, squad: ["rower", "both"].includes(st.role) ? st.squad : "", max_land: st.role === "bankrider" ? 0 : st.max_land, can_bankride: st.role === "bankrider" || st.can_bankride,
-      slot_ids: [...st.slot_ids], comments: st.comments };
+      slot_ids: [...st.slot_ids], comments: st.comments, finds_sub: st.finds_sub };
     const btn = $("#su-go"); btn.disabled = true;
     try {
       const r = await api("/api/signup", { method: "POST", body });
@@ -3510,10 +3529,12 @@ async function pageSignupCommittee() {
           <div class="slot-meta" style="flex:1">${esc([sl.location, sl.note].filter(Boolean).join(" · "))}</div>
           <div class="slot-counts"><span title="Free in total"><b>${sl.count}</b> free</span>${squadCounts(sl)}<span title="Coxes (either squad)">${sl.coxes} cox</span><span title="Can bankride">${sl.bankriders} BR</span></div>
           <button class="btn sm" data-mk="${sl.id}">${I.plus}Create session</button>
-          <button class="btn sm ghost" data-ed="${sl.id}">Edit</button></div>`).join("")}</div>`).join("")
+          <button class="btn sm ghost" data-ed="${sl.id}">Edit</button>
+          <button class="btn sm ghost danger" data-rm="${sl.id}" title="Delete this session">Delete</button></div>`).join("")}</div>`).join("")
         : `<div class="card empty">${I.calendar}<h3>No sessions listed</h3><p>Add the water, erg and tank sessions people can sign up for, or copy last week's.</p></div>`}`;
     $("#sw-note-save").onclick = async () => { await apiDo(`/api/committee/signup/${ws}`, { method: "PUT", body: { open: d.week.open, note: $("#sw-note").value } }, "Message saved"); };
     $$("[data-ed]").forEach((b) => b.onclick = () => editSlot(d.slots.find((x) => x.id === +b.dataset.ed), ws));
+    $$("[data-rm]").forEach((b) => b.onclick = () => deleteSlot(+b.dataset.rm));
     $$("[data-mk]").forEach((b) => b.onclick = () => {
       const sl = d.slots.find((x) => x.id === +b.dataset.mk);
       S.week = ws; S.pendingNew = { kind: sl.kind === "water" ? "water" : "land", date: sl.date, time: sl.time, end_time: sl.end_time, location: sl.location, title: sl.kind === "water" ? "" : (sl.kind === "erg" ? "Erg" : "Tank") };
@@ -3522,14 +3543,42 @@ async function pageSignupCommittee() {
     $("#sw-add").onclick = () => editSlot(null, ws);
     $("#sw-copy").onclick = copySlots;
   } else if (S.suTab === "grid") {
-    body.innerHTML = !R.length || !d.slots.length ? `<div class="card empty">${I.user}<h3>Nothing to show yet</h3><p>Responses will appear here as people sign up.</p></div>` :
-      `<div class="card table-wrap"><table class="t grid-t"><thead><tr><th>Name</th>${d.slots.map((sl) => `<th class="gc" title="${esc([sl.location, sl.note].filter(Boolean).join(" · "))}"><div>${slotLabel(sl)}</div><div>${slotChip(sl.kind)}</div></th>`).join("")}</tr></thead>
-      <tbody>${R.slice().sort((a, b) => a.name.localeCompare(b.name)).map((r) => `<tr><td><b>${esc(r.name)}</b> <span class="faint small">${roleShort[r.role]}${r.squad ? ` · ${esc(SQUAD_SHORT[r.squad])}` : ""}</span></td>${d.slots.map((sl) => `<td class="gc">${r.slot_ids.includes(sl.id) ? `<span class="tick ${sl.kind}">${I.check}</span>` : ""}</td>`).join("")}</tr>`).join("")}
-      <tr class="tot"><td>Open rowers</td>${d.slots.map((sl) => `<td class="gc">${sl.rowers_open || "·"}</td>`).join("")}</tr>
-      <tr class="tot"><td>Women's rowers</td>${d.slots.map((sl) => `<td class="gc">${sl.rowers_women || "·"}</td>`).join("")}</tr>
-      ${d.slots.some((sl) => sl.rowers_unknown) ? `<tr class="tot"><td title="Signed up before the squad question, with no squad on their profile">Rowers, squad not set</td>${d.slots.map((sl) => `<td class="gc">${sl.rowers_unknown || "·"}</td>`).join("")}</tr>` : ""}
-      <tr class="tot"><td>Coxes</td>${d.slots.map((sl) => `<td class="gc">${sl.coxes || "·"}</td>`).join("")}</tr>
-      <tr class="tot"><td>Total free</td>${d.slots.map((sl) => `<td class="gc"><b>${sl.count}</b></td>`).join("")}</tr></tbody></table></div>`;
+    // Filters narrow the rows (people); the totals underneath then count only the people shown.
+    const G = S.suGrid = S.suGrid || { squad: "", level: "", role: "", bank: false };
+    const keep = {
+      squad: (r) => r.squad === G.squad,
+      level: (r) => r.category === G.level,
+      role: (r) => G.role === "row" ? ["rower", "both"].includes(r.role) : G.role === "cox" ? ["cox", "both"].includes(r.role) : r.role === "bankrider",
+      bank: (r) => r.can_bankride,
+    };
+    const sel = (k, label, opts) => `<select class="input" data-gf="${k}" aria-label="${label}">${opts.map(([v, l]) => `<option value="${v}" ${G[k] === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+    const drawGrid = () => {
+      const rows = R.filter((r) => Object.keys(keep).every((k) => !G[k] || keep[k](r))).sort((a, b) => a.name.localeCompare(b.name));
+      const filtered = Object.values(G).some(Boolean);
+      $("#sw-gn").textContent = filtered ? `Showing ${rows.length} of ${R.length}` : "";
+      $("#sw-grid").innerHTML = !rows.length ? `<div class="card empty">${I.user}<h3>No one matches</h3><p>Nobody who signed up fits these filters. Try removing one.</p></div>` :
+        `<div class="card table-wrap"><table class="t grid-t"><thead><tr><th>Name</th>${d.slots.map((sl) => `<th class="gc" title="${esc([sl.location, sl.note].filter(Boolean).join(" · "))}"><div>${slotLabel(sl)}</div><div>${slotChip(sl.kind)}</div></th>`).join("")}</tr></thead>
+        <tbody>${rows.map((r) => `<tr><td><b>${esc(r.name)}</b> <span class="faint small">${roleShort[r.role]}${r.squad ? ` · ${esc(SQUAD_SHORT[r.squad])}` : ""}${r.category === "Novice" || r.category === "Senior" ? ` · ${r.category}` : ""}</span></td>${d.slots.map((sl) => `<td class="gc">${r.slot_ids.includes(sl.id) ? `<span class="tick ${sl.kind}">${I.check}</span>` : ""}</td>`).join("")}</tr>`).join("")}
+        ${filtered ? `<tr class="tot"><td>Free, of those shown</td>${d.slots.map((sl) => `<td class="gc">${rows.filter((r) => r.slot_ids.includes(sl.id)).length || "·"}</td>`).join("")}</tr>` : `
+        <tr class="tot"><td>Open rowers</td>${d.slots.map((sl) => `<td class="gc">${sl.rowers_open || "·"}</td>`).join("")}</tr>
+        <tr class="tot"><td>Women's rowers</td>${d.slots.map((sl) => `<td class="gc">${sl.rowers_women || "·"}</td>`).join("")}</tr>
+        ${d.slots.some((sl) => sl.rowers_unknown) ? `<tr class="tot"><td title="Signed up before the squad question, with no squad on their profile">Rowers, squad not set</td>${d.slots.map((sl) => `<td class="gc">${sl.rowers_unknown || "·"}</td>`).join("")}</tr>` : ""}
+        <tr class="tot"><td>Coxes</td>${d.slots.map((sl) => `<td class="gc">${sl.coxes || "·"}</td>`).join("")}</tr>`}
+        <tr class="tot"><td>Total free</td>${d.slots.map((sl) => `<td class="gc"><b>${sl.count}</b></td>`).join("")}</tr></tbody></table></div>`;
+    };
+    const nothing = !R.length || !d.slots.length;
+    body.innerHTML = nothing ? `<div class="card empty">${I.user}<h3>Nothing to show yet</h3><p>Responses will appear here as people sign up.</p></div>` :
+      `<div class="filters">
+        ${sel("squad", "Squad", [["", "Any squad"], ["open", "Open"], ["women", "Women's"]])}
+        ${sel("level", "Novice or senior", [["", "Novices and seniors"], ["Novice", "Novice"], ["Senior", "Senior"]])}
+        ${sel("role", "Signing up as", [["", "Any role"], ["row", "Rowers"], ["cox", "Coxes"], ["bankrider", "Bankriders / coaches"]])}
+        <label class="check small"><input type="checkbox" data-gf="bank" ${G.bank ? "checked" : ""}> Can bankride</label>
+        <span class="faint small" id="sw-gn"></span>
+      </div><div id="sw-grid"></div>`;
+    if (!nothing) {
+      $$("[data-gf]", body).forEach((e) => e.onchange = () => { G[e.dataset.gf] = e.type === "checkbox" ? e.checked : e.value; drawGrid(); });
+      drawGrid();
+    }
   } else {
     body.innerHTML = R.length ? `<div class="card table-wrap"><table class="t"><thead><tr><th>Name</th><th>Phone</th><th>College</th><th>As</th><th class="num" title="Water outings scheduled / max">Water</th><th class="num" title="Coxing outings scheduled / wanted">Cox</th><th class="num" title="Land sessions scheduled / max">Land</th><th>Squad</th><th>Side</th><th>Bankride</th><th class="num">Free for</th></tr></thead>
       <tbody>${R.map((r) => `<tr class="clickable" data-id="${r.id}">
@@ -3601,6 +3650,12 @@ function responseDetail(r, d, roleShort) {
   });
 }
 
+/* Ask first, then delete one sign-up session and redraw the page. */
+async function deleteSlot(id) {
+  if (!await confirmBox("Delete this session?", "Anyone who ticked it loses that availability.", "Delete", true)) return;
+  if (await apiDo(`/api/committee/signup/slots/${id}`, { method: "DELETE" }, "Session deleted")) pageSignupCommittee();
+}
+
 async function editSlot(sl, ws, tpl) {
   await loadPlaces(true);
   const days = Array.from({ length: 7 }, (_, i) => addDays(ws, i));
@@ -3639,10 +3694,7 @@ async function editSlot(sl, ws, tpl) {
         } catch (e) { fail(e); }
       };
       const del = $("#sl-del", m);
-      if (del) del.onclick = async () => {
-        if (!await confirmBox("Delete this session?", "Anyone who ticked it loses that availability.", "Delete", true)) return;
-        if (await apiDo(`/api/committee/signup/slots/${sl.id}`, { method: "DELETE" }, "Session deleted")) { pageSignupCommittee(); }
-      };
+      if (del) del.onclick = () => deleteSlot(sl.id);
     },
   });
 }

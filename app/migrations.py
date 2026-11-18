@@ -46,6 +46,7 @@ MIGRATIONS = {
         "capsize_drill_date": "TEXT NOT NULL DEFAULT ''",           # YYYY-MM-DD of the drill, or '' (unknown)
         "capsize_drill_expiry": "TEXT NOT NULL DEFAULT ''",         # unused: expiry is now the global capsize_drill_valid_months setting
         "phone": "TEXT NOT NULL DEFAULT ''",          # committee-only
+        "phone2": "TEXT NOT NULL DEFAULT ''",         # second number, committee-only
         "college": "TEXT NOT NULL DEFAULT ''",
         "side": "TEXT NOT NULL DEFAULT ''",
         "squad": "TEXT NOT NULL DEFAULT ''",          # open | women (for race eligibility)

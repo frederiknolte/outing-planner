@@ -39,11 +39,15 @@ def _phone_value(phone: Optional[str]) -> Optional[str]:
     return privacy.encrypt(phone)
 
 
-def _set_phone(conn, member_id: int, value: Optional[str]) -> None:
-    """Store a value from _phone_value (None leaves the number as it is)."""
-    if value is not None:
-        conn.execute("UPDATE members SET phone = ?, phone_updated_at = CASE WHEN ? != '' THEN datetime('now') ELSE '' END WHERE id = ?",
-                     (value, value, member_id))
+def _set_phones(conn, member_id: int, phone: Optional[str], phone2: Optional[str]) -> None:
+    """Store values from _phone_value (None leaves that number as it is). The retention clock restarts when a
+    number is saved, and is cleared once the member has none left."""
+    if phone is None and phone2 is None:
+        return
+    conn.execute("UPDATE members SET phone = COALESCE(?, phone), phone2 = COALESCE(?, phone2) WHERE id = ?", (phone, phone2, member_id))
+    conn.execute("""UPDATE members SET phone_updated_at = CASE WHEN phone = '' AND phone2 = '' THEN ''
+                                                               WHEN ? THEN datetime('now') ELSE phone_updated_at END WHERE id = ?""",
+                 (bool(phone or phone2), member_id))
 
 
 def _check_squad(squad: str) -> None:
@@ -84,17 +88,17 @@ class ProfileIn(BaseModel):
     side: str = Field("", max_length=40)
     college: str = Field("", max_length=80)
     phone: Optional[str] = Field(None, max_length=40)   # None = keep, "" = delete
+    phone2: Optional[str] = Field(None, max_length=40)  # second number, same rules
     squad: str = ""                                      # '' | open | women
 
 
 @router.get("/api/members/{member_id}/profile")
 def member_profile(member_id: int, _: str = Depends(require_member)):
     with db.get_conn() as conn:
-        m = conn.execute("SELECT side, college, squad, phone FROM members WHERE id = ?", (member_id,)).fetchone()
+        m = conn.execute("SELECT side, college, squad, phone, phone2 FROM members WHERE id = ?", (member_id,)).fetchone()
         if not m:
             raise HTTPException(404, "Unknown member")
-        return {"side": m["side"], "college": m["college"], "squad": m["squad"] or "",
-                "has_phone": bool(m["phone"]), "phone_masked": privacy.mask(m["phone"])}
+        return {"side": m["side"], "college": m["college"], "squad": m["squad"] or "", **privacy.fields(dict(m))}
 
 
 @router.put("/api/members/{member_id}/profile")
@@ -102,13 +106,13 @@ def member_profile_update(member_id: int, b: ProfileIn, _: str = Depends(require
     if b.side and b.side not in SIDES:
         raise HTTPException(400, "Bad side preference")
     _check_squad(b.squad)
-    new_phone = _phone_value(b.phone)
+    phones = _phone_value(b.phone), _phone_value(b.phone2)
     with db.get_conn() as conn:
         if not conn.execute("SELECT 1 FROM members WHERE id = ?", (member_id,)).fetchone():
             raise HTTPException(404, "Unknown member")
         conn.execute("UPDATE members SET side=?, college=?, squad=? WHERE id=?",
                      (b.side, b.college.strip(), b.squad, member_id))
-        _set_phone(conn, member_id, new_phone)
+        _set_phones(conn, member_id, *phones)
         return {"ok": True}
 
 
@@ -145,6 +149,7 @@ class MemberIn(BaseModel):
     active: bool = True
     notes: str = Field("", max_length=500)
     phone: Optional[str] = Field(None, max_length=40)   # None = keep the stored number, "" = delete it
+    phone2: Optional[str] = Field(None, max_length=40)  # second number, same rules
     college: str = Field("", max_length=80)
     side: str = Field("", max_length=40)
     squad: str = ""                                      # '' | open | women (race eligibility)
@@ -196,8 +201,8 @@ def members_list(_: str = Depends(require_committee)):
         rules = Rules(conn)
         out = []
         for m in rules.sorted_members():
-            safe = {k: v for k, v in m.items() if k not in ("phone", "cal_token")}
-            out.append({**safe, "has_phone": bool(m["phone"]), "phone_masked": privacy.mask(m["phone"]),
+            safe = {k: v for k, v in m.items() if k not in ("phone", "phone2", "cal_token")}
+            out.append({**safe, **privacy.fields(m),
                         "active": bool(m["active"]), "totals": rules.totals(m["id"]), **rules.status_fields(m)})
         return {"members": out, "terms": TERMS, "plans": SUBS_PLANS, "crews": list(CLUB_CREWS)}
 
@@ -205,11 +210,11 @@ def members_list(_: str = Depends(require_committee)):
 @router.post("/api/committee/members")
 def member_create(m: MemberIn, _: str = Depends(require_committee)):
     _member_validate(m)
-    phone = _phone_value(m.phone)
+    phones = _phone_value(m.phone), _phone_value(m.phone2)
     with db.get_conn() as conn, unique_name("member"):
         cur = conn.execute(f"INSERT INTO members({', '.join(_MEMBER_COLUMNS)}) VALUES ({', '.join('?' * len(_MEMBER_COLUMNS))})",
                            _member_fields(m))
-        _set_phone(conn, cur.lastrowid, phone or None)
+        _set_phones(conn, cur.lastrowid, *phones)
         return {"id": cur.lastrowid}
 
 
@@ -219,7 +224,7 @@ def member_update(member_id: int, m: MemberIn, _: str = Depends(require_committe
     with db.get_conn() as conn, unique_name("member"):
         conn.execute(f"UPDATE members SET {', '.join(c + '=?' for c in _MEMBER_COLUMNS)}, needs_review=0 WHERE id=?",
                      _member_fields(m) + (member_id,))
-        _set_phone(conn, member_id, _phone_value(m.phone))
+        _set_phones(conn, member_id, _phone_value(m.phone), _phone_value(m.phone2))
         return {"ok": True}
 
 
@@ -291,7 +296,7 @@ def subs_reminders(_: str = Depends(require_committee)):
                 "blocked": blocked[mid][:5], "next": (upcoming[mid] or [None])[0],
                 "last_activity": max(filter(None, [last_out.get(mid), last_signup.get(mid)]), default=None),
                 "subs_plan": m["subs_plan"], "subs_term": m["subs_term"], "subs_year": m["subs_year"],
-                "has_phone": bool(m["phone"]), "phone_masked": privacy.mask(m["phone"]),
+                **privacy.fields(m),
                 "reminded_at": m["subs_reminded_at"] or None,
             })
         out.sort(key=lambda x: (order[x["tier"]], bool(x["reminded_at"]), x["next"]["date"] if x["next"] else "9999",
@@ -346,21 +351,21 @@ def member_paid(member_id: int, b: PaidIn, _: str = Depends(require_committee)):
 # ---------------------------------------------------------------- phones ----
 @router.get("/api/committee/members/{member_id}/phone")
 def member_phone(member_id: int, _: str = Depends(require_committee)):
-    """Reveal one member's full number (committee taps "Show")."""
+    """Reveal one member's full numbers (committee taps "Show")."""
     with db.get_conn() as conn:
-        r = conn.execute("SELECT phone FROM members WHERE id = ?", (member_id,)).fetchone()
+        r = conn.execute("SELECT phone, phone2 FROM members WHERE id = ?", (member_id,)).fetchone()
         if not r:
             raise HTTPException(404, "Unknown member")
-        plain = privacy.decrypt(r["phone"])
-        if plain is None:
-            raise HTTPException(409, "This number can't be read: PHONE_KEY is missing or has changed")
-        return {"phone": plain}
+        plain = {k: privacy.decrypt(r[k]) for k in ("phone", "phone2")}
+        if None in plain.values():
+            raise HTTPException(409, "These numbers can't be read: PHONE_KEY is missing or has changed")
+        return plain
 
 
 @router.delete("/api/committee/members/{member_id}/phone")
 def member_phone_delete(member_id: int, _: str = Depends(require_committee)):
     with db.get_conn() as conn:
-        _set_phone(conn, member_id, "")
+        _set_phones(conn, member_id, "", "")
         return {"ok": True}
 
 
@@ -371,12 +376,12 @@ def members_csv(include_phone: bool = False, _: str = Depends(require_committee)
         buf = io.StringIO()
         w = csv.writer(buf)
         yes = lambda v: "Yes" if v else "No"  # noqa: E731
-        w.writerow(["Name"] + (["Phone"] if include_phone else []) + ["College", "Side", "Squad", "Crew", "Category", "Swim test", "Swim test date", "Swim test expires", "Subs plan", "Term", "Year",
+        w.writerow(["Name"] + (["Phone", "Second phone"] if include_phone else []) + ["College", "Side", "Squad", "Crew", "Category", "Swim test", "Swim test date", "Swim test expires", "Subs plan", "Term", "Year",
                     "Subs valid", "Cox status", "Cox status date", "Cox status expires", "Capsize drilled", "Capsize drill date", "Capsize drill expires",
                     "Water outings", "Land sessions", "Total", "Novice free left", "Active"])
         for m in rules.sorted_members():
             t = rules.totals(m["id"])
-            w.writerow([m["name"]] + ([privacy.decrypt(m["phone"]) or ""] if include_phone else []) + [
+            w.writerow([m["name"]] + ([privacy.decrypt(m["phone"]) or "", privacy.decrypt(m["phone2"]) or ""] if include_phone else []) + [
                 m["college"], m["side"], m["squad"], m["club_crew"], m["category"],
                 yes(m["swim_test"]), m["swim_test_date"], rules.swim_expiry(m)["expires"], m["subs_plan"], m["subs_term"], m["subs_year"],
                 yes(rules.subs_valid(m)), m["cox_status"], m["cox_status_date"], rules.cox_expiry(m)["expires"],

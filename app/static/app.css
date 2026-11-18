@@ -543,6 +543,8 @@ table.t { width: 100%; border-collapse: separate; border-spacing: 0; }
 .slot.on .slot-check { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .slot-time { font-weight: 750; font-size: 15px; }
 .slot-meta { font-size: 12px; color: var(--text-3); }
+.su-agree { align-items: flex-start; padding: 2px 4px; }
+.su-agree input { margin-top: 2px; }
 .su-submit { display: flex; justify-content: flex-end; align-items: center; gap: 14px; position: sticky; bottom: 0; padding: 12px 0;
   background: linear-gradient(transparent, var(--bg) 30%); }
 .su-submit .btn { padding: 11px 20px; font-size: 15px; }

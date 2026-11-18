@@ -49,7 +49,7 @@ def settings_get(_: str = Depends(require_committee)):
         s.update({k: int_setting(s, k) for k in NUMBER_SETTINGS})
         s["terms"] = TERMS
         s["phone_encryption"] = privacy.enabled()
-        s["phone_count"] = conn.execute("SELECT COUNT(*) FROM members WHERE phone != ''").fetchone()[0]
+        s["phone_count"] = conn.execute("SELECT COALESCE(SUM((phone != '') + (phone2 != '')), 0) FROM members").fetchone()[0]
         return s
 
 

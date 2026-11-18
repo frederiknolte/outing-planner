@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS members (
     past_water INTEGER NOT NULL DEFAULT 0,         -- outings before this system (baseline)
     past_land INTEGER NOT NULL DEFAULT 0,
     active INTEGER NOT NULL DEFAULT 1,
-    notes TEXT NOT NULL DEFAULT ''
+    notes TEXT NOT NULL DEFAULT '',
+    phone2 TEXT NOT NULL DEFAULT ''                -- second number, committee-only like phone
 );
 
 CREATE TABLE IF NOT EXISTS outings (
